@@ -1,0 +1,27 @@
+[project]
+name = "gateway_api"
+version = "0.1.0"
+description = "Gateway API"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "pydantic-settings>=2.2",
+  "httpx>=0.26",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=7.0",
+  "pytest-asyncio>=0.23",
+  "anyio>=4.0",
+  "httpx>=0.26",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["gateway_api"]
