@@ -194,6 +194,11 @@ async def confirm(payload: ConfirmIn, response: Response, session: AsyncSession 
     return {"status": "ok"}
 
 
+@app.get("/auth/confirm")
+async def confirm_get(token: str, response: Response, session: AsyncSession = Depends(get_session)):
+    return await confirm(ConfirmIn(token=token), response, session)
+
+
 @app.post("/auth/logout")
 async def logout(response: Response, request: Request, session: AsyncSession = Depends(get_session)):
     raw_session = request.cookies.get(settings.session_cookie_name)
@@ -637,7 +642,33 @@ async def invite_accept(
         ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
+        # Auto-login after invite accept
+    raw_session = generate_raw_token()
+    session_hash = hmac_sha256(settings.session_secret, raw_session)
+    session_expires = build_expiry(settings.session_ttl_seconds)
+    session.add(
+        Session(
+            user_id=user_id,
+            session_hash=session_hash,
+            expires_at=session_expires,
+        )
+    )
+    await session.commit()
+    response.set_cookie(
+        key=settings.session_cookie_name,
+        value=raw_session,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        max_age=settings.session_ttl_seconds,
+        path="/",
+    )
     return {"status": "ok"}
+
+
+@app.get("/invites/accept")
+async def invite_accept_get(token: str, request: Request, response: Response, session: AsyncSession = Depends(get_session)):
+    return await invite_accept(InviteAcceptIn(token=token), request, response, session)
 
 
 @app.post("/v1/chat")
