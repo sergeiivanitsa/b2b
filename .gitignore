@@ -39,3 +39,6 @@ cookie*.txt
 .env
 .env.bak
 .venv/
+
+# backups
+*.bak.*
