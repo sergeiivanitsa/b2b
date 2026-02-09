@@ -1,0 +1,95 @@
+version: "3.9"
+
+services:
+  product_api:
+    build:
+      context: .
+      dockerfile: services/product_api/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: dev
+      LOG_LEVEL: INFO
+      DATABASE_URL: postgresql+asyncpg://app:app@postgres:5432/app
+      GATEWAY_URL: http://gateway_api:8001
+      GATEWAY_SHARED_SECRET: dev-shared-secret
+      AUTH_TOKEN_SECRET: dev-auth-secret
+      AUTH_TOKEN_TTL_SECONDS: "900"
+      INVITE_TOKEN_SECRET: dev-invite-secret
+      SESSION_SECRET: dev-session-secret
+      SESSION_TTL_SECONDS: "1209600"
+      SESSION_COOKIE_NAME: session
+      COOKIE_SECURE: "false"
+      COOKIE_SAMESITE: lax
+      EMAIL_FROM: no-reply@example.com
+      SMTP_HOST: ""
+      SMTP_PORT: "587"
+      SMTP_USER: ""
+      SMTP_PASSWORD: ""
+      SMTP_USE_TLS: "true"
+      APP_BASE_URL: http://localhost:8000
+      INVITE_TTL_SECONDS: "604800"
+      CHAT_CONTEXT_LIMIT: "20"
+      GATEWAY_TIMEOUT_SECONDS: "30"
+      MAX_MESSAGE_CHARS: "4000"
+      RATE_LIMIT_COMPANY_RPM: "60"
+      RATE_LIMIT_USER_RPM: "30"
+      RATE_LIMIT_IP_RPM: "120"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app_net
+      - db_net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health').read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  gateway_api:
+    build:
+      context: .
+      dockerfile: services/gateway_api/Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      APP_ENV: dev
+      LOG_LEVEL: INFO
+      GATEWAY_SHARED_SECRET: dev-shared-secret
+      GATEWAY_CLOCK_SKEW_SECONDS: "60"
+      GATEWAY_NONCE_TTL_SECONDS: "300"
+      OPENAI_TIMEOUT_SECONDS: "30"
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    networks:
+      - app_net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health').read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - db_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pg_data:
+
+networks:
+  app_net:
+  db_net:
