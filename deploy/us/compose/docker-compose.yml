@@ -12,11 +12,11 @@ services:
       LOG_LEVEL: INFO
       DATABASE_URL: postgresql+asyncpg://app:app@postgres:5432/app
       GATEWAY_URL: http://gateway_api:8001
-      GATEWAY_SHARED_SECRET: dev-shared-secret
-      AUTH_TOKEN_SECRET: dev-auth-secret
+      GATEWAY_SHARED_SECRET: ${GATEWAY_SHARED_SECRET}
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET}
       AUTH_TOKEN_TTL_SECONDS: "900"
-      INVITE_TOKEN_SECRET: dev-invite-secret
-      SESSION_SECRET: dev-session-secret
+      INVITE_TOKEN_SECRET: ${INVITE_TOKEN_SECRET}
+      SESSION_SECRET: ${SESSION_SECRET}
       SESSION_TTL_SECONDS: "1209600"
       SESSION_COOKIE_NAME: session
       COOKIE_SECURE: "false"
@@ -25,7 +25,7 @@ services:
       SMTP_HOST: ""
       SMTP_PORT: "587"
       SMTP_USER: ""
-      SMTP_PASSWORD: ""
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_USE_TLS: "true"
       APP_BASE_URL: http://localhost:8000
       INVITE_TTL_SECONDS: "604800"
@@ -56,7 +56,7 @@ services:
     environment:
       APP_ENV: dev
       LOG_LEVEL: INFO
-      GATEWAY_SHARED_SECRET: dev-shared-secret
+      GATEWAY_SHARED_SECRET: ${GATEWAY_SHARED_SECRET}
       GATEWAY_CLOCK_SKEW_SECONDS: "60"
       GATEWAY_NONCE_TTL_SECONDS: "300"
       OPENAI_TIMEOUT_SECONDS: "30"
@@ -75,7 +75,7 @@ services:
       - "5432:5432"
     environment:
       POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: app
     volumes:
       - pg_data:/var/lib/postgresql/data
