@@ -31,7 +31,7 @@ jobs:
           ssh-keyscan -H "${{ secrets.US_HOST }}" >> ~/.ssh/known_hosts
       - name: Deploy RU
         run: |
-          ssh "${{ secrets.RU_HOST }}" <<'EOF'
+          ssh "${{ secrets.RU_SSH }}" <<'EOF'
           set -euo pipefail
           cd /opt/b2b
           git fetch origin
@@ -42,7 +42,7 @@ jobs:
           EOF
       - name: Deploy US
         run: |
-          ssh "${{ secrets.US_HOST }}" <<'EOF'
+          ssh "${{ secrets.US_SSH }}" <<'EOF'
           set -euo pipefail
           cd /opt/b2b
           git fetch origin
