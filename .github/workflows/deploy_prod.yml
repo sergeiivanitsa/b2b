@@ -1,0 +1,54 @@
+name: Deploy prod
+
+on:
+  workflow_run:
+    workflows:
+      - Product API unit tests
+    types:
+      - completed
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.PROD_SSH_KEY }}
+      - name: Add known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.RU_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "${{ secrets.US_HOST }}" >> ~/.ssh/known_hosts
+      - name: Deploy RU
+        run: |
+          ssh "${{ secrets.RU_USER }}@${{ secrets.RU_HOST }}" <<'EOF'
+          set -euo pipefail
+          cd /opt/b2b
+          git fetch origin
+          git checkout main
+          git reset --hard origin/main
+          docker compose -f docker-compose.product.yml --env-file .env.product up -d --build
+          curl -fsS http://127.0.0.1:8000/health
+          EOF
+      - name: Deploy US
+        run: |
+          ssh "${{ secrets.US_USER }}@${{ secrets.US_HOST }}" <<'EOF'
+          set -euo pipefail
+          cd /opt/b2b
+          git fetch origin
+          git checkout main
+          git reset --hard origin/main
+          cp -f deploy/us/compose/docker-compose.gateway.yml docker-compose.gateway.yml
+          docker compose -f docker-compose.gateway.yml --env-file .env.gateway up -d --build
+          curl -fsS http://127.0.0.1:8001/health
+          EOF
