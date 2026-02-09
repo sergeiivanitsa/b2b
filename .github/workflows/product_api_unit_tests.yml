@@ -1,0 +1,25 @@
+name: Product API unit tests
+
+on:
+  push:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  product_api_unit_tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Upgrade pip
+        run: python -m pip install -U pip
+      - name: Install product_api
+        run: python -m pip install -e "services/product_api[test]"
+      - name: Run unit tests
+        run: python -m pytest services/product_api/tests_unit -q
