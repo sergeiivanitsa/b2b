@@ -60,7 +60,7 @@ async def async_client(mock_session):
     try:
         import httpx
 
-        transport = httpx.ASGITransport(app=fastapi_app, lifespan="off")
+        transport = httpx.ASGITransport(app=fastapi_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             yield client
     finally:
