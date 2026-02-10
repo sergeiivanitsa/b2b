@@ -105,3 +105,5 @@ Set these env vars before production deploy:
 Run from `services/product_api`:
 - alembic upgrade head
 - alembic revision --autogenerate -m "init"
+
+<-- дубль ( должен упасть ci-cd smoke: 10 фев 2026 г. 20:53:38 -->
