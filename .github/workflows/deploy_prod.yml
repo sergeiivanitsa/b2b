@@ -24,59 +24,74 @@ jobs:
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.PROD_SSH_KEY }}
+
       - name: Add known hosts
         run: |
           mkdir -p ~/.ssh
           ssh-keyscan -H "${{ secrets.RU_HOST }}" >> ~/.ssh/known_hosts
           ssh-keyscan -H "${{ secrets.US_HOST }}" >> ~/.ssh/known_hosts
+
       - name: Deploy RU
         run: |
-          ssh "${{ secrets.RU_USER }}@${{ secrets.RU_HOST }}" <<'EOF'
+          ssh -o StrictHostKeyChecking=yes "${{ secrets.RU_USER }}@${{ secrets.RU_HOST }}" <<'EOF'
           set -euo pipefail
           cd /opt/b2b
           git fetch origin
           git checkout main
           git reset --hard origin/main
+
           docker compose -f docker-compose.product.yml --env-file .env.product up -d --build
+
+          # health retry ~60s (12*5s)
           ok=0
-          i=1
-          while [ "$i" -le 30 ]; do
-            if curl -fsS http://127.0.0.1:8000/health; then
+          for i in $(seq 1 12); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
+              echo "RU health OK"
               ok=1
               break
             fi
-            sleep 2
-            i=$((i + 1))
+            echo "RU health not ready ($i/12), waiting..."
+            sleep 5
           done
+
           if [ "$ok" -ne 1 ]; then
-            docker ps
-            docker logs --tail 200 b2b-product_api-1
+            echo "RU health FAILED — docker ps:"
+            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+            echo "RU logs (last 200):"
+            docker logs --tail 200 b2b-product_api-1 || true
             exit 1
           fi
           EOF
+
       - name: Deploy US
         run: |
-          ssh "${{ secrets.US_USER }}@${{ secrets.US_HOST }}" <<'EOF'
+          ssh -o StrictHostKeyChecking=yes "${{ secrets.US_USER }}@${{ secrets.US_HOST }}" <<'EOF'
           set -euo pipefail
           cd /opt/b2b
           git fetch origin
           git checkout main
           git reset --hard origin/main
+
           cp -f deploy/us/compose/docker-compose.gateway.yml docker-compose.gateway.yml
           docker compose -f docker-compose.gateway.yml --env-file .env.gateway up -d --build
+
+          # health retry ~60s (12*5s)
           ok=0
-          i=1
-          while [ "$i" -le 30 ]; do
-            if curl -fsS http://127.0.0.1:8001/health; then
+          for i in $(seq 1 12); do
+            if curl -fsS http://127.0.0.1:8001/health >/dev/null; then
+              echo "US health OK"
               ok=1
               break
             fi
-            sleep 2
-            i=$((i + 1))
+            echo "US health not ready ($i/12), waiting..."
+            sleep 5
           done
+
           if [ "$ok" -ne 1 ]; then
-            docker ps
-            docker logs --tail 200 b2b-gateway_api-1
+            echo "US health FAILED — docker ps:"
+            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+            echo "US logs (last 200):"
+            docker logs --tail 200 b2b-gateway_api-1 || true
             exit 1
           fi
           EOF
