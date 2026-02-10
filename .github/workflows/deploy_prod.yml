@@ -38,7 +38,21 @@ jobs:
           git checkout main
           git reset --hard origin/main
           docker compose -f docker-compose.product.yml --env-file .env.product up -d --build
-          curl -fsS http://127.0.0.1:8000/health
+          ok=0
+          i=1
+          while [ "$i" -le 30 ]; do
+            if curl -fsS http://127.0.0.1:8000/health; then
+              ok=1
+              break
+            fi
+            sleep 2
+            i=$((i + 1))
+          done
+          if [ "$ok" -ne 1 ]; then
+            docker ps
+            docker logs --tail 200 b2b-product_api-1
+            exit 1
+          fi
           EOF
       - name: Deploy US
         run: |
@@ -50,5 +64,19 @@ jobs:
           git reset --hard origin/main
           cp -f deploy/us/compose/docker-compose.gateway.yml docker-compose.gateway.yml
           docker compose -f docker-compose.gateway.yml --env-file .env.gateway up -d --build
-          curl -fsS http://127.0.0.1:8001/health
+          ok=0
+          i=1
+          while [ "$i" -le 30 ]; do
+            if curl -fsS http://127.0.0.1:8001/health; then
+              ok=1
+              break
+            fi
+            sleep 2
+            i=$((i + 1))
+          done
+          if [ "$ok" -ne 1 ]; then
+            docker ps
+            docker logs --tail 200 b2b-gateway_api-1
+            exit 1
+          fi
           EOF
