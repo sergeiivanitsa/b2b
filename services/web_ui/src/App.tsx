@@ -1,9 +1,15 @@
+import { BrowserRouter } from 'react-router-dom'
+
+import { AuthProvider } from './auth/AuthProvider'
+import { AppRouter } from './router/AppRouter'
+
 function App() {
   return (
-    <main className="app">
-      <h1 className="app__title">Pork Chat Web UI</h1>
-      <p className="app__subtitle">Scaffold ready. Next commits implement auth and chat.</p>
-    </main>
+    <BrowserRouter>
+      <AuthProvider>
+        <AppRouter />
+      </AuthProvider>
+    </BrowserRouter>
   )
 }
 

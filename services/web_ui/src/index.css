@@ -15,28 +15,143 @@
 body {
   margin: 0;
   min-width: 320px;
+  color: #111;
+  background: #f4f4f4;
 }
 
 #root {
   min-height: 100vh;
 }
 
-.app {
+.screen {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  text-align: center;
-  padding: 24px;
+  padding: 20px;
 }
 
-.app__title {
-  margin: 0;
-  font-size: clamp(1.75rem, 3vw, 2.5rem);
+.card {
+  width: min(560px, 100%);
+  background: #fff;
+  border: 1px solid #d8d8d8;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
+}
+
+.card__title {
+  margin: 0 0 8px;
+  font-size: 1.5rem;
+  line-height: 1.2;
   font-weight: 600;
 }
 
-.app__subtitle {
-  margin: 12px 0 0;
-  color: #555;
+.card__subtitle {
+  margin: 0 0 18px;
+  color: #4a4a4a;
+  line-height: 1.5;
+}
+
+.form {
+  display: grid;
+  gap: 12px;
+}
+
+.label {
+  font-size: 0.9rem;
+  color: #333;
+}
+
+.input {
+  width: 100%;
+  border: 1px solid #bdbdbd;
+  border-radius: 8px;
+  padding: 11px 12px;
   font-size: 1rem;
+}
+
+.input:focus {
+  outline: 2px solid #111;
+  outline-offset: 1px;
+  border-color: #111;
+}
+
+.button {
+  border: 1px solid #111;
+  border-radius: 8px;
+  background: #111;
+  color: #fff;
+  padding: 10px 14px;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.button--secondary {
+  background: #fff;
+  color: #111;
+}
+
+.message {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
+
+.message--error {
+  background: #fff5f5;
+  border: 1px solid #f0b0b0;
+  color: #8f1f1f;
+}
+
+.message--success {
+  background: #f4fff6;
+  border: 1px solid #8ac99a;
+  color: #1d6630;
+}
+
+.hint {
+  margin: 16px 0 0;
+  color: #505050;
+  font-size: 0.92rem;
+}
+
+.hint a {
+  color: #111;
+  text-underline-offset: 3px;
+}
+
+.kv {
+  margin: 0 0 18px;
+  display: grid;
+  gap: 6px 12px;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  padding: 0;
+}
+
+.kv dt {
+  margin: 0;
+  color: #4a4a4a;
+}
+
+.kv dd {
+  margin: 0;
+  color: #111;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .card {
+    padding: 18px;
+  }
+
+  .card__title {
+    font-size: 1.35rem;
+  }
 }
