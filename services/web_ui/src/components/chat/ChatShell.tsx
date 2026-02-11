@@ -1,4 +1,5 @@
 import type { AuthUser } from '../../auth/types'
+import { useConnectivity } from '../../hooks/useConnectivity'
 import type { ChatThread } from '../../types/chat'
 import { ChatComposer } from './ChatComposer'
 import { ChatSidebar } from './ChatSidebar'
@@ -35,6 +36,8 @@ export function ChatShell({
   onStopGenerating,
   onLogout,
 }: ChatShellProps) {
+  const isOnline = useConnectivity()
+
   return (
     <main className="chat-shell">
       <ChatSidebar
@@ -53,14 +56,22 @@ export function ChatShell({
               {String(user.is_active)}
             </span>
           </div>
-          <button
-            type="button"
-            className="button button--secondary"
-            onClick={onLogout}
-            disabled={isLoggingOut}
-          >
-            {isLoggingOut ? 'Logging out...' : 'Logout'}
-          </button>
+          <div className="chat-main__actions">
+            <span
+              className={`connectivity-badge ${isOnline ? 'is-online' : 'is-offline'}`}
+              aria-live="polite"
+            >
+              {isOnline ? 'Connected' : 'Offline'}
+            </span>
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={onLogout}
+              disabled={isLoggingOut}
+            >
+              {isLoggingOut ? 'Logging out...' : 'Logout'}
+            </button>
+          </div>
         </header>
 
         {logoutError ? <p className="message message--error">{logoutError}</p> : null}

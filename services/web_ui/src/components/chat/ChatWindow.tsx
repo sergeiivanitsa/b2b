@@ -1,4 +1,5 @@
 import type { ChatThread } from '../../types/chat'
+import { useAutoScroll } from '../../hooks/useAutoScroll'
 import { MessageBubble } from './MessageBubble'
 
 type ChatWindowProps = {
@@ -6,6 +7,12 @@ type ChatWindowProps = {
 }
 
 export function ChatWindow({ thread }: ChatWindowProps) {
+  const messageCount = thread?.messages.length ?? 0
+  const { containerRef, bottomRef, showScrollButton, scrollToBottom } = useAutoScroll(
+    messageCount,
+    thread?.id ?? null,
+  )
+
   if (!thread) {
     return (
       <section className="chat-window chat-window--empty">
@@ -25,10 +32,22 @@ export function ChatWindow({ thread }: ChatWindowProps) {
   }
 
   return (
-    <section className="chat-window">
-      {thread.messages.map((message) => (
-        <MessageBubble key={message.id} message={message} />
-      ))}
+    <section className="chat-window-shell">
+      <section className="chat-window" ref={containerRef}>
+        {thread.messages.map((message) => (
+          <MessageBubble key={message.id} message={message} />
+        ))}
+        <div ref={bottomRef} aria-hidden />
+      </section>
+      {showScrollButton ? (
+        <button
+          className="chat-scroll-bottom button button--secondary"
+          type="button"
+          onClick={() => scrollToBottom('smooth')}
+        >
+          Scroll to bottom
+        </button>
+      ) : null}
     </section>
   )
 }

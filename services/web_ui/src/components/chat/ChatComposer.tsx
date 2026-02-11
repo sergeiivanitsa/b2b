@@ -14,8 +14,7 @@ export function ChatComposer({
 }: ChatComposerProps) {
   const [content, setContent] = useState('')
 
-  function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  function submitMessage() {
     const normalized = content.trim()
     if (!normalized) {
       return
@@ -24,12 +23,25 @@ export function ChatComposer({
     setContent('')
   }
 
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    submitMessage()
+  }
+
   return (
     <form className="chat-composer" onSubmit={onSubmit}>
       <textarea
         className="chat-composer__input"
         value={content}
         onChange={(event) => setContent(event.target.value)}
+        onKeyDown={(event) => {
+          const isComposing = event.nativeEvent.isComposing
+          if (event.key !== 'Enter' || event.shiftKey || isComposing) {
+            return
+          }
+          event.preventDefault()
+          submitMessage()
+        }}
         rows={3}
         placeholder="Send a message..."
         disabled={isStreaming}

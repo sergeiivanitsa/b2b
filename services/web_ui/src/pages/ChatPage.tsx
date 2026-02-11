@@ -26,6 +26,9 @@ export function ChatPage() {
     setIsSubmittingLogout(true)
     setLogoutError(null)
     try {
+      if (isStreaming) {
+        stopGenerating()
+      }
       await logout()
       navigate('/login', { replace: true })
     } catch (logoutError) {
