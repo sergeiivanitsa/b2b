@@ -1,55 +1,68 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import { ChatShell } from '../components/chat/ChatShell'
 import { toUserMessage } from '../auth/errors'
 import { useAuth } from '../auth/useAuth'
+import { useChat } from '../hooks/useChat'
 
 export function ChatPage() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [isSubmittingLogout, setIsSubmittingLogout] = useState(false)
+  const [logoutError, setLogoutError] = useState<string | null>(null)
+  const {
+    chatState,
+    activeThread,
+    isStreaming,
+    streamError,
+    createNewChat,
+    selectThread,
+    sendMessage,
+    stopGenerating,
+  } = useChat(user?.id)
 
   async function onLogout() {
-    setIsSubmitting(true)
-    setError(null)
+    setIsSubmittingLogout(true)
+    setLogoutError(null)
     try {
       await logout()
       navigate('/login', { replace: true })
     } catch (logoutError) {
-      setError(toUserMessage(logoutError, 'Could not log out right now.'))
+      setLogoutError(toUserMessage(logoutError, 'Could not log out right now.'))
     } finally {
-      setIsSubmitting(false)
+      setIsSubmittingLogout(false)
     }
   }
 
+  if (!user) {
+    return (
+      <main className="screen">
+        <section className="card">
+          <h1 className="card__title">Loading chat</h1>
+          <p className="card__subtitle">Please wait...</p>
+        </section>
+      </main>
+    )
+  }
+
   return (
-    <main className="screen">
-      <section className="card">
-        <h1 className="card__title">Chat page (stub)</h1>
-        <p className="card__subtitle">
-          Session is active. Next commit adds full chat UI and message history.
-        </p>
-
-        <dl className="kv">
-          <dt>id</dt>
-          <dd>{user?.id ?? '-'}</dd>
-          <dt>email</dt>
-          <dd>{user?.email ?? '-'}</dd>
-          <dt>role</dt>
-          <dd>{user?.role ?? '-'}</dd>
-          <dt>company_id</dt>
-          <dd>{user?.company_id ?? '-'}</dd>
-          <dt>is_active</dt>
-          <dd>{String(user?.is_active ?? false)}</dd>
-        </dl>
-
-        <button className="button button--secondary" onClick={onLogout} disabled={isSubmitting}>
-          {isSubmitting ? 'Logging out...' : 'Logout'}
-        </button>
-
-        {error ? <p className="message message--error">{error}</p> : null}
-      </section>
-    </main>
+    <ChatShell
+      user={user}
+      threads={chatState.threads}
+      activeThreadId={chatState.activeThreadId}
+      activeThread={activeThread}
+      isStreaming={isStreaming}
+      streamError={streamError}
+      isLoggingOut={isSubmittingLogout}
+      logoutError={logoutError}
+      onCreateThread={createNewChat}
+      onSelectThread={selectThread}
+      onSendMessage={(content) => {
+        void sendMessage(content)
+      }}
+      onStopGenerating={stopGenerating}
+      onLogout={onLogout}
+    />
   )
 }
