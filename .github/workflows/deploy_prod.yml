@@ -31,6 +31,24 @@ jobs:
           ssh-keyscan -H "${{ secrets.RU_HOST }}" >> ~/.ssh/known_hosts
           ssh-keyscan -H "${{ secrets.US_HOST }}" >> ~/.ssh/known_hosts
 
+      - name: Checkout deploy commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: services/web_ui/package-lock.json
+
+      - name: Build web_ui static bundle
+        run: |
+          npm ci --prefix services/web_ui
+          npm run build --prefix services/web_ui
+          tar -C services/web_ui/dist -czf /tmp/web_ui-dist.tgz .
+
       - name: Deploy RU
         run: |
           ssh -o StrictHostKeyChecking=yes "${{ secrets.RU_USER }}@${{ secrets.RU_HOST }}" <<'EOF'
@@ -92,6 +110,35 @@ jobs:
             docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
             echo "US logs (last 200):"
             docker logs --tail 200 b2b-gateway_api-1 || true
+            exit 1
+          fi
+          EOF
+
+      - name: Deploy web_ui static on RU
+        run: |
+          scp -o StrictHostKeyChecking=yes /tmp/web_ui-dist.tgz "${{ secrets.RU_USER }}@${{ secrets.RU_HOST }}:/tmp/web_ui-dist.tgz"
+          ssh -o StrictHostKeyChecking=yes "${{ secrets.RU_USER }}@${{ secrets.RU_HOST }}" <<'EOF'
+          set -euo pipefail
+          WEB_UI_DIST_DIR="/opt/b2b/services/web_ui/dist"
+
+          mkdir -p "$WEB_UI_DIST_DIR"
+          find "$WEB_UI_DIST_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          tar -xzf /tmp/web_ui-dist.tgz -C "$WEB_UI_DIST_DIR"
+          rm -f /tmp/web_ui-dist.tgz
+
+          if command -v sudo >/dev/null 2>&1; then
+            sudo nginx -t
+            sudo systemctl reload nginx
+          else
+            nginx -t
+            systemctl reload nginx
+          fi
+
+          curl -fsS http://127.0.0.1/ >/dev/null
+
+          whoami_code="$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1/api/internal/whoami || true)"
+          if [ "$whoami_code" != "401" ] && [ "$whoami_code" != "200" ]; then
+            echo "Unexpected /api/internal/whoami status: $whoami_code"
             exit 1
           fi
           EOF
