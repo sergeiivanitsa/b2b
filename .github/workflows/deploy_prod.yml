@@ -134,9 +134,9 @@ jobs:
             systemctl reload nginx
           fi
 
-          curl -fsS http://127.0.0.1/ >/dev/null
+          curl -fsS --resolve pork.su:443:127.0.0.1 https://pork.su/ >/dev/null
 
-          whoami_code="$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1/api/internal/whoami || true)"
+          whoami_code="$(curl -s -o /dev/null -w "%{http_code}" --resolve pork.su:443:127.0.0.1 https://pork.su/api/internal/whoami || true)"
           if [ "$whoami_code" != "401" ] && [ "$whoami_code" != "200" ]; then
             echo "Unexpected /api/internal/whoami status: $whoami_code"
             exit 1
