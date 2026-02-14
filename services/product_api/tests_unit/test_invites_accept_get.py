@@ -11,10 +11,16 @@ pytestmark = pytest.mark.asyncio
 
 async def test_invite_accept_get_ok(async_client, mock_session, make_result, monkeypatch):
     mock_session.execute.side_effect = [
-        make_result((1, 10, "user@example.com", "user")),
+        make_result((1, 10, "user@example.com", "member")),
     ]
 
-    existing = SimpleNamespace(id=123, company_id=10, role="user", is_active=False)
+    existing = SimpleNamespace(
+        id=123,
+        company_id=None,
+        role=None,
+        is_active=False,
+        is_superadmin=False,
+    )
     monkeypatch.setattr(
         invites_router,
         "get_user_by_email",

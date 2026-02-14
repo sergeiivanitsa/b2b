@@ -20,6 +20,14 @@ class InviteAcceptIn(BaseModel):
     token: str
 
 
+def _normalize_invite_role(role: str) -> str:
+    if role == "company_admin":
+        return "admin"
+    if role == "user":
+        return "member"
+    return role
+
+
 @router.post("/invites/accept")
 async def invite_accept(
     payload: InviteAcceptIn,
@@ -45,14 +53,17 @@ async def invite_accept(
     invite_id = row[0]
     company_id = row[1]
     email = row[2]
-    role = row[3]
+    role = _normalize_invite_role(row[3])
+    if role not in ("owner", "admin", "member"):
+        raise HTTPException(status_code=400, detail="invalid invite role")
 
     existing = await get_user_by_email(session, email)
     if existing:
-        if existing.company_id != company_id:
-            raise HTTPException(status_code=409, detail="email already in another company")
-        if existing.role == "superadmin":
+        if existing.is_superadmin:
             raise HTTPException(status_code=403, detail="cannot reassign superadmin")
+        if existing.company_id is not None:
+            raise HTTPException(status_code=409, detail="email already in a company")
+        existing.company_id = company_id
         existing.role = role
         existing.is_active = True
         await session.commit()

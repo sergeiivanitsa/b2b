@@ -19,12 +19,21 @@ from product_api.gateway_client import GatewayError, send_chat, stream_chat
 from product_api.logging_config import configure_logging
 from product_api.models import AuthToken, Conversation, Ledger, Message, User
 from product_api.request_id import REQUEST_ID_HEADER, set_request_id
-from product_api.rbac import get_current_user, require_role
+from product_api.rbac import (
+    ROLE_ADMIN,
+    ROLE_MEMBER,
+    ROLE_OWNER,
+    get_current_user,
+    require_role,
+    require_superadmin,
+)
 from product_api.repositories import (
     add_ledger_entry,
     create_company,
     create_conversation,
     create_invite,
+    get_active_invite_by_email,
+    get_company_by_inn,
     get_user_by_email,
     write_audit_log,
 )
@@ -156,6 +165,15 @@ class AdminInviteIn(BaseModel):
     email: EmailStr
 
 
+class OnboardingOrgIn(BaseModel):
+    inn: str
+    phone: str
+
+
+class SuperadminOrgUpdateIn(BaseModel):
+    status: str
+
+
 class CreditsIn(BaseModel):
     amount: int
     reason: str
@@ -167,7 +185,7 @@ async def admin_create_company(
     payload: CompanyCreateIn,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(require_role("superadmin")),
+    current_user: User = Depends(require_superadmin()),
 ):
     company = await create_company(session, payload.name)
     await write_audit_log(
@@ -190,18 +208,26 @@ async def admin_invite_company_admin(
     payload: AdminInviteIn,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(require_role("superadmin")),
+    current_user: User = Depends(require_superadmin()),
 ):
     email = payload.email.lower()
+    active_invite = await get_active_invite_by_email(session, email)
+    if active_invite:
+        if active_invite.company_id != company_id:
+            raise HTTPException(
+                status_code=409, detail="email already invited to another company"
+            )
+        raise HTTPException(status_code=409, detail="active invite already exists")
+
     user = await get_user_by_email(session, email)
     token = None
     if user:
-        if user.role == "superadmin":
+        if user.is_superadmin:
             raise HTTPException(status_code=403, detail="cannot reassign superadmin")
-        if user.company_id and user.company_id != company_id:
-            raise HTTPException(status_code=409, detail="email already in another company")
+        if user.company_id is not None:
+            raise HTTPException(status_code=409, detail="email already in a company")
         user.company_id = company_id
-        user.role = "company_admin"
+        user.role = ROLE_ADMIN
         user.is_active = True
         await session.commit()
     else:
@@ -215,7 +241,7 @@ async def admin_invite_company_admin(
             token_hash=token_hash,
             expires_at=expires_at,
             invited_by_user_id=current_user.id,
-            role="company_admin",
+            role=ROLE_ADMIN,
         )
         invite_link = f"{settings.app_base_url}/invites/accept?token={raw_token}"
         send_magic_link(settings, email, invite_link)
@@ -228,7 +254,7 @@ async def admin_invite_company_admin(
         action="company.admin_invite",
         target_type="user",
         target_id=user.id if user else None,
-        payload_json=json.dumps({"email": email, "role": "company_admin"}),
+        payload_json=json.dumps({"email": email, "role": ROLE_ADMIN}),
         ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
@@ -245,7 +271,7 @@ async def admin_add_credits(
     payload: CreditsIn,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(require_role("superadmin")),
+    current_user: User = Depends(require_superadmin()),
 ):
     key = payload.idempotency_key or generate_raw_token()
     entry = await add_ledger_entry(
@@ -275,7 +301,7 @@ async def admin_get_company(
     company_id: int,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(require_role("superadmin")),
+    current_user: User = Depends(require_superadmin()),
 ):
     result = await session.execute(text("SELECT id, name FROM companies WHERE id = :id"), {"id": company_id})
     row = result.first()
@@ -320,6 +346,143 @@ async def admin_get_company(
         user_agent=request.headers.get("user-agent"),
     )
     return {"company": company, "balance": balance, "last_ledger_entry": last_entry}
+
+
+def _normalize_inn(value: str) -> str:
+    digits = "".join(ch for ch in value if ch.isdigit())
+    if len(digits) not in (10, 12):
+        raise HTTPException(status_code=400, detail="invalid inn")
+    return digits
+
+
+def _normalize_phone(value: str) -> str:
+    phone = value.strip()
+    if not phone:
+        raise HTTPException(status_code=400, detail="invalid phone")
+    return phone
+
+
+@app.post("/onboarding/create-org")
+async def onboarding_create_org(
+    payload: OnboardingOrgIn,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.is_superadmin:
+        raise HTTPException(status_code=403, detail="superadmin cannot create org")
+    if current_user.company_id is not None:
+        raise HTTPException(status_code=409, detail="user already in a company")
+
+    active_invite = await get_active_invite_by_email(
+        session, current_user.email.lower()
+    )
+    if active_invite:
+        raise HTTPException(status_code=409, detail="pending invite already exists")
+
+    inn = _normalize_inn(payload.inn)
+    phone = _normalize_phone(payload.phone)
+    existing_company = await get_company_by_inn(session, inn)
+    if existing_company:
+        raise HTTPException(status_code=409, detail="company with this inn already exists")
+
+    company = await create_company(
+        session=session,
+        name=f"Company {inn}",
+        inn=inn,
+        phone=phone,
+        status="active",
+    )
+    current_user.company_id = company.id
+    current_user.role = ROLE_OWNER
+    await session.commit()
+
+    await write_audit_log(
+        session=session,
+        actor_user_id=current_user.id,
+        company_id=company.id,
+        action="company.onboarding.create",
+        target_type="company",
+        target_id=company.id,
+        payload_json=json.dumps({"inn": inn, "phone": phone}),
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+
+    return {"org_id": company.id, "role": ROLE_OWNER}
+
+
+@app.get("/superadmin/orgs")
+async def superadmin_list_orgs(
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_superadmin()),
+):
+    result = await session.execute(
+        text(
+            "SELECT id, name, inn, phone, status, created_at "
+            "FROM companies ORDER BY id ASC"
+        )
+    )
+    orgs = [
+        {
+            "id": row[0],
+            "name": row[1],
+            "inn": row[2],
+            "phone": row[3],
+            "status": row[4],
+            "created_at": row[5].isoformat() if row[5] else None,
+        }
+        for row in result.fetchall()
+    ]
+    return {"orgs": orgs}
+
+
+@app.patch("/superadmin/orgs/{org_id}")
+async def superadmin_update_org(
+    org_id: int,
+    payload: SuperadminOrgUpdateIn,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_superadmin()),
+):
+    status_value = payload.status.strip().lower()
+    if status_value not in ("active", "pending", "blocked", "legacy"):
+        raise HTTPException(status_code=400, detail="invalid status")
+
+    result = await session.execute(
+        text(
+            "UPDATE companies SET status = :status "
+            "WHERE id = :id "
+            "RETURNING id, name, inn, phone, status"
+        ),
+        {"status": status_value, "id": org_id},
+    )
+    row = result.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="company not found")
+    await session.commit()
+
+    await write_audit_log(
+        session=session,
+        actor_user_id=current_user.id,
+        company_id=org_id,
+        action="company.update",
+        target_type="company",
+        target_id=org_id,
+        payload_json=json.dumps({"status": status_value}),
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+
+    return {
+        "org": {
+            "id": row[0],
+            "name": row[1],
+            "inn": row[2],
+            "phone": row[3],
+            "status": row[4],
+        }
+    }
 
 
 class InviteIn(BaseModel):
@@ -397,7 +560,7 @@ def _format_sse(event: str, data: dict) -> str:
 async def company_users(
     request: Request,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(require_role("company_admin")),
+    current_user: User = Depends(require_role(ROLE_OWNER, ROLE_ADMIN)),
 ):
     company_id = _require_company_id(current_user)
     result = await session.execute(select(User).where(User.company_id == company_id))
@@ -429,16 +592,24 @@ async def company_invite_user(
     payload: InviteIn,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(require_role("company_admin")),
+    current_user: User = Depends(require_role(ROLE_OWNER, ROLE_ADMIN)),
 ):
     company_id = _require_company_id(current_user)
     email = payload.email.lower()
+    active_invite = await get_active_invite_by_email(session, email)
+    if active_invite:
+        if active_invite.company_id != company_id:
+            raise HTTPException(
+                status_code=409, detail="email already invited to another company"
+            )
+        raise HTTPException(status_code=409, detail="active invite already exists")
+
     existing = await get_user_by_email(session, email)
     if existing:
-        if existing.role == "superadmin":
+        if existing.is_superadmin:
             raise HTTPException(status_code=403, detail="cannot reassign superadmin")
-        if existing.company_id and existing.company_id != company_id:
-            raise HTTPException(status_code=409, detail="email already in another company")
+        if existing.company_id is not None:
+            raise HTTPException(status_code=409, detail="email already in a company")
     raw_token = generate_raw_token()
     token_hash = hmac_sha256(settings.invite_token_secret, raw_token)
     expires_at = build_expiry(settings.invite_ttl_seconds)
@@ -450,7 +621,7 @@ async def company_invite_user(
             token_hash=token_hash,
             expires_at=expires_at,
             invited_by_user_id=current_user.id,
-            role="user",
+            role=ROLE_MEMBER,
         )
     except IntegrityError:
         raise HTTPException(status_code=409, detail="active invite already exists")
@@ -465,7 +636,7 @@ async def company_invite_user(
         action="invite.create",
         target_type="invite",
         target_id=None,
-        payload_json=json.dumps({"email": email, "role": "user"}),
+        payload_json=json.dumps({"email": email, "role": ROLE_MEMBER}),
         ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
@@ -481,7 +652,7 @@ async def company_invite_user(
 async def company_invites(
     request: Request,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(require_role("company_admin")),
+    current_user: User = Depends(require_role(ROLE_OWNER, ROLE_ADMIN)),
 ):
     company_id = _require_company_id(current_user)
     now = utcnow()
@@ -773,7 +944,7 @@ async def company_deactivate_user(
     user_id: int,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(require_role("company_admin")),
+    current_user: User = Depends(require_role(ROLE_OWNER, ROLE_ADMIN)),
 ):
     company_id = _require_company_id(current_user)
     if user_id == current_user.id:
@@ -782,7 +953,7 @@ async def company_deactivate_user(
     user = await session.get(User, user_id)
     if not user or user.company_id != company_id:
         raise HTTPException(status_code=404, detail="user not found")
-    if user.role == "superadmin":
+    if user.is_superadmin:
         raise HTTPException(status_code=403, detail="cannot deactivate superadmin")
 
     user.is_active = False
@@ -807,7 +978,7 @@ async def company_add_credits(
     payload: CompanyCreditsIn,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(require_role("company_admin")),
+    current_user: User = Depends(require_role(ROLE_OWNER, ROLE_ADMIN)),
 ):
     company_id = _require_company_id(current_user)
     if payload.user_id:
@@ -848,11 +1019,13 @@ async def whoami(current_user: User = Depends(get_current_user)):
         "id": current_user.id,
         "email": current_user.email,
         "role": current_user.role,
+        "org_id": current_user.company_id,
         "company_id": current_user.company_id,
+        "is_superadmin": current_user.is_superadmin,
         "is_active": current_user.is_active,
     }
 
 
 @app.get("/internal/admin-only")
-async def admin_only(current_user: User = Depends(require_role("superadmin"))):
+async def admin_only(current_user: User = Depends(require_superadmin())):
     return {"status": "ok"}

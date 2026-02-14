@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom'
+
 import type { AuthUser } from '../../auth/types'
 import { useConnectivity } from '../../hooks/useConnectivity'
 import type { ChatThread } from '../../types/chat'
@@ -37,6 +39,8 @@ export function ChatShell({
   onLogout,
 }: ChatShellProps) {
   const isOnline = useConnectivity()
+  const orgId = user.org_id ?? user.company_id
+  const canAccessAdmin = user.role === 'owner' || user.role === 'admin'
 
   return (
     <main className="chat-shell">
@@ -52,7 +56,7 @@ export function ChatShell({
           <div className="chat-main__identity">
             <strong>{user.email}</strong>
             <span>
-              role: {user.role} | company_id: {user.company_id ?? '-'} | active:{' '}
+              role: {user.role} | org_id: {orgId ?? '-'} | active:{' '}
               {String(user.is_active)}
             </span>
           </div>
@@ -63,6 +67,11 @@ export function ChatShell({
             >
               {isOnline ? 'Connected' : 'Offline'}
             </span>
+            {canAccessAdmin && orgId ? (
+              <Link to={`/org/${orgId}/admin`} className="button button--secondary">
+                Admin
+              </Link>
+            ) : null}
             <button
               type="button"
               className="button button--secondary"

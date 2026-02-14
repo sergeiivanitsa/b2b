@@ -5,8 +5,14 @@ from product_api.models import Company, Conversation, Invite, Ledger, Message, S
 from product_api.settings import get_settings
 
 
-async def create_company(session, name: str) -> Company:
-    company = Company(name=name)
+async def create_company(
+    session,
+    name: str,
+    inn: str | None = None,
+    phone: str | None = None,
+    status: str = "legacy",
+) -> Company:
+    company = Company(name=name, inn=inn, phone=phone, status=status)
     session.add(company)
     await session.commit()
     return company
@@ -15,11 +21,21 @@ async def create_company(session, name: str) -> Company:
 async def create_user(
     session,
     email: str,
-    role: str,
+    role: str | None,
     company_id: int | None = None,
     is_active: bool = True,
+    is_superadmin: bool = False,
 ) -> User:
-    user = User(email=email, role=role, is_active=is_active, company_id=company_id)
+    if is_superadmin:
+        role = None
+        company_id = None
+    user = User(
+        email=email,
+        role=role,
+        is_active=is_active,
+        company_id=company_id,
+        is_superadmin=is_superadmin,
+    )
     session.add(user)
     await session.commit()
     return user
@@ -54,7 +70,7 @@ async def create_invite(
     session,
     company_id: int,
     email: str,
-    role: str = "user",
+    role: str = "member",
     expires_at: datetime | None = None,
 ) -> tuple[str, Invite]:
     settings = get_settings()

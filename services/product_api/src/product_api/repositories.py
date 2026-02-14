@@ -13,16 +13,43 @@ from product_api.models import (
 )
 
 
-async def create_company(session: AsyncSession, name: str) -> Company:
-    company = Company(name=name)
+async def create_company(
+    session: AsyncSession,
+    name: str,
+    inn: str | None = None,
+    phone: str | None = None,
+    status: str = "legacy",
+) -> Company:
+    company = Company(name=name, inn=inn, phone=phone, status=status)
     session.add(company)
     await session.commit()
     return company
 
 
+async def get_company_by_inn(session: AsyncSession, inn: str) -> Company | None:
+    result = await session.execute(select(Company).where(Company.inn == inn))
+    return result.scalar_one_or_none()
+
+
 async def get_user_by_email(session: AsyncSession, email: str) -> User | None:
     result = await session.execute(select(User).where(User.email == email))
     return result.scalar_one_or_none()
+
+
+async def get_active_invite_by_email(session: AsyncSession, email: str) -> Invite | None:
+    now = utcnow()
+    email = email.lower()
+    result = await session.execute(
+        select(Invite)
+        .where(
+            Invite.email == email,
+            Invite.used_at.is_(None),
+            Invite.expires_at > now,
+        )
+        .order_by(Invite.created_at.desc())
+        .limit(1)
+    )
+    return result.scalars().first()
 
 
 async def create_invite(
@@ -32,16 +59,16 @@ async def create_invite(
     token_hash: str,
     expires_at,
     invited_by_user_id: int | None,
-    role: str = "user",
+    role: str = "member",
 ) -> Invite:
     now = utcnow()
+    email = email.lower()
     await session.execute(
         text(
             "UPDATE invites SET used_at = :now "
-            "WHERE company_id = :company_id AND email = :email "
-            "AND used_at IS NULL AND expires_at <= :now"
+            "WHERE email = :email AND used_at IS NULL AND expires_at <= :now"
         ),
-        {"company_id": company_id, "email": email, "now": now},
+        {"email": email, "now": now},
     )
     invite = Invite(
         company_id=company_id,
