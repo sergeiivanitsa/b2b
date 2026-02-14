@@ -45,6 +45,34 @@ Env examples:
 - Ошибки rate-limit и контента возвращаются в формате `{"detail":{"code","message"}}`.
 - Максимальный размер текста задаётся `MAX_MESSAGE_CHARS`.
 
+## Auth, roles, onboarding (product_api + web_ui)
+- Auth flow: `/login` -> magic link -> `/auth/confirm` -> cookie session.
+- Roles: `owner`, `admin`, `member` (company users) + `is_superadmin` flag.
+- A user can belong to only one company. If `company_id` is set, `role` must be one of `owner/admin/member`.
+- Onboarding endpoint: `POST /onboarding/create-org` (requires `inn` and `phone`).
+- Companies store `inn`, `phone`, `status` (legacy entries can stay without inn/phone).
+
+## UI routes (web_ui)
+- `/login`, `/auth/confirm`, `/invites/accept`
+- `/chat` (main app)
+- `/onboarding/create-org` (only for logged-in users without a company)
+- `/org/:id/admin` (only for `owner/admin` of that org)
+- `/superadmin` (only for superadmin)
+
+## Whoami response (product_api)
+`GET /internal/whoami` returns:
+```json
+{
+  "id": 123,
+  "email": "user@example.com",
+  "role": "owner|admin|member|null",
+  "org_id": 1,
+  "company_id": 1,
+  "is_superadmin": false,
+  "is_active": true
+}
+```
+
 ## Observability (minimum)
 - X-Request-ID is accepted on Product API and propagated to Gateway.
 - Logs redact tokens, secrets, emails, and message content.
@@ -54,7 +82,7 @@ Env examples:
 Product API:
 - `cd services/product_api`
 - `pip install -e .[test]`
-- `pytest`
+- `pytest services/product_api/tests`
 
 Gateway API:
 - `cd services/gateway_api`

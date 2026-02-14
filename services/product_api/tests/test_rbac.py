@@ -12,11 +12,17 @@ async def test_rbac_roles(async_client, engine):
     settings = get_settings()
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         company = await create_company(session, "RBAC Co")
-        superadmin = await create_user(session, "super@rbac.test", "superadmin", None)
-        company_admin = await create_user(
-            session, "admin@rbac.test", "company_admin", company.id
+        superadmin = await create_user(
+            session,
+            "super@rbac.test",
+            None,
+            None,
+            is_superadmin=True,
         )
-        user = await create_user(session, "user@rbac.test", "user", company.id)
+        company_admin = await create_user(
+            session, "admin@rbac.test", "admin", company.id
+        )
+        user = await create_user(session, "user@rbac.test", "member", company.id)
 
         super_cookie = await create_session_cookie(session, superadmin.id)
         admin_cookie = await create_session_cookie(session, company_admin.id)

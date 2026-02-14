@@ -7,9 +7,9 @@ from product_api.db.session import get_session
 from product_api.models import Session, User
 from product_api.settings import get_settings
 
-ROLE_SUPERADMIN = "superadmin"
-ROLE_COMPANY_ADMIN = "company_admin"
-ROLE_USER = "user"
+ROLE_OWNER = "owner"
+ROLE_ADMIN = "admin"
+ROLE_MEMBER = "member"
 
 
 async def _get_user_by_email(session: AsyncSession, email: str) -> User | None:
@@ -20,26 +20,39 @@ async def _get_user_by_email(session: AsyncSession, email: str) -> User | None:
 async def _ensure_user(
     session: AsyncSession,
     email: str,
-    role: str,
+    role: str | None,
     company_id: int | None = None,
+    is_superadmin: bool = False,
 ) -> User:
+    if is_superadmin:
+        role = None
+        company_id = None
     user = await _get_user_by_email(session, email)
     if user:
         updated = False
         if user.role != role:
             user.role = role
             updated = True
+        if user.is_superadmin != is_superadmin:
+            user.is_superadmin = is_superadmin
+            updated = True
         if not user.is_active:
             user.is_active = True
             updated = True
-        if company_id is None and user.company_id is not None:
-            user.company_id = None
+        if user.company_id != company_id:
+            user.company_id = company_id
             updated = True
         if updated:
             await session.commit()
         return user
 
-    user = User(email=email, role=role, is_active=True, company_id=company_id)
+    user = User(
+        email=email,
+        role=role,
+        is_active=True,
+        company_id=company_id,
+        is_superadmin=is_superadmin,
+    )
     session.add(user)
     await session.commit()
     return user
@@ -84,9 +97,18 @@ async def get_current_user(
 
 def require_role(*roles: str):
     async def _dependency(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role == ROLE_SUPERADMIN:
+        if current_user.is_superadmin:
             return current_user
         if current_user.role not in roles:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
+        return current_user
+
+    return _dependency
+
+
+def require_superadmin():
+    async def _dependency(current_user: User = Depends(get_current_user)) -> User:
+        if not current_user.is_superadmin:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
         return current_user
 
@@ -97,7 +119,7 @@ async def require_company_member(
     company_id: int,
     current_user: User = Depends(get_current_user),
 ) -> User:
-    if current_user.role == ROLE_SUPERADMIN:
+    if current_user.is_superadmin:
         return current_user
     if current_user.company_id != company_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")

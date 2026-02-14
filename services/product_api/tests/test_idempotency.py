@@ -17,7 +17,7 @@ async def test_chat_idempotent_ledger(async_client, engine, monkeypatch):
     settings = get_settings()
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         company = await create_company(session, "IdemCo")
-        user = await create_user(session, "user@idem.test", "user", company.id)
+        user = await create_user(session, "user@idem.test", "member", company.id)
         await add_credits(session, company.id, 2, reason="seed")
         cookie = await create_session_cookie(session, user.id)
 

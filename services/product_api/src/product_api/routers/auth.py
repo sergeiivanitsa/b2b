@@ -46,7 +46,7 @@ async def confirm(payload: ConfirmIn, response: Response, session: AsyncSession 
         user_id = user_row[0]
         is_active = user_row[1]
     else:
-        new_user = User(email=email, role="user", is_active=True, company_id=None)
+        new_user = User(email=email, role=None, is_active=True, company_id=None)
         session.add(new_user)
         await session.flush()
         user_id = new_user.id

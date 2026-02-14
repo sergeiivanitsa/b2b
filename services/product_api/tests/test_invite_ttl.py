@@ -18,7 +18,7 @@ async def test_invite_ttl_expired(async_client, engine):
             session,
             company_id=company.id,
             email="expired@invite.test",
-            role="user",
+            role="member",
             expires_at=expired_at,
         )
 

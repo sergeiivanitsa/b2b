@@ -11,6 +11,13 @@ class Company(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    inn: Mapped[str | None] = mapped_column(String(16))
+    phone: Mapped[str | None] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(
+        String(32),
+        server_default=text("'legacy'"),
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -32,9 +39,13 @@ class User(Base):
         ForeignKey("companies.id"), nullable=True
     )
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
-    role: Mapped[str] = mapped_column(
+    role: Mapped[str | None] = mapped_column(
         String(32),
-        server_default=text("'user'"),
+        nullable=True,
+    )
+    is_superadmin: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("false"),
         nullable=False,
     )
     is_active: Mapped[bool] = mapped_column(

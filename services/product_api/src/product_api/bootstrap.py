@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from product_api.db.session import AsyncSessionMaker
 from product_api.models import User
-from product_api.rbac import ROLE_SUPERADMIN
 from product_api.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -25,8 +24,11 @@ async def _upsert_superadmin(session: AsyncSession, email: str) -> None:
     user = result.scalar_one_or_none()
     if user:
         updated = False
-        if user.role != ROLE_SUPERADMIN:
-            user.role = ROLE_SUPERADMIN
+        if not user.is_superadmin:
+            user.is_superadmin = True
+            updated = True
+        if user.role is not None:
+            user.role = None
             updated = True
         if not user.is_active:
             user.is_active = True
@@ -39,7 +41,13 @@ async def _upsert_superadmin(session: AsyncSession, email: str) -> None:
             logger.info("superadmin updated")
         return
 
-    user = User(email=email, role=ROLE_SUPERADMIN, is_active=True, company_id=None)
+    user = User(
+        email=email,
+        role=None,
+        is_active=True,
+        company_id=None,
+        is_superadmin=True,
+    )
     session.add(user)
     await session.commit()
     logger.info("superadmin created")

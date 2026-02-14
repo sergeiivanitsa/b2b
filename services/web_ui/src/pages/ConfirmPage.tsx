@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 
 import { toUserMessage } from '../auth/errors'
+import { resolvePostAuthRoute } from '../auth/postAuthRoute'
 import { useAuth } from '../auth/useAuth'
 
 export function ConfirmPage() {
@@ -28,8 +29,8 @@ export function ConfirmPage() {
       setError(null)
 
       try {
-        await confirmToken(normalizedToken)
-        navigate('/chat', { replace: true })
+        const nextUser = await confirmToken(normalizedToken)
+        navigate(resolvePostAuthRoute(nextUser), { replace: true })
       } catch (submitError) {
         setError(toUserMessage(submitError, 'Could not confirm token.'))
       } finally {

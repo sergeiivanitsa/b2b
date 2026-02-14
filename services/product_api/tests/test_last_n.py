@@ -23,7 +23,7 @@ async def test_last_n_trimming(async_client, engine, monkeypatch):
     settings = get_settings()
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         company = await create_company(session, "TrimCo")
-        user = await create_user(session, "user@trim.test", "user", company.id)
+        user = await create_user(session, "user@trim.test", "member", company.id)
         await add_credits(session, company.id, 5, reason="seed")
         cookie = await create_session_cookie(session, user.id)
         conversation = await create_conversation(session, company.id, user.id)

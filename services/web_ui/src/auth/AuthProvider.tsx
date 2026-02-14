@@ -22,12 +22,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
       const nextUser = await fetchWhoami()
       setUser(nextUser)
       setStatus('authenticated')
+      return nextUser
     } catch (error) {
       setUser(null)
       setStatus('anonymous')
       if (!isUnauthorizedError(error)) {
         throw error
       }
+      return null
     }
   }, [])
 
@@ -62,7 +64,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const confirmToken = useCallback(
     async (token: string) => {
       await confirmMagicToken(token)
-      await refreshWhoami()
+      return refreshWhoami()
     },
     [refreshWhoami],
   )
@@ -70,7 +72,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const acceptInvite = useCallback(
     async (token: string) => {
       await acceptInviteToken(token)
-      await refreshWhoami()
+      return refreshWhoami()
     },
     [refreshWhoami],
   )

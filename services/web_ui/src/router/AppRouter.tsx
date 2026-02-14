@@ -5,7 +5,12 @@ import { ChatPage } from '../pages/ChatPage'
 import { ConfirmPage } from '../pages/ConfirmPage'
 import { InviteAcceptPage } from '../pages/InviteAcceptPage'
 import { LoginPage } from '../pages/LoginPage'
+import { OnboardingCreateOrgPage } from '../pages/OnboardingCreateOrgPage'
+import { OrgAdminPage } from '../pages/OrgAdminPage'
+import { SuperadminPage } from '../pages/SuperadminPage'
+import { resolvePostAuthRoute } from '../auth/postAuthRoute'
 import { RequireAuth } from './RequireAuth'
+import { RequireOnboarding, RequireOrgAdmin, RequireSuperadmin } from './RequireRole'
 
 export function AppRouter() {
   return (
@@ -17,13 +22,24 @@ export function AppRouter() {
       <Route element={<RequireAuth />}>
         <Route path="/chat" element={<ChatPage />} />
       </Route>
+      <Route element={<RequireAuth />}>
+        <Route element={<RequireOnboarding />}>
+          <Route path="/onboarding/create-org" element={<OnboardingCreateOrgPage />} />
+        </Route>
+        <Route element={<RequireOrgAdmin />}>
+          <Route path="/org/:id/admin" element={<OrgAdminPage />} />
+        </Route>
+        <Route element={<RequireSuperadmin />}>
+          <Route path="/superadmin" element={<SuperadminPage />} />
+        </Route>
+      </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
 }
 
 function HomeRedirect() {
-  const { status } = useAuth()
+  const { status, user } = useAuth()
 
   if (status === 'loading') {
     return (
@@ -36,11 +52,16 @@ function HomeRedirect() {
     )
   }
 
-  return <Navigate to={status === 'authenticated' ? '/chat' : '/login'} replace />
+  return (
+    <Navigate
+      to={status === 'authenticated' ? resolvePostAuthRoute(user) : '/login'}
+      replace
+    />
+  )
 }
 
 function LoginRoute() {
-  const { status } = useAuth()
+  const { status, user } = useAuth()
 
   if (status === 'loading') {
     return (
@@ -54,7 +75,7 @@ function LoginRoute() {
   }
 
   if (status === 'authenticated') {
-    return <Navigate to="/chat" replace />
+    return <Navigate to={resolvePostAuthRoute(user)} replace />
   }
 
   return <LoginPage />
