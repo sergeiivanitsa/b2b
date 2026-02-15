@@ -86,7 +86,10 @@ def health():
 
 
 @app.get("/internal/db-ping")
-async def db_ping(session: AsyncSession = Depends(get_session)):
+async def db_ping(
+    session: AsyncSession = Depends(get_session),
+    _current_user: User = Depends(require_superadmin()),
+):
     try:
         await session.execute(text("SELECT 1"))
     except Exception:
@@ -180,6 +183,27 @@ class CreditsIn(BaseModel):
     idempotency_key: str | None = None
 
 
+def _is_duplicate_idempotency_key_error(exc: IntegrityError) -> bool:
+    # Treat only unique-key collisions for ledger.idempotency_key as a user-level
+    # conflict (409). Other integrity errors should not be remapped.
+    orig = exc.orig
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if sqlstate != "23505":
+        return False
+
+    diag = getattr(orig, "diag", None)
+    constraint_name = (
+        getattr(diag, "constraint_name", None)
+        or getattr(orig, "constraint_name", None)
+        or ""
+    )
+    if "idempotency_key" in str(constraint_name).lower():
+        return True
+
+    detail = (getattr(orig, "detail", None) or str(orig)).lower()
+    return "idempotency_key" in detail
+
+
 @app.post("/admin/companies")
 async def admin_create_company(
     payload: CompanyCreateIn,
@@ -210,6 +234,13 @@ async def admin_invite_company_admin(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_superadmin()),
 ):
+    company_exists = await session.execute(
+        text("SELECT id FROM companies WHERE id = :id"),
+        {"id": company_id},
+    )
+    if not company_exists.first():
+        raise HTTPException(status_code=404, detail="company not found")
+
     email = payload.email.lower()
     active_invite = await get_active_invite_by_email(session, email)
     if active_invite:
@@ -273,15 +304,30 @@ async def admin_add_credits(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_superadmin()),
 ):
-    key = payload.idempotency_key or generate_raw_token()
-    entry = await add_ledger_entry(
-        session=session,
-        company_id=company_id,
-        user_id=None,
-        delta=payload.amount,
-        reason=payload.reason,
-        idempotency_key=key,
+    company_exists = await session.execute(
+        text("SELECT id FROM companies WHERE id = :id"),
+        {"id": company_id},
     )
+    if not company_exists.first():
+        raise HTTPException(status_code=404, detail="company not found")
+
+    if payload.amount == 0:
+        raise HTTPException(status_code=400, detail="amount must not be zero")
+
+    key = payload.idempotency_key or generate_raw_token()
+    try:
+        entry = await add_ledger_entry(
+            session=session,
+            company_id=company_id,
+            user_id=None,
+            delta=payload.amount,
+            reason=payload.reason,
+            idempotency_key=key,
+        )
+    except IntegrityError as exc:
+        if _is_duplicate_idempotency_key_error(exc):
+            raise HTTPException(status_code=409, detail="duplicate idempotency_key")
+        raise
     await write_audit_log(
         session=session,
         actor_user_id=current_user.id,
