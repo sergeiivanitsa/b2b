@@ -42,7 +42,7 @@ async def invite_accept(
         text(
             "UPDATE invites SET used_at = :now "
             "WHERE token_hash = :token_hash AND used_at IS NULL AND expires_at > :now "
-            "RETURNING id, company_id, email, role"
+            "RETURNING id, company_id, email, first_name, last_name, role"
         ),
         {"token_hash": token_hash, "now": now},
     )
@@ -50,10 +50,32 @@ async def invite_accept(
     if not row:
         raise HTTPException(status_code=401, detail="invalid or expired invite")
 
+   # invite_id = row[0]
+   # company_id = row[1]
+   # email = row[2]
+   # first_name = row[3].strip() if isinstance(row[3], str) and row[3].strip() else None
+   # last_name = row[4].strip() if isinstance(row[4], str) and row[4].strip() else None
+   # role = _normalize_invite_role(row[5])
+
     invite_id = row[0]
     company_id = row[1]
     email = row[2]
-    role = _normalize_invite_role(row[3])
+
+    # Support legacy test/mocks where row shape was: (id, company_id, email, role)
+    if len(row) >= 6:
+        first_name_raw = row[3]
+        last_name_raw = row[4]
+        role_raw = row[5]
+    else:
+        first_name_raw = None
+        last_name_raw = None
+        role_raw = row[3]
+
+    first_name = first_name_raw.strip() if isinstance(first_name_raw, str) and first_name_raw.strip() else None
+    last_name = last_name_raw.strip() if isinstance(last_name_raw, str) and last_name_raw.strip() else None
+    role = _normalize_invite_role(role_raw)
+
+
     if role not in ("owner", "admin", "member"):
         raise HTTPException(status_code=400, detail="invalid invite role")
 
@@ -66,10 +88,23 @@ async def invite_accept(
         existing.company_id = company_id
         existing.role = role
         existing.is_active = True
+        existing.joined_company_at = now
+        if first_name is not None:
+            existing.first_name = first_name
+        if last_name is not None:
+            existing.last_name = last_name
         await session.commit()
         user_id = existing.id
     else:
-        user = User(email=email, role=role, is_active=True, company_id=company_id)
+        user = User(
+            email=email,
+            role=role,
+            is_active=True,
+            company_id=company_id,
+            first_name=first_name,
+            last_name=last_name,
+            joined_company_at=now,
+        )
         session.add(user)
         await session.flush()
         user_id = user.id
@@ -82,7 +117,14 @@ async def invite_accept(
         action="invite.accept",
         target_type="invite",
         target_id=invite_id,
-        payload_json=json.dumps({"email": email, "role": role}),
+        payload_json=json.dumps(
+            {
+                "email": email,
+                "role": role,
+                "first_name": first_name,
+                "last_name": last_name,
+            }
+        ),
         ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )

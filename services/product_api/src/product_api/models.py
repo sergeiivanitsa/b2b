@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, func, text
+from sqlalchemy import CheckConstraint, JSON, Boolean, DateTime, ForeignKey, String, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db.base import Base
@@ -39,6 +39,8 @@ class User(Base):
         ForeignKey("companies.id"), nullable=True
     )
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
+    first_name: Mapped[str | None] = mapped_column(String(120))
+    last_name: Mapped[str | None] = mapped_column(String(120))
     role: Mapped[str | None] = mapped_column(
         String(32),
         nullable=True,
@@ -58,6 +60,7 @@ class User(Base):
         server_default=func.now(),
         nullable=False,
     )
+    joined_company_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -101,6 +104,8 @@ class Invite(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     email: Mapped[str] = mapped_column(String(320), nullable=False)
+    first_name: Mapped[str | None] = mapped_column(String(120))
+    last_name: Mapped[str | None] = mapped_column(String(120))
     role: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'user'"))
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -188,5 +193,34 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
+        nullable=False,
+    )
+
+
+class UserCreditLimit(Base):
+    __tablename__ = "user_credit_limits"
+    __table_args__ = (
+        CheckConstraint(
+            "remaining_credits >= 0",
+            name="ck_user_credit_limits_remaining_credits_non_negative",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, unique=True)
+    remaining_credits: Mapped[int] = mapped_column(
+        nullable=False,
+        server_default=text("0"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
         nullable=False,
     )
