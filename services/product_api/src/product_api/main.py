@@ -17,24 +17,40 @@ from product_api.db.session import get_session
 from product_api.emailer import send_magic_link
 from product_api.gateway_client import GatewayError, send_chat, stream_chat
 from product_api.logging_config import configure_logging
-from product_api.models import AuthToken, Conversation, Ledger, Message, User
+from product_api.models import AuthToken, Conversation, Message, User
 from product_api.request_id import REQUEST_ID_HEADER, set_request_id
 from product_api.rbac import (
     ROLE_ADMIN,
     ROLE_MEMBER,
     ROLE_OWNER,
+    ensure_can_manage_user_limit,
     get_current_user,
+    require_company_manager,
     require_role,
     require_superadmin,
 )
 from product_api.repositories import (
     add_ledger_entry,
+    apply_user_limit_delta,
+    ChatCreditsCompanyInsufficientError,
+    ChatCreditsUserInsufficientError,
     create_company,
     create_conversation,
     create_invite,
+    detach_company_user,
+    DetachUserForbiddenError,
+    DetachUserNotFoundError,
     get_active_invite_by_email,
     get_company_by_inn,
+    get_company_pool_balance,
+    get_company_summary_data,
+    get_user_credit_limit,
     get_user_by_email,
+    list_company_users_with_stats,
+    reserve_chat_credits,
+    UserLimitExceedsPoolError,
+    UserLimitNegativeError,
+    UserLimitUserNotFoundError,
     write_audit_log,
 )
 from product_api.rate_limit import RateLimitConfig, RateLimiter
@@ -533,6 +549,8 @@ async def superadmin_update_org(
 
 class InviteIn(BaseModel):
     email: EmailStr
+    first_name: str | None = None
+    last_name: str | None = None
 
 
 class CompanyCreditsIn(BaseModel):
@@ -542,11 +560,27 @@ class CompanyCreditsIn(BaseModel):
     user_id: int | None = None
 
 
+class CompanyUserLimitPatchIn(BaseModel):
+    delta: int
+    reason: str
+
+
 class ChatIn(BaseModel):
     conversation_id: int | None = None
     client_message_id: str
     content: str
     stream: bool = False
+
+
+def _normalize_person_name(value: str | None, field_name: str) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if len(normalized) > 120:
+        raise HTTPException(status_code=400, detail=f"{field_name} is too long")
+    return normalized
 
 
 def _require_company_id(current_user: User) -> int:
@@ -602,6 +636,88 @@ def _format_sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _insufficient_company_credits_detail() -> dict[str, str]:
+    return {
+        "code": "insufficient_company_credits",
+        "message": "insufficient company credits",
+    }
+
+
+def _insufficient_user_credits_detail() -> dict[str, str]:
+    return {
+        "code": "insufficient_user_credits",
+        "message": "insufficient user credits",
+    }
+
+
+async def _ensure_chat_credits_available(
+    session: AsyncSession,
+    company_id: int,
+    user_id: int,
+) -> None:
+    pool_balance = await get_company_pool_balance(session, company_id)
+    if pool_balance <= 0:
+        raise HTTPException(
+            status_code=402,
+            detail=_insufficient_company_credits_detail(),
+        )
+    user_limit = await get_user_credit_limit(session, user_id)
+    remaining = int(user_limit.remaining_credits or 0) if user_limit else 0
+    if remaining <= 0:
+        raise HTTPException(
+            status_code=402,
+            detail=_insufficient_user_credits_detail(),
+        )
+
+
+@app.get("/company/summary")
+async def company_summary(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_role(ROLE_OWNER, ROLE_ADMIN)),
+):
+    company_id = _require_company_id(current_user)
+    summary = await get_company_summary_data(session, company_id)
+    if not summary:
+        raise HTTPException(status_code=404, detail="company not found")
+
+    await write_audit_log(
+        session=session,
+        actor_user_id=current_user.id,
+        company_id=company_id,
+        action="company.summary.view",
+        target_type="company",
+        target_id=company_id,
+        payload_json=json.dumps({}),
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    return summary
+
+
+@app.get("/company/users/stats")
+async def company_users_stats(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_role(ROLE_OWNER, ROLE_ADMIN)),
+):
+    company_id = _require_company_id(current_user)
+    users = await list_company_users_with_stats(session, company_id)
+
+    await write_audit_log(
+        session=session,
+        actor_user_id=current_user.id,
+        company_id=company_id,
+        action="company.users.stats.list",
+        target_type="company",
+        target_id=company_id,
+        payload_json=json.dumps({}),
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    return {"users": users}
+
+
 @app.get("/company/users")
 async def company_users(
     request: Request,
@@ -642,6 +758,8 @@ async def company_invite_user(
 ):
     company_id = _require_company_id(current_user)
     email = payload.email.lower()
+    first_name = _normalize_person_name(payload.first_name, "first_name")
+    last_name = _normalize_person_name(payload.last_name, "last_name")
     active_invite = await get_active_invite_by_email(session, email)
     if active_invite:
         if active_invite.company_id != company_id:
@@ -668,6 +786,8 @@ async def company_invite_user(
             expires_at=expires_at,
             invited_by_user_id=current_user.id,
             role=ROLE_MEMBER,
+            first_name=first_name,
+            last_name=last_name,
         )
     except IntegrityError:
         raise HTTPException(status_code=409, detail="active invite already exists")
@@ -682,7 +802,14 @@ async def company_invite_user(
         action="invite.create",
         target_type="invite",
         target_id=None,
-        payload_json=json.dumps({"email": email, "role": ROLE_MEMBER}),
+        payload_json=json.dumps(
+            {
+                "email": email,
+                "role": ROLE_MEMBER,
+                "first_name": first_name,
+                "last_name": last_name,
+            }
+        ),
         ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
@@ -704,7 +831,7 @@ async def company_invites(
     now = utcnow()
     result = await session.execute(
         text(
-            "SELECT id, email, role, expires_at, created_at "
+            "SELECT id, email, first_name, last_name, role, expires_at, created_at "
             "FROM invites WHERE company_id = :cid AND used_at IS NULL AND expires_at > :now "
             "ORDER BY created_at DESC"
         ),
@@ -714,9 +841,11 @@ async def company_invites(
         {
             "id": row[0],
             "email": row[1],
-            "role": row[2],
-            "expires_at": row[3].isoformat(),
-            "created_at": row[4].isoformat(),
+            "first_name": row[2],
+            "last_name": row[3],
+            "role": row[4],
+            "expires_at": row[5].isoformat(),
+            "created_at": row[6].isoformat(),
         }
         for row in result.fetchall()
     ]
@@ -769,8 +898,8 @@ async def chat_v1(
             detail={"code": "rate_limited", "message": "rate limit"},
         )
     conversation_id = payload.conversation_id
-    balance_checked = False
     content_checked = False
+    credits_checked = False
 
     if conversation_id is not None:
         result = await session.execute(
@@ -790,14 +919,12 @@ async def chat_v1(
                 detail={"code": "content_too_long", "message": "content too long"},
             )
         content_checked = True
-        balance_result = await session.execute(
-            text("SELECT COALESCE(SUM(delta),0) FROM ledger WHERE company_id = :cid"),
-            {"cid": company_id},
+        await _ensure_chat_credits_available(
+            session=session,
+            company_id=company_id,
+            user_id=current_user.id,
         )
-        balance = balance_result.scalar_one()
-        if balance <= 0:
-            raise HTTPException(status_code=402, detail="insufficient credits")
-        balance_checked = True
+        credits_checked = True
 
         conversation = await create_conversation(
             session=session,
@@ -843,14 +970,12 @@ async def chat_v1(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"code": "content_too_long", "message": "content too long"},
             )
-        if not balance_checked:
-            balance_result = await session.execute(
-                text("SELECT COALESCE(SUM(delta),0) FROM ledger WHERE company_id = :cid"),
-                {"cid": company_id},
+        if not credits_checked:
+            await _ensure_chat_credits_available(
+                session=session,
+                company_id=company_id,
+                user_id=current_user.id,
             )
-            balance = balance_result.scalar_one()
-            if balance <= 0:
-                raise HTTPException(status_code=402, detail="insufficient credits")
 
         try:
             user_message = Message(
@@ -874,16 +999,25 @@ async def chat_v1(
             )
             session.add(assistant_message)
 
-            ledger_entry = Ledger(
+            await reserve_chat_credits(
+                session=session,
                 company_id=company_id,
                 user_id=current_user.id,
                 message_id=user_message.id,
-                delta=-1,
-                reason="chat_message",
-                idempotency_key=f"msg:{user_message.id}",
             )
-            session.add(ledger_entry)
             await session.commit()
+        except ChatCreditsCompanyInsufficientError:
+            await session.rollback()
+            raise HTTPException(
+                status_code=402,
+                detail=_insufficient_company_credits_detail(),
+            )
+        except ChatCreditsUserInsufficientError:
+            await session.rollback()
+            raise HTTPException(
+                status_code=402,
+                detail=_insufficient_user_credits_detail(),
+            )
         except IntegrityError:
             await session.rollback()
             existing = await session.execute(
@@ -1019,44 +1153,148 @@ async def company_deactivate_user(
     return {"status": "ok"}
 
 
-@app.post("/company/credits")
-async def company_add_credits(
-    payload: CompanyCreditsIn,
+@app.patch("/company/users/{user_id}/limit")
+async def company_update_user_limit(
+    user_id: int,
+    payload: CompanyUserLimitPatchIn,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(require_role(ROLE_OWNER, ROLE_ADMIN)),
+    current_user: User = Depends(require_company_manager()),
 ):
     company_id = _require_company_id(current_user)
-    if payload.user_id:
-        user = await session.get(User, payload.user_id)
-        if not user or user.company_id != company_id:
-            raise HTTPException(status_code=404, detail="user not found")
+    if payload.delta == 0:
+        raise HTTPException(status_code=400, detail="invalid delta")
+    reason = payload.reason.strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="reason is required")
 
-    key = payload.idempotency_key or generate_raw_token()
+    target_user = await session.get(User, user_id)
+    if not target_user or target_user.company_id != company_id:
+        raise HTTPException(status_code=404, detail="user not found")
+    if target_user.is_superadmin:
+        raise HTTPException(status_code=403, detail="cannot change superadmin limit")
+    ensure_can_manage_user_limit(current_user, target_user)
+
     try:
-        entry = await add_ledger_entry(
+        result = await apply_user_limit_delta(
             session=session,
             company_id=company_id,
-            user_id=payload.user_id,
-            delta=payload.amount,
-            reason=payload.reason,
-            idempotency_key=key,
+            user_id=user_id,
+            delta=payload.delta,
         )
-    except IntegrityError:
-        raise HTTPException(status_code=409, detail="duplicate idempotency_key")
+    except UserLimitUserNotFoundError:
+        raise HTTPException(status_code=404, detail="user not found")
+    except UserLimitNegativeError:
+        raise HTTPException(status_code=400, detail="limit cannot be negative")
+    except UserLimitExceedsPoolError:
+        raise HTTPException(status_code=409, detail="allocation exceeds company pool balance")
 
     await write_audit_log(
         session=session,
         actor_user_id=current_user.id,
         company_id=company_id,
-        action="credits.add",
-        target_type="ledger",
-        target_id=entry.id,
-        payload_json=json.dumps({"amount": payload.amount, "reason": payload.reason}),
+        action="user.limit.update",
+        target_type="user",
+        target_id=user_id,
+        payload_json=json.dumps(
+            {
+                "delta": payload.delta,
+                "reason": reason,
+            }
+        ),
         ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
-    return {"status": "ok", "id": entry.id}
+    return {
+        "status": "ok",
+        "user": result["user"],
+        "credits": result["credits"],
+    }
+
+
+@app.post("/company/users/{user_id}/detach")
+async def company_detach_user(
+    user_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_company_manager()),
+):
+    company_id = _require_company_id(current_user)
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="cannot detach self")
+
+    target_user = await session.get(User, user_id)
+    if not target_user or target_user.company_id != company_id:
+        raise HTTPException(status_code=404, detail="user not found")
+    if target_user.is_superadmin:
+        raise HTTPException(status_code=403, detail="cannot detach superadmin")
+    ensure_can_manage_user_limit(current_user, target_user)
+
+    try:
+        result = await detach_company_user(
+            session=session,
+            company_id=company_id,
+            user_id=user_id,
+        )
+    except DetachUserNotFoundError:
+        raise HTTPException(status_code=404, detail="user not found")
+    except DetachUserForbiddenError:
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    await write_audit_log(
+        session=session,
+        actor_user_id=current_user.id,
+        company_id=company_id,
+        action="user.detach",
+        target_type="user",
+        target_id=user_id,
+        payload_json=json.dumps(
+            {
+                "released_limit": result["released_limit"],
+                "previous_company_id": result["previous_company_id"],
+                "previous_role": result["previous_role"],
+            }
+        ),
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    return {
+        "status": "ok",
+        "user": result["user"],
+        "released_limit": result["released_limit"],
+    }
+
+
+@app.post("/company/credits")
+async def company_add_credits(
+    payload: CompanyCreditsIn,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_company_manager()),
+):
+    company_id = _require_company_id(current_user)
+
+    await write_audit_log(
+        session=session,
+        actor_user_id=current_user.id,
+        company_id=company_id,
+        action="credits.add.blocked",
+        target_type="company",
+        target_id=company_id,
+        payload_json=json.dumps(
+            {
+                "amount": payload.amount,
+                "reason": payload.reason,
+                "user_id": payload.user_id,
+            }
+        ),
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    raise HTTPException(
+        status_code=403,
+        detail="company pool can only be changed by superadmin",
+    )
 
 
 @app.get("/internal/whoami")

@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.schemas import ChatResponse
 
 import product_api.main as product_main
-from product_api.models import Ledger
+from product_api.models import Ledger, UserCreditLimit
 from product_api.settings import get_settings
 
 from .utils import add_credits, create_company, create_session_cookie, create_user
@@ -19,6 +19,14 @@ async def test_chat_idempotent_ledger(async_client, engine, monkeypatch):
         company = await create_company(session, "IdemCo")
         user = await create_user(session, "user@idem.test", "member", company.id)
         await add_credits(session, company.id, 2, reason="seed")
+        session.add(
+            UserCreditLimit(
+                company_id=company.id,
+                user_id=user.id,
+                remaining_credits=2,
+            )
+        )
+        await session.commit()
         cookie = await create_session_cookie(session, user.id)
 
     async def fake_send_chat(_settings, _payload):
@@ -41,8 +49,12 @@ async def test_chat_idempotent_ledger(async_client, engine, monkeypatch):
     count_stmt = select(func.count()).select_from(Ledger).where(
         Ledger.message_id == user_message_id
     )
+    limit_stmt = select(UserCreditLimit.remaining_credits).where(
+        UserCreditLimit.user_id == user.id
+    )
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         count1 = (await session.execute(count_stmt)).scalar_one()
+        remaining1 = (await session.execute(limit_stmt)).scalar_one()
 
     resp2 = await async_client.post(
         "/v1/chat",
@@ -59,5 +71,8 @@ async def test_chat_idempotent_ledger(async_client, engine, monkeypatch):
 
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         count2 = (await session.execute(count_stmt)).scalar_one()
+        remaining2 = (await session.execute(limit_stmt)).scalar_one()
     assert count1 == 1
     assert count2 == 1
+    assert remaining1 == 1
+    assert remaining2 == 1

@@ -1,4 +1,4 @@
-# B2B Chat MVP (RU product + US/EU gateway)
+﻿# B2B Chat MVP (RU product + US/EU gateway)
 
 This repo contains two FastAPI services:
 - product_api (RU)
@@ -23,7 +23,7 @@ Env examples:
 - All /internal and /v1 endpoints require HMAC signature with timestamp+nonce.
 - Set `GATEWAY_SHARED_SECRET` in both services before using any signed endpoints (local tests or prod deploy); generate a strong value for production.
 
-## Product → Gateway contract (MVP)
+## Product в†’ Gateway contract (MVP)
 - Product API calls `POST /v1/chat` on Gateway.
 - Headers include `X-Request-ID` and HMAC signature (method+path+timestamp+nonce+body_sha256).
 - Body uses shared schemas from `shared/schemas.py`, with `metadata` containing company/user/conversation/message.
@@ -40,10 +40,10 @@ Env examples:
 - Product API stores assistant `text` + `usage` in `messages.usage_json`.
 
 ## Rate limiting + content limits (product_api)
-- `/v1/chat` лимитируется по company/user/ip (RPM значения в env).
-- `/auth/request-link` лимитируется по email+ip (in-memory).
-- Ошибки rate-limit и контента возвращаются в формате `{"detail":{"code","message"}}`.
-- Максимальный размер текста задаётся `MAX_MESSAGE_CHARS`.
+- `/v1/chat` is rate-limited by company/user/ip (RPM values from env).
+- `/auth/request-link` is rate-limited by email+ip (in-memory).
+- Rate-limit and content errors are returned as `{"detail":{"code","message"}}`.
+- Maximum message size is controlled by `MAX_MESSAGE_CHARS`.
 
 ## Auth, roles, onboarding (product_api + web_ui)
 - Auth flow: `/login` -> magic link -> `/auth/confirm` -> cookie session.
@@ -58,6 +58,29 @@ Env examples:
 - `/onboarding/create-org` (only for logged-in users without a company)
 - `/org/:id/admin` (only for `owner/admin` of that org)
 - `/superadmin` (only for superadmin)
+
+## Company Admin access matrix (web_ui)
+- `owner` and `admin` can open `/org/:id/admin` only for their own org/company id.
+- `member` is redirected to `/chat`.
+- Anonymous user is redirected to `/login`.
+
+## Company credit model (product_api + web_ui)
+- `company pool` is the real company balance (ledger-backed), top-up is superadmin-only.
+- `user remaining credits` is an internal employee limit (`user_credit_limits`).
+- Invariant: sum of active user limits must stay `<= company pool`.
+- `PATCH /company/users/{id}/limit` changes only user limit distribution, not company pool.
+- `/v1/chat` enforces both resources per message:
+  - decrements company pool in `ledger` with `reason="chat_message"`
+  - decrements user `remaining_credits`
+- If any resource is insufficient, `/v1/chat` returns `402` with specific code:
+  - `insufficient_company_credits`
+  - `insufficient_user_credits`
+
+## Org vs Company naming
+- Backend canonical term is `company` (`company_id`, `/company/*` endpoints).
+- UI route keeps `/org/:id/admin` for compatibility.
+- In current product, `org_id` in UI maps to backend `company_id` (same numeric id).
+- For new API and docs, prefer `company` term to avoid ambiguity.
 
 ## Whoami response (product_api)
 `GET /internal/whoami` returns:
@@ -89,6 +112,12 @@ Gateway API:
 - `pip install -e .[test]`
 - `pytest`
 
+Web UI:
+- `cd services/web_ui`
+- `npm install`
+- `npm run test`
+- `npm run build`
+
 Note: Product API tests expect `DATABASE_URL` (or `TEST_DATABASE_URL`) and a running Postgres.
 
 ## Production deployment (2 servers)
@@ -113,8 +142,8 @@ Nginx:
 - Replace allowlist IPs in gateway config with RU server public IPs.
 
 Release order:
-- RU: `git pull` → `docker compose build product_api` → `docker compose up -d product_api` → `alembic upgrade head` → `docker compose restart product_api`
-- Gateway: `git pull` → `docker compose build gateway_api` → `docker compose up -d gateway_api`
+- RU: `git pull` в†’ `docker compose build product_api` в†’ `docker compose up -d product_api` в†’ `alembic upgrade head` в†’ `docker compose restart product_api`
+- Gateway: `git pull` в†’ `docker compose build gateway_api` в†’ `docker compose up -d gateway_api`
 
 ## SMTP requirements (product_api)
 Set these env vars before production deploy:
@@ -127,11 +156,13 @@ Set these env vars before production deploy:
 - If Gateway fails or times out, the client retries with the same `client_message_id`.
 - Product API will return the same `user_message_id` + `assistant_message_id` without double-charging.
 - Charge is recorded in `ledger` once per user message via `ledger.message_id` unique constraint.
-- If company balance is <= 0, `POST /v1/chat` returns `402` with `insufficient credits`.
+- Retry with the same `client_message_id` does not double-charge company pool or user limit.
+- Runtime checks for `/v1/chat`:
+  - company pool must be sufficient
+  - user remaining credits must be sufficient
 
 ## Migrations (product_api)
 Run from `services/product_api`:
 - alembic upgrade head
 - alembic revision --autogenerate -m "init"
 
-<-- дубль ( должен упасть ci-cd smoke: 10 фев 2026 г. 20:53:38 -->

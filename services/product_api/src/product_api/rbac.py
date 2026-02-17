@@ -106,6 +106,10 @@ def require_role(*roles: str):
     return _dependency
 
 
+def require_company_manager():
+    return require_role(ROLE_OWNER, ROLE_ADMIN)
+
+
 def require_superadmin():
     async def _dependency(current_user: User = Depends(get_current_user)) -> User:
         if not current_user.is_superadmin:
@@ -113,6 +117,15 @@ def require_superadmin():
         return current_user
 
     return _dependency
+
+
+def ensure_can_manage_user_limit(actor: User, target: User) -> None:
+    if actor.id == target.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="cannot change own limit")
+    if actor.company_id is None or target.company_id != actor.company_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
+    if actor.role == ROLE_ADMIN and target.role in (ROLE_OWNER, ROLE_ADMIN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
 
 
 async def require_company_member(
