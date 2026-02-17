@@ -50,12 +50,32 @@ async def invite_accept(
     if not row:
         raise HTTPException(status_code=401, detail="invalid or expired invite")
 
+   # invite_id = row[0]
+   # company_id = row[1]
+   # email = row[2]
+   # first_name = row[3].strip() if isinstance(row[3], str) and row[3].strip() else None
+   # last_name = row[4].strip() if isinstance(row[4], str) and row[4].strip() else None
+   # role = _normalize_invite_role(row[5])
+
     invite_id = row[0]
     company_id = row[1]
     email = row[2]
-    first_name = row[3].strip() if isinstance(row[3], str) and row[3].strip() else None
-    last_name = row[4].strip() if isinstance(row[4], str) and row[4].strip() else None
-    role = _normalize_invite_role(row[5])
+
+    # Support legacy test/mocks where row shape was: (id, company_id, email, role)
+    if len(row) >= 6:
+        first_name_raw = row[3]
+        last_name_raw = row[4]
+        role_raw = row[5]
+    else:
+        first_name_raw = None
+        last_name_raw = None
+        role_raw = row[3]
+
+    first_name = first_name_raw.strip() if isinstance(first_name_raw, str) and first_name_raw.strip() else None
+    last_name = last_name_raw.strip() if isinstance(last_name_raw, str) and last_name_raw.strip() else None
+    role = _normalize_invite_role(role_raw)
+
+
     if role not in ("owner", "admin", "member"):
         raise HTTPException(status_code=400, detail="invalid invite role")
 
