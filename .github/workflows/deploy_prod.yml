@@ -58,8 +58,10 @@ jobs:
           git checkout main
           git reset --hard origin/main
 
-          docker compose -f docker-compose.product.yml --env-file .env.product up -d --build
+          # Apply DB migrations before starting API (prevents "column does not exist" crashes)
+          docker compose -f docker-compose.product.yml --env-file .env.product run --rm --no-deps --build product_api sh -lc "cd /app/services/product_api && alembic -c alembic.ini upgrade head"
 
+          docker compose -f docker-compose.product.yml --env-file .env.product up -d --build
           # health retry ~60s (12*5s)
           ok=0
           for i in $(seq 1 12); do
