@@ -687,6 +687,137 @@ body {
   align-items: end;
 }
 
+.company-admin-page {
+  min-height: 100vh;
+  padding: 18px;
+  background: #f2f2f2;
+}
+
+.company-admin-shell {
+  max-width: 1320px;
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
+}
+
+.company-admin-header {
+  border: 1px solid #d5d5d5;
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.company-admin-header__main {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.company-admin-header__title {
+  margin: 0;
+  font-size: 1.5rem;
+  line-height: 1.2;
+}
+
+.company-admin-header__meta {
+  margin: 0;
+  color: #4c4c4c;
+  font-size: 0.92rem;
+}
+
+.company-admin-header__actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.company-admin-section {
+  border: 1px solid #d5d5d5;
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.company-admin-section__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.company-admin-section__title {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.company-admin-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.company-admin-box {
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  background: #fcfcfc;
+  padding: 12px;
+}
+
+.company-admin-box__title {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.company-admin-table-wrap {
+  overflow-x: auto;
+}
+
+.company-admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 820px;
+}
+
+.company-admin-table th,
+.company-admin-table td {
+  text-align: left;
+  border-bottom: 1px solid #e4e4e4;
+  padding: 8px 9px;
+  vertical-align: top;
+  font-size: 0.92rem;
+}
+
+.company-admin-table th {
+  background: #fafafa;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.company-admin-row-actions {
+  min-width: 220px;
+  display: grid;
+  gap: 8px;
+}
+
+.company-admin-inline-form {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  align-items: end;
+}
+
+.company-admin-inline-form__actions {
+  display: flex;
+  align-items: end;
+}
+
 @media (max-width: 1024px) {
   .chat-shell {
     grid-template-columns: 1fr;
