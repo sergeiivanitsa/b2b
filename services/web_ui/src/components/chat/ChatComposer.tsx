@@ -48,7 +48,7 @@ export function ChatComposer({
             submitMessage()
           }}
           rows={3}
-          placeholder="Send a message..."
+          placeholder="Отправьте сообщение..."
           disabled={isStreaming}
         />
         <button
