@@ -34,7 +34,7 @@ describe('ChatComposer', () => {
   it('disables send button when input is empty or whitespace', () => {
     renderComposer()
 
-    const textarea = screen.getByPlaceholderText('Send a message...') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Отправьте сообщение...') as HTMLTextAreaElement
     const button = screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement
 
     expect(button.disabled).toBe(true)
@@ -46,7 +46,7 @@ describe('ChatComposer', () => {
   it('sends trimmed message on click and clears textarea', () => {
     const { onSendMessage } = renderComposer()
 
-    const textarea = screen.getByPlaceholderText('Send a message...') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Отправьте сообщение...') as HTMLTextAreaElement
     const button = screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement
 
     fireEvent.change(textarea, { target: { value: '  hello  ' } })
@@ -62,7 +62,7 @@ describe('ChatComposer', () => {
   it('sends on Enter and does not send on Shift+Enter', () => {
     const { onSendMessage } = renderComposer()
 
-    const textarea = screen.getByPlaceholderText('Send a message...') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Отправьте сообщение...') as HTMLTextAreaElement
 
     fireEvent.change(textarea, { target: { value: 'line one' } })
     fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' })
@@ -82,7 +82,7 @@ describe('ChatComposer', () => {
     const stopButton = screen.getByRole('button', {
       name: 'Stop generating',
     }) as HTMLButtonElement
-    const textarea = screen.getByPlaceholderText('Send a message...') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Отправьте сообщение...') as HTMLTextAreaElement
 
     expect(stopButton.disabled).toBe(false)
     expect(textarea.disabled).toBe(true)
