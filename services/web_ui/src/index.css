@@ -464,8 +464,13 @@ body {
 }
 
 .chat-composer__bubble:focus-within {
-  border-color: #111;
-  box-shadow: 0 0 0 2px rgba(17, 17, 17, 0.1);
+  border-color: #c2cad6;
+  box-shadow: 0 0 0 1px rgba(122, 138, 160, 0.16);
+}
+
+.chat-composer__bubble:has(.chat-composer__input:focus-visible) {
+  border-color: #6f86a5;
+  box-shadow: 0 0 0 3px rgba(111, 134, 165, 0.22);
 }
 
 .chat-composer__input {
@@ -538,8 +543,9 @@ body {
 }
 
 .chat-composer__action:focus-visible {
-  outline: 2px solid #111;
+  outline: 2px solid #6f86a5;
   outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgba(111, 134, 165, 0.2);
 }
 
 .chat-composer__icon-send {
