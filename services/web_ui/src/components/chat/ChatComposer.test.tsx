@@ -1,11 +1,18 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+﻿import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useTypewriterPlaceholder } from '../../hooks/useTypewriterPlaceholder'
 import { ChatComposer } from './ChatComposer'
+
+vi.mock('../../hooks/useTypewriterPlaceholder', () => ({
+  useTypewriterPlaceholder: vi.fn(),
+}))
 
 type RenderOptions = {
   isStreaming?: boolean
 }
+
+const mockedUseTypewriterPlaceholder = vi.mocked(useTypewriterPlaceholder)
 
 function renderComposer(options: RenderOptions = {}) {
   const onSendMessage = vi.fn<(content: string) => void>()
@@ -22,9 +29,23 @@ function renderComposer(options: RenderOptions = {}) {
   return { onSendMessage, onStopGenerating }
 }
 
+function getTextarea(): HTMLTextAreaElement {
+  return screen.getByRole('textbox') as HTMLTextAreaElement
+}
+
+function expectLastPaused(value: boolean) {
+  expect(mockedUseTypewriterPlaceholder).toHaveBeenLastCalledWith(
+    expect.objectContaining({ paused: value }),
+  )
+}
+
 describe('ChatComposer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockedUseTypewriterPlaceholder.mockReturnValue({
+      placeholder: 'MOCK_PLACEHOLDER',
+      isReducedMotion: false,
+    })
   })
 
   afterEach(() => {
@@ -34,7 +55,7 @@ describe('ChatComposer', () => {
   it('disables send button when input is empty or whitespace', () => {
     renderComposer()
 
-    const textarea = screen.getByPlaceholderText('Отправьте сообщение...') as HTMLTextAreaElement
+    const textarea = getTextarea()
     const button = screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement
 
     expect(button.disabled).toBe(true)
@@ -46,7 +67,7 @@ describe('ChatComposer', () => {
   it('sends trimmed message on click and clears textarea', () => {
     const { onSendMessage } = renderComposer()
 
-    const textarea = screen.getByPlaceholderText('Отправьте сообщение...') as HTMLTextAreaElement
+    const textarea = getTextarea()
     const button = screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement
 
     fireEvent.change(textarea, { target: { value: '  hello  ' } })
@@ -62,7 +83,7 @@ describe('ChatComposer', () => {
   it('sends on Enter and does not send on Shift+Enter', () => {
     const { onSendMessage } = renderComposer()
 
-    const textarea = screen.getByPlaceholderText('Отправьте сообщение...') as HTMLTextAreaElement
+    const textarea = getTextarea()
 
     fireEvent.change(textarea, { target: { value: 'line one' } })
     fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' })
@@ -82,7 +103,7 @@ describe('ChatComposer', () => {
     const stopButton = screen.getByRole('button', {
       name: 'Stop generating',
     }) as HTMLButtonElement
-    const textarea = screen.getByPlaceholderText('Отправьте сообщение...') as HTMLTextAreaElement
+    const textarea = getTextarea()
 
     expect(stopButton.disabled).toBe(false)
     expect(textarea.disabled).toBe(true)
@@ -91,5 +112,27 @@ describe('ChatComposer', () => {
 
     expect(onStopGenerating).toHaveBeenCalledTimes(1)
     expect(onSendMessage).not.toHaveBeenCalled()
+  })
+
+  it('passes paused=false in idle and paused=true on focus and input', () => {
+    renderComposer()
+
+    const textarea = getTextarea()
+    expectLastPaused(false)
+
+    fireEvent.focus(textarea)
+    expectLastPaused(true)
+
+    fireEvent.blur(textarea)
+    expectLastPaused(false)
+
+    fireEvent.change(textarea, { target: { value: 'x' } })
+    expectLastPaused(true)
+  })
+
+  it('passes paused=true when streaming', () => {
+    renderComposer({ isStreaming: true })
+
+    expectLastPaused(true)
   })
 })

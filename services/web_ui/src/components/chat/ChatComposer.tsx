@@ -1,6 +1,12 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 
+import { useTypewriterPlaceholder } from '../../hooks/useTypewriterPlaceholder'
+import {
+  CHAT_COMPOSER_PLACEHOLDER_PHRASES,
+  CHAT_COMPOSER_STATIC_PLACEHOLDER,
+} from './chatComposerPlaceholderPhrases'
+
 type ChatComposerProps = {
   isStreaming: boolean
   onSendMessage: (content: string) => void
@@ -13,8 +19,19 @@ export function ChatComposer({
   onStopGenerating,
 }: ChatComposerProps) {
   const [content, setContent] = useState('')
+  const [isFocused, setIsFocused] = useState(false)
   const normalized = content.trim()
   const canSend = normalized.length > 0 && !isStreaming
+  const isPaused = isFocused || content.length > 0 || isStreaming
+
+  const { placeholder } = useTypewriterPlaceholder({
+    phrases: CHAT_COMPOSER_PLACEHOLDER_PHRASES,
+    typingMs: 333,
+    holdMs: 1300,
+    loop: true,
+    paused: isPaused,
+    staticPlaceholder: CHAT_COMPOSER_STATIC_PLACEHOLDER,
+  })
 
   function submitMessage() {
     if (!normalized) {
@@ -39,6 +56,8 @@ export function ChatComposer({
           className="chat-composer__input"
           value={content}
           onChange={(event) => setContent(event.target.value)}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
           onKeyDown={(event) => {
             const isComposing = event.nativeEvent.isComposing
             if (event.key !== 'Enter' || event.shiftKey || isComposing) {
@@ -48,7 +67,7 @@ export function ChatComposer({
             submitMessage()
           }}
           rows={3}
-          placeholder="Отправьте сообщение..."
+          placeholder={placeholder}
           disabled={isStreaming}
         />
         <button
