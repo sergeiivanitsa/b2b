@@ -26,7 +26,7 @@ export function ChatComposer({
 
   const { placeholder } = useTypewriterPlaceholder({
     phrases: CHAT_COMPOSER_PLACEHOLDER_PHRASES,
-    typingMs: 333,
+    typingMs: 166,
     holdMs: 1300,
     loop: true,
     paused: isPaused,
