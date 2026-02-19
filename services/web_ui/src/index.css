@@ -228,6 +228,7 @@ body {
 
 .chat-main {
   min-height: 100vh;
+  background: #fff;
   display: grid;
   grid-template-rows: auto auto 1fr auto;
   gap: 12px;
