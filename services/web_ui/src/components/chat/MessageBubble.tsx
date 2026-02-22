@@ -86,13 +86,21 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         )}
       </div>
       <div className="chat-message__actions">
-        <button className="chat-message__copy" type="button" onClick={() => void copyMessage()}>
-          Copy message
-        </button>
+        <button
+          className="chat-message__copy"
+          type="button"
+          onClick={() => void copyMessage()}
+          aria-label="Copy message"
+          title="Copy message"
+        />
         {hasAssistantCodeBlock ? (
-          <button className="chat-message__copy" type="button" onClick={() => void copyCode()}>
-            Copy code
-          </button>
+          <button
+            className="chat-message__copy"
+            type="button"
+            onClick={() => void copyCode()}
+            aria-label="Copy code"
+            title="Copy code"
+          />
         ) : null}
       </div>
       {isCopiedToastVisible ? <div className="chat-message__toast">Copied</div> : null}
