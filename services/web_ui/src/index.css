@@ -383,8 +383,20 @@ body {
 .chat-message__actions {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.chat-message--assistant .chat-message__actions {
+  justify-content: flex-start;
+}
+
+.chat-message--user .chat-message__actions {
+  justify-content: flex-end;
 }
 
 .chat-message__copy {
@@ -476,6 +488,10 @@ body {
   color: #fff;
   font-size: 0.72rem;
   padding: 3px 7px;
+  max-width: calc(100% - 24px);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 2;
 }
 
 .chat-composer {
@@ -912,6 +928,10 @@ body {
 
   .chat-message--user {
     max-width: 90%;
+  }
+
+  .chat-message__actions {
+    gap: 6px;
   }
 
   .chat-composer__bubble {
