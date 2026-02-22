@@ -365,26 +365,19 @@ body {
 }
 
 .chat-message__header {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 6px;
-  font-size: 0.8rem;
-  color: #555;
+  display: none;
 }
 
 .chat-message__role {
-  text-transform: capitalize;
+  display: none;
 }
 
 .chat-message__meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: none;
 }
 
 .chat-message__status {
-  text-transform: lowercase;
+  display: none;
 }
 
 .chat-message__copy {
