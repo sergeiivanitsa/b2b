@@ -296,8 +296,6 @@ body {
 }
 
 .chat-window {
-  border: 1px solid #d5d5d5;
-  border-radius: 12px;
   background: #fff;
   padding: 14px;
   overflow: auto;
