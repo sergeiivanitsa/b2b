@@ -340,15 +340,30 @@ body {
   position: relative;
   border-radius: 10px;
   padding: 10px 12px;
-  border: 1px solid #d8d8d8;
+  border: none;
+  box-shadow: none;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .chat-message--user {
+  justify-self: end;
+  width: auto;
+  max-width: 55%;
   background: #f4f4f4;
+  border: none;
+  box-shadow: none;
+  text-align: left;
 }
 
 .chat-message--assistant {
+  justify-self: stretch;
+  width: 100%;
+  max-width: none;
   background: #fff;
+  border: none;
+  box-shadow: none;
+  text-align: left;
 }
 
 .chat-message__header {
@@ -392,6 +407,7 @@ body {
   margin: 0;
   overflow-wrap: anywhere;
   color: #111;
+  min-width: 0;
 }
 
 .chat-message__content > :first-child {
@@ -413,6 +429,7 @@ body {
   background: #f8f8f8;
   padding: 10px;
   overflow: auto;
+  max-width: 100%;
 }
 
 .chat-message__content code {
@@ -875,6 +892,15 @@ body {
 
   .chat-main {
     padding: 12px;
+  }
+
+  .chat-message--assistant {
+    width: 100%;
+    max-width: none;
+  }
+
+  .chat-message--user {
+    max-width: 90%;
   }
 
   .chat-composer__bubble {
