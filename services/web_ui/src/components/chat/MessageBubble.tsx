@@ -66,14 +66,6 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         <span className="chat-message__role">{message.role}</span>
         <div className="chat-message__meta">
           <span className="chat-message__status">{statusLabel}</span>
-          <button className="chat-message__copy" type="button" onClick={() => void copyMessage()}>
-            Copy message
-          </button>
-          {hasAssistantCodeBlock ? (
-            <button className="chat-message__copy" type="button" onClick={() => void copyCode()}>
-              Copy code
-            </button>
-          ) : null}
         </div>
       </header>
       <div className="chat-message__content">
@@ -92,6 +84,16 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         ) : (
           <p>{message.content || (message.status === 'streaming' ? '...' : '')}</p>
         )}
+      </div>
+      <div className="chat-message__actions">
+        <button className="chat-message__copy" type="button" onClick={() => void copyMessage()}>
+          Copy message
+        </button>
+        {hasAssistantCodeBlock ? (
+          <button className="chat-message__copy" type="button" onClick={() => void copyCode()}>
+            Copy code
+          </button>
+        ) : null}
       </div>
       {isCopiedToastVisible ? <div className="chat-message__toast">Copied</div> : null}
     </article>
