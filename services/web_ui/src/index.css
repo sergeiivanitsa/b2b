@@ -347,7 +347,13 @@ body {
 }
 
 .chat-message--user {
+  justify-self: end;
+  width: auto;
+  max-width: 55%;
   background: #f4f4f4;
+  border: none;
+  box-shadow: none;
+  text-align: left;
 }
 
 .chat-message--assistant {
