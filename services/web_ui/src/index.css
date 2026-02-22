@@ -407,6 +407,7 @@ body {
   margin: 0;
   overflow-wrap: anywhere;
   color: #111;
+  min-width: 0;
 }
 
 .chat-message__content > :first-child {
@@ -428,6 +429,7 @@ body {
   background: #f8f8f8;
   padding: 10px;
   overflow: auto;
+  max-width: 100%;
 }
 
 .chat-message__content code {
@@ -890,6 +892,15 @@ body {
 
   .chat-main {
     padding: 12px;
+  }
+
+  .chat-message--assistant {
+    width: 100%;
+    max-width: none;
+  }
+
+  .chat-message--user {
+    max-width: 90%;
   }
 
   .chat-composer__bubble {
