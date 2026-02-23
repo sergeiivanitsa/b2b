@@ -1,4 +1,10 @@
+import { useMemo } from 'react'
+
 import type { ChatThread } from '../../types/chat'
+import {
+  buildChatSidebarGroups,
+  sortThreadsByUpdatedAtDesc,
+} from './chatSidebarViewModel'
 
 type ChatSidebarProps = {
   threads: ChatThread[]
@@ -13,6 +19,11 @@ export function ChatSidebar({
   onCreateThread,
   onSelectThread,
 }: ChatSidebarProps) {
+  const groupedThreads = useMemo(() => {
+    const sortedThreads = sortThreadsByUpdatedAtDesc(threads)
+    return buildChatSidebarGroups(sortedThreads)
+  }, [threads])
+
   return (
     <aside className="chat-sidebar">
       <div className="chat-sidebar__header">
@@ -23,18 +34,20 @@ export function ChatSidebar({
       </div>
 
       <ul className="chat-sidebar__list">
-        {threads.map((thread) => (
-          <li key={thread.id}>
-            <button
-              type="button"
-              className={`chat-thread-item ${thread.id === activeThreadId ? 'is-active' : ''}`}
-              onClick={() => onSelectThread(thread.id)}
-            >
-              <span className="chat-thread-item__title">{thread.title}</span>
-              <span className="chat-thread-item__meta">
-                {new Date(thread.updatedAt).toLocaleString()}
-              </span>
-            </button>
+        {groupedThreads.map((group) => (
+          <li key={group.key} className="chat-sidebar__group">
+            <p className="chat-sidebar__group-title">{group.label}</p>
+            {group.items.map((item) => (
+              <button
+                key={item.threadId}
+                type="button"
+                className={`chat-thread-item ${item.threadId === activeThreadId ? 'is-active' : ''}`}
+                onClick={() => onSelectThread(item.threadId)}
+              >
+                <span className="chat-thread-item__title">{item.preview}</span>
+                <span className="chat-thread-item__meta">{item.createdAtLabel}</span>
+              </button>
+            ))}
           </li>
         ))}
       </ul>
