@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ChatThread } from '../../types/chat'
 import {
   CHAT_SIDEBAR_FALLBACK_PREVIEW,
+  CHAT_SIDEBAR_INVALID_DATE_LABEL,
   CHAT_SIDEBAR_PREVIEW_MAX_CHARS,
+  CHAT_SIDEBAR_TODAY_LABEL,
   CHAT_SIDEBAR_UNKNOWN_DAY_LABEL,
   buildChatSidebarGroups,
   buildFirstAssistantPreview,
@@ -72,19 +74,19 @@ describe('chatSidebarViewModel', () => {
           createMessage({
             id: 'assistant-late',
             role: 'assistant',
-            content: 'Поздний ответ',
+            content: 'Late answer',
             createdAt: '2026-02-20T10:05:00.000Z',
           }),
           createMessage({
             id: 'assistant-early',
             role: 'assistant',
-            content: 'Ранний ответ',
+            content: 'Early answer',
             createdAt: '2026-02-20T10:01:00.000Z',
           }),
         ],
       })
 
-      expect(buildFirstAssistantPreview(thread)).toBe('Ранний ответ')
+      expect(buildFirstAssistantPreview(thread)).toBe('Early answer')
     })
 
     it('uses fallback when there is no non-empty assistant message', () => {
@@ -135,8 +137,14 @@ describe('chatSidebarViewModel', () => {
       expect(formatChatTimestamp('2026-02-20T12:34:00.000Z')).toBe('20.02.26 13:34')
     })
 
-    it('formats day headers in ru-RU with capitalized weekday', () => {
-      expect(formatDayHeader('2026-02-20T12:34:00.000Z')).toBe('Пятница 20.02.26')
+    it('returns fallback label for invalid createdAt timestamp', () => {
+      expect(formatChatTimestamp('invalid-created-at')).toBe(CHAT_SIDEBAR_INVALID_DATE_LABEL)
+    })
+
+    it('formats day headers with weekday plus day label', () => {
+      const header = formatDayHeader('2026-02-20T12:34:00.000Z')
+      expect(header).toContain('20.02.26')
+      expect(header.split(' ')).toHaveLength(2)
     })
   })
 
@@ -167,12 +175,12 @@ describe('chatSidebarViewModel', () => {
       const groups = buildChatSidebarGroups(threads, { now })
 
       expect(groups).toHaveLength(2)
-      expect(groups[0]?.label).toBe('Сегодня')
+      expect(groups[0]?.label).toBe(CHAT_SIDEBAR_TODAY_LABEL)
       expect(groups[0]?.items.map((item) => item.threadId)).toEqual([
         't-today-newer',
         't-today-older',
       ])
-      expect(groups[1]?.label).toBe('Пятница 20.02.26')
+      expect(groups[1]?.label).toContain('20.02.26')
       expect(groups[1]?.items.map((item) => item.threadId)).toEqual(['t-prev-day'])
     })
 
@@ -205,6 +213,24 @@ describe('chatSidebarViewModel', () => {
       expect(groups).toHaveLength(2)
       expect(groups[1]?.label).toBe(CHAT_SIDEBAR_UNKNOWN_DAY_LABEL)
       expect(groups[1]?.items.map((item) => item.threadId)).toEqual(['t-invalid'])
+    })
+
+    it('keeps fallback createdAt label when thread createdAt is invalid', () => {
+      const groups = buildChatSidebarGroups(
+        [
+          createThread({
+            id: 't-created-at-invalid',
+            createdAt: 'invalid',
+            updatedAt: '2026-02-21T08:00:00.000Z',
+          }),
+        ],
+        {
+          now: new Date('2026-02-21T09:00:00.000Z'),
+        },
+      )
+
+      expect(groups).toHaveLength(1)
+      expect(groups[0]?.items[0]?.createdAtLabel).toBe(CHAT_SIDEBAR_INVALID_DATE_LABEL)
     })
   })
 })
