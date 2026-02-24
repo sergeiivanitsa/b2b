@@ -1,5 +1,6 @@
 import type { ChatThread } from '../../types/chat'
 import { useAutoScroll } from '../../hooks/useAutoScroll'
+import { CHAT_UI_TEXT } from '../../constants/chatUiText'
 import { MessageBubble } from './MessageBubble'
 
 type ChatWindowProps = {
@@ -26,7 +27,7 @@ export function ChatWindow({ thread }: ChatWindowProps) {
     return (
       <section className="chat-window chat-window--empty">
         <h2>{thread.title}</h2>
-        <p>Start by sending your first message.</p>
+        <p>{CHAT_UI_TEXT.emptyStartPrompt}</p>
       </section>
     )
   }

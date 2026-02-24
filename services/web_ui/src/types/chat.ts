@@ -1,5 +1,5 @@
 export const CHAT_STORE_VERSION = 1
-export const DEFAULT_THREAD_TITLE = 'New chat'
+export const DEFAULT_THREAD_TITLE = 'Новый диалог'
 
 export type ChatMessageStatus = 'streaming' | 'completed' | 'error' | 'aborted'
 

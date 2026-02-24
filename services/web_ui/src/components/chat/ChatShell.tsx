@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 
 import type { AuthUser } from '../../auth/types'
-import { useConnectivity } from '../../hooks/useConnectivity'
+import { CHAT_UI_TEXT } from '../../constants/chatUiText'
 import type { ChatThread } from '../../types/chat'
 import { ChatComposer } from './ChatComposer'
 import { ChatSidebar } from './ChatSidebar'
@@ -23,6 +23,8 @@ type ChatShellProps = {
   onLogout: () => void
 }
 
+const CREDITS_NUMBER_FORMATTER = new Intl.NumberFormat('ru-RU')
+
 export function ChatShell({
   user,
   threads,
@@ -38,9 +40,13 @@ export function ChatShell({
   onStopGenerating,
   onLogout,
 }: ChatShellProps) {
-  const isOnline = useConnectivity()
   const orgId = user.org_id ?? user.company_id
   const canAccessAdmin = user.role === 'owner' || user.role === 'admin'
+  const displayName = buildUserDisplayName(user)
+  const companyName = resolveCompanyName(user.company_name)
+  const remainingCredits = CREDITS_NUMBER_FORMATTER.format(
+    normalizeCredits(user.remaining_credits),
+  )
 
   return (
     <main className="chat-shell">
@@ -54,22 +60,15 @@ export function ChatShell({
       <section className="chat-main">
         <header className="chat-main__header">
           <div className="chat-main__identity">
-            <strong>{user.email}</strong>
+            <strong>{displayName}</strong>
             <span>
-              role: {user.role} | org_id: {orgId ?? '-'} | active:{' '}
-              {String(user.is_active)}
+              {companyName} • {CHAT_UI_TEXT.creditsLabel}: {remainingCredits}
             </span>
           </div>
           <div className="chat-main__actions">
-            <span
-              className={`connectivity-badge ${isOnline ? 'is-online' : 'is-offline'}`}
-              aria-live="polite"
-            >
-              {isOnline ? 'Connected' : 'Offline'}
-            </span>
             {canAccessAdmin && orgId ? (
               <Link to={`/org/${orgId}/admin`} className="button button--secondary">
-                Admin
+                {CHAT_UI_TEXT.adminAction}
               </Link>
             ) : null}
             <button
@@ -95,4 +94,30 @@ export function ChatShell({
       </section>
     </main>
   )
+}
+
+function buildUserDisplayName(user: AuthUser): string {
+  const firstName = normalizeOptionalText(user.first_name)
+  const lastName = normalizeOptionalText(user.last_name)
+  const fullName = `${firstName} ${lastName}`.trim()
+  return fullName || user.email
+}
+
+function resolveCompanyName(value: string | null | undefined): string {
+  const companyName = normalizeOptionalText(value)
+  return companyName || CHAT_UI_TEXT.unknownCompany
+}
+
+function normalizeOptionalText(value: string | null | undefined): string {
+  if (typeof value !== 'string') {
+    return ''
+  }
+  return value.trim()
+}
+
+function normalizeCredits(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 0
+  }
+  return Math.max(0, Math.trunc(value))
 }
