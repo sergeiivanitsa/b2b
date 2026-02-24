@@ -1,6 +1,7 @@
-import { cleanup, fireEvent, render } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { CHAT_UI_TEXT } from '../../constants/chatUiText'
 import type { ChatMessage, ChatThread } from '../../types/chat'
 import {
   CHAT_SIDEBAR_FALLBACK_PREVIEW,
@@ -63,6 +64,13 @@ describe('ChatSidebar', () => {
   afterEach(() => {
     cleanup()
     vi.useRealTimers()
+  })
+
+  it('renders localized sidebar title and new-thread action text', () => {
+    renderSidebar([])
+
+    expect(screen.getByRole('heading', { name: CHAT_UI_TEXT.sidebarTitle })).toBeTruthy()
+    expect(screen.getByRole('button', { name: CHAT_UI_TEXT.newDialog })).toBeTruthy()
   })
 
   it('renders Today and dated groups with threads sorted by updatedAt desc', () => {
