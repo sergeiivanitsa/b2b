@@ -8,6 +8,10 @@ export type AuthUser = {
   company_id: number | null
   is_superadmin: boolean
   is_active: boolean
+  first_name?: string | null
+  last_name?: string | null
+  company_name?: string | null
+  remaining_credits?: number
 }
 
 export type AuthContextValue = {

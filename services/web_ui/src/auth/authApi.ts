@@ -15,14 +15,60 @@ export type OnboardingOrgResponse = {
   role: string
 }
 
-type RawAuthUser = AuthUser & { org_id?: number | null }
+type RawAuthUser = {
+  id: number
+  email: string
+  role: string
+  org_id?: number | null
+  company_id?: number | null
+  is_superadmin: boolean
+  is_active: boolean
+  first_name?: string | null
+  last_name?: string | null
+  company_name?: string | null
+  remaining_credits?: number | null
+}
 
 export async function fetchWhoami(): Promise<AuthUser> {
   const user = await apiFetchJson<RawAuthUser>('/internal/whoami')
+  const companyId = normalizeId(user.company_id ?? user.org_id ?? null)
+  const orgId = normalizeId(user.org_id ?? companyId ?? null)
+
   return {
-    ...user,
-    org_id: user.org_id ?? user.company_id ?? null,
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    org_id: orgId,
+    company_id: companyId,
+    is_superadmin: user.is_superadmin,
+    is_active: user.is_active,
+    first_name: normalizeOptionalString(user.first_name),
+    last_name: normalizeOptionalString(user.last_name),
+    company_name: normalizeOptionalString(user.company_name),
+    remaining_credits: normalizeRemainingCredits(user.remaining_credits),
   }
+}
+
+function normalizeId(value: number | null | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    return null
+  }
+  return value
+}
+
+function normalizeOptionalString(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+function normalizeRemainingCredits(value: number | null | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 0
+  }
+  return Math.max(0, Math.trunc(value))
 }
 
 export async function requestMagicLink(email: string): Promise<void> {
