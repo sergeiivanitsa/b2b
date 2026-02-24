@@ -366,7 +366,10 @@ async def test_internal_db_ping_db_down_returns_503_only_for_superadmin(async_cl
 async def test_internal_whoami_auth_and_contract(async_client, engine):
     settings = get_settings()
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
-        _company_id, regular_cookie = await _make_regular_cookie(session)
+        _company_id, regular_cookie = await _make_regular_cookie(
+            session,
+            company_name="Whoami Contract Co",
+        )
 
     anon = await async_client.get("/internal/whoami")
     assert anon.status_code == 401
@@ -377,6 +380,11 @@ async def test_internal_whoami_auth_and_contract(async_client, engine):
     )
     assert auth.status_code == 200
     payload = auth.json()
-    assert {"id", "email", "role", "org_id", "company_id", "is_superadmin", "is_active"} <= set(
-        payload.keys()
-    )
+    old_keys = {"id", "email", "role", "org_id", "company_id", "is_superadmin", "is_active"}
+    new_keys = {"first_name", "last_name", "company_name", "remaining_credits"}
+    assert old_keys <= set(payload.keys())
+    assert new_keys <= set(payload.keys())
+    assert payload["first_name"] is None
+    assert payload["last_name"] is None
+    assert payload["company_name"] == "Whoami Contract Co"
+    assert payload["remaining_credits"] == 0
