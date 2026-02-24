@@ -157,10 +157,12 @@ body {
 }
 
 .chat-shell {
-  min-height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   display: grid;
   grid-template-columns: 290px minmax(0, 1fr);
   background: #f2f2f2;
+  overflow: hidden;
 }
 
 .chat-sidebar {
@@ -171,6 +173,7 @@ body {
   gap: 12px;
   grid-template-rows: auto 1fr;
   min-height: 0;
+  overflow: hidden;
 }
 
 .chat-sidebar__header {
@@ -249,12 +252,14 @@ body {
 }
 
 .chat-main {
-  min-height: 100vh;
+  min-height: 0;
+  height: 100%;
   background: #fff;
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 12px;
   padding: 16px;
+  overflow: hidden;
 }
 
 .chat-main__header {
@@ -272,6 +277,37 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.chat-main__actions > button.button--secondary:last-of-type {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background-color: transparent;
+  background-image: url('/logout.webp');
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 22px 22px;
+  color: transparent;
+  font-size: 0;
+  line-height: 0;
+  flex: 0 0 auto;
+}
+
+.chat-main__actions > button.button--secondary:last-of-type:hover:not(:disabled) {
+  background-color: #f4f4f4;
+}
+
+.chat-main__actions > button.button--secondary:last-of-type:focus-visible {
+  outline: 2px solid #6f86a5;
+  outline-offset: 2px;
+}
+
+.chat-main__actions > button.button--secondary:last-of-type:disabled {
+  opacity: 0.5;
 }
 
 .connectivity-badge {
@@ -320,16 +356,20 @@ body {
 .chat-window {
   background: #fff;
   padding: 14px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: grid;
   align-content: start;
   gap: 10px;
-  min-height: 300px;
+  min-height: 0;
+  height: 100%;
 }
 
 .chat-window-shell {
   position: relative;
-  min-height: 300px;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .chat-scroll-bottom {
@@ -896,6 +936,7 @@ body {
 @media (max-width: 1024px) {
   .chat-shell {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .chat-sidebar {
@@ -908,7 +949,7 @@ body {
   }
 
   .chat-main {
-    grid-template-rows: auto auto 1fr auto;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
   }
 
   .company-admin-grid {
