@@ -1,7 +1,7 @@
-import { CHAT_UI_TEXT } from '../../constants/chatUiText'
 import { cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { CHAT_UI_TEXT } from '../../constants/chatUiText'
 import type { ChatMessage, ChatThread } from '../../types/chat'
 import {
   CHAT_SIDEBAR_FALLBACK_PREVIEW,
@@ -67,10 +67,10 @@ describe('ChatSidebar', () => {
   })
 
   it('renders localized sidebar title and new-thread action text', () => {
-  renderSidebar([])
+    const { getByRole } = renderSidebar([])
 
-  expect(screen.getByRole('heading', { name: CHAT_UI_TEXT.sidebarTitle })).toBeTruthy()
-  expect(screen.getByRole('button', { name: CHAT_UI_TEXT.newDialog })).toBeTruthy()
+    expect(getByRole('heading', { name: CHAT_UI_TEXT.sidebarTitle })).toBeTruthy()
+    expect(getByRole('button', { name: CHAT_UI_TEXT.newDialog })).toBeTruthy()
   })
 
   it('renders Today and dated groups with threads sorted by updatedAt desc', () => {
@@ -167,6 +167,7 @@ describe('ChatSidebar', () => {
     const { container } = renderSidebar([thread])
     const metaRow = container.querySelector('.chat-thread-item__meta')
 
+    // 2026-02-19T08:15Z -> Europe/Berlin = 09:15
     expect(metaRow?.textContent?.trim()).toBe('19.02.26 09:15')
   })
 
