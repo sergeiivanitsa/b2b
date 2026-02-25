@@ -1,7 +1,3 @@
-
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
 import { CHAT_UI_TEXT } from '../../constants/chatUiText'
 import { cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -70,10 +66,6 @@ describe('ChatSidebar', () => {
     vi.useRealTimers()
   })
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
-import { CHAT_UI_TEXT } from '../../constants/chatUiText'
   it('renders Today and dated groups with threads sorted by updatedAt desc', () => {
     const threads = [
       createThread({
