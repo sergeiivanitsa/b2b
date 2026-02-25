@@ -43,10 +43,10 @@ export function ChatShell({
   const orgId = user.org_id ?? user.company_id
   const canAccessAdmin = user.role === 'owner' || user.role === 'admin'
   const displayName = buildUserDisplayName(user)
-  const companyName = resolveCompanyName(user.company_name)
-  const remainingCredits = CREDITS_NUMBER_FORMATTER.format(
-    normalizeCredits(user.remaining_credits),
-  )
+  const companyName = normalizeOptionalText(user.company_name)
+  const creditsValue = normalizeCredits(user.effective_credits ?? user.remaining_credits)
+  const creditsLabel = `${CHAT_UI_TEXT.creditsLabel}: ${CREDITS_NUMBER_FORMATTER.format(creditsValue)}`
+  const subtitle = companyName ? `${companyName} • ${creditsLabel}` : creditsLabel
 
   return (
     <main className="chat-shell">
@@ -61,9 +61,7 @@ export function ChatShell({
         <header className="chat-main__header">
           <div className="chat-main__identity">
             <strong>{displayName}</strong>
-            <span>
-              {companyName} • {CHAT_UI_TEXT.creditsLabel}: {remainingCredits}
-            </span>
+            <span>{subtitle}</span>
           </div>
           <div className="chat-main__actions">
             {canAccessAdmin && orgId ? (
@@ -103,11 +101,6 @@ function buildUserDisplayName(user: AuthUser): string {
   return fullName || user.email
 }
 
-function resolveCompanyName(value: string | null | undefined): string {
-  const companyName = normalizeOptionalText(value)
-  return companyName || CHAT_UI_TEXT.unknownCompany
-}
-
 function normalizeOptionalText(value: string | null | undefined): string {
   if (typeof value !== 'string') {
     return ''
@@ -121,3 +114,4 @@ function normalizeCredits(value: number | undefined): number {
   }
   return Math.max(0, Math.trunc(value))
 }
+
