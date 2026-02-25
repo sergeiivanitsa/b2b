@@ -46,6 +46,7 @@ from product_api.repositories import (
     get_company_summary_data,
     get_user_credit_limit,
     get_user_by_email,
+    get_whoami_header_profile,
     list_company_users_with_stats,
     reserve_chat_credits,
     UserLimitExceedsPoolError,
@@ -1298,7 +1299,15 @@ async def company_add_credits(
 
 
 @app.get("/internal/whoami")
-async def whoami(current_user: User = Depends(get_current_user)):
+async def whoami(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    profile = await get_whoami_header_profile(
+        session=session,
+        user_id=current_user.id,
+        company_id=current_user.company_id,
+    )
     return {
         "id": current_user.id,
         "email": current_user.email,
@@ -1307,6 +1316,10 @@ async def whoami(current_user: User = Depends(get_current_user)):
         "company_id": current_user.company_id,
         "is_superadmin": current_user.is_superadmin,
         "is_active": current_user.is_active,
+        "first_name": current_user.first_name,
+        "last_name": current_user.last_name,
+        "company_name": profile["company_name"],
+        "remaining_credits": profile["remaining_credits"],
     }
 
 

@@ -272,6 +272,37 @@ async def get_user_credit_limit(session: AsyncSession, user_id: int) -> UserCred
     return result.scalar_one_or_none()
 
 
+async def get_whoami_header_profile(
+    session: AsyncSession,
+    user_id: int,
+    company_id: int | None,
+) -> dict[str, object]:
+    if company_id is None:
+        return {"company_name": None, "remaining_credits": 0}
+
+    result = await session.execute(
+        select(
+            Company.name,
+            func.coalesce(UserCreditLimit.remaining_credits, 0),
+        )
+        .select_from(Company)
+        .outerjoin(
+            UserCreditLimit,
+            (UserCreditLimit.company_id == Company.id)
+            & (UserCreditLimit.user_id == user_id),
+        )
+        .where(Company.id == company_id)
+    )
+    row = result.one_or_none()
+    if row is None:
+        return {"company_name": None, "remaining_credits": 0}
+
+    return {
+        "company_name": row[0],
+        "remaining_credits": int(row[1] or 0),
+    }
+
+
 async def list_company_user_credit_limits(
     session: AsyncSession,
     company_id: int,

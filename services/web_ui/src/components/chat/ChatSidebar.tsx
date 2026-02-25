@@ -1,5 +1,7 @@
 import { useMemo } from 'react'
 
+
+import { CHAT_UI_TEXT } from '../../constants/chatUiText'
 import type { ChatThread } from '../../types/chat'
 import {
   buildChatSidebarGroups,
@@ -27,9 +29,9 @@ export function ChatSidebar({
   return (
     <aside className="chat-sidebar">
       <div className="chat-sidebar__header">
-        <h2 className="chat-sidebar__title">Chats</h2>
+        <h2 className="chat-sidebar__title">{CHAT_UI_TEXT.sidebarTitle}</h2>
         <button className="button button--secondary" onClick={onCreateThread} type="button">
-          New chat
+          {CHAT_UI_TEXT.newDialog}
         </button>
       </div>
 
