@@ -277,13 +277,21 @@ async def get_whoami_header_profile(
     user_id: int,
     company_id: int | None,
 ) -> dict[str, object]:
+    default_profile = {
+        "company_name": None,
+        "remaining_credits": 0,
+        "company_pool_balance": 0,
+        "company_allocated_total": 0,
+        "company_unallocated_balance": 0,
+        "effective_credits": 0,
+    }
     if company_id is None:
-        return {"company_name": None, "remaining_credits": 0}
+        return default_profile
 
     result = await session.execute(
         select(
             Company.name,
-            func.coalesce(UserCreditLimit.remaining_credits, 0),
+            UserCreditLimit.remaining_credits,
         )
         .select_from(Company)
         .outerjoin(
@@ -295,11 +303,24 @@ async def get_whoami_header_profile(
     )
     row = result.one_or_none()
     if row is None:
-        return {"company_name": None, "remaining_credits": 0}
+        return default_profile
+
+    pool_balance = await get_company_pool_balance(session, company_id)
+    allocated_total = await get_company_allocated_total(session, company_id)
+    unallocated_balance = pool_balance - allocated_total
+    has_user_limit = row[1] is not None
+    remaining_credits = int(row[1] or 0)
+    effective_credits = (
+        remaining_credits if has_user_limit else int(unallocated_balance)
+    )
 
     return {
         "company_name": row[0],
-        "remaining_credits": int(row[1] or 0),
+        "remaining_credits": remaining_credits,
+        "company_pool_balance": int(pool_balance),
+        "company_allocated_total": int(allocated_total),
+        "company_unallocated_balance": int(unallocated_balance),
+        "effective_credits": int(effective_credits),
     }
 
 
