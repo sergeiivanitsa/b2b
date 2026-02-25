@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+﻿import { cleanup, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -92,12 +92,12 @@ describe('ChatShell', () => {
   it('shows full name when first and last name are available', () => {
     renderShell({
       user: {
-        first_name: 'Иван',
-        last_name: 'Петров',
+        first_name: 'Ivan',
+        last_name: 'Petrov',
       },
     })
 
-    expect(screen.getByText('Иван Петров')).toBeTruthy()
+    expect(screen.getByText('Ivan Petrov')).toBeTruthy()
   })
 
   it('falls back to email when first and last name are empty', () => {
@@ -115,7 +115,7 @@ describe('ChatShell', () => {
   it('renders company and remaining credits in header subtitle', () => {
     renderShell({
       user: {
-        company_name: 'ООО Ромашка',
+        company_name: 'Acme LLC',
         remaining_credits: 42,
       },
     })
@@ -123,10 +123,41 @@ describe('ChatShell', () => {
     expect(
       screen.getByText(
         (content) =>
-          content.includes('ООО Ромашка') &&
+          content.includes('Acme LLC') &&
           content.includes(`${CHAT_UI_TEXT.creditsLabel}: 42`),
       ),
     ).toBeTruthy()
+  })
+
+  it('renders credits without placeholder separator when company is missing', () => {
+    renderShell({
+      user: {
+        company_name: null,
+        remaining_credits: 12,
+      },
+    })
+
+    const subtitle = screen.getByText((content) =>
+      content.includes(`${CHAT_UI_TEXT.creditsLabel}: 12`),
+    )
+    expect(subtitle.textContent).toBe(`${CHAT_UI_TEXT.creditsLabel}: 12`)
+  })
+
+  it('prefers effective credits over remaining credits when available', () => {
+    renderShell({
+      user: {
+        company_name: null,
+        remaining_credits: 5,
+        effective_credits: 88,
+      },
+    })
+
+    expect(
+      screen.getByText((content) => content.includes(`${CHAT_UI_TEXT.creditsLabel}: 88`)),
+    ).toBeTruthy()
+    expect(
+      screen.queryByText((content) => content.includes(`${CHAT_UI_TEXT.creditsLabel}: 5`)),
+    ).toBeNull()
   })
 
   it('does not render connectivity badge copy', () => {
@@ -151,13 +182,13 @@ describe('ChatShell', () => {
     expect(adminLink.getAttribute('href')).toBe('/org/7/admin')
   })
 
-  it('exposes logout action with aria-label "Выйти"', () => {
+  it('renders logout action button', () => {
     renderShell()
 
     const logoutButton = screen.getByRole('button', {
-      name: 'Выйти',
+      name: 'Logout',
     }) as HTMLButtonElement
 
-    expect(logoutButton.getAttribute('aria-label')).toBe('Выйти')
+    expect(logoutButton.type).toBe('button')
   })
 })
