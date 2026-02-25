@@ -386,6 +386,36 @@ body.is-chat-page #root {
   height: 100%;
 }
 
+.chat-window,
+.chat-sidebar__list {
+  scrollbar-width: thin;
+  scrollbar-color: #c5c5c5 #f1f1f1;
+}
+
+.chat-window::-webkit-scrollbar,
+.chat-sidebar__list::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.chat-window::-webkit-scrollbar-track,
+.chat-sidebar__list::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 999px;
+}
+
+.chat-window::-webkit-scrollbar-thumb,
+.chat-sidebar__list::-webkit-scrollbar-thumb {
+  background: #c5c5c5;
+  border-radius: 999px;
+  border: 1px solid #f1f1f1;
+}
+
+.chat-window::-webkit-scrollbar-thumb:hover,
+.chat-sidebar__list::-webkit-scrollbar-thumb:hover {
+  background: #b0b0b0;
+}
+
 .chat-window-shell {
   position: relative;
   min-height: 0;
