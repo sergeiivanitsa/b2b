@@ -66,6 +66,13 @@ describe('ChatSidebar', () => {
     vi.useRealTimers()
   })
 
+  it('renders localized sidebar title and new-thread action text', () => {
+  renderSidebar([])
+
+  expect(screen.getByRole('heading', { name: CHAT_UI_TEXT.sidebarTitle })).toBeTruthy()
+  expect(screen.getByRole('button', { name: CHAT_UI_TEXT.newDialog })).toBeTruthy()
+  })
+
   it('renders Today and dated groups with threads sorted by updatedAt desc', () => {
     const threads = [
       createThread({
