@@ -166,3 +166,5 @@ Run from `services/product_api`:
 - alembic upgrade head
 - alembic revision --autogenerate -m "init"
 
+
+- merge smoke test: 2026-02-26_06:45
