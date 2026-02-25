@@ -53,3 +53,5 @@ Expected:
 - `/auth/confirm`: confirm token and redirect.
 - `/onboarding/create-org`: create organization for onboarding user.
 - `/chat`: send message/stream reply.
+
+- merge smoke test: 2026-02-26_06:45
