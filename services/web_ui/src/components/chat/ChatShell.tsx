@@ -44,7 +44,7 @@ export function ChatShell({
   const canAccessAdmin = user.role === 'owner' || user.role === 'admin'
   const displayName = buildUserDisplayName(user)
   const companyName = normalizeOptionalText(user.company_name)
-  const creditsValue = normalizeCredits(user.effective_credits ?? user.remaining_credits)
+  const creditsValue = normalizeCredits(user.remaining_credits)
   const creditsLabel = `${CHAT_UI_TEXT.creditsLabel}: ${CREDITS_NUMBER_FORMATTER.format(creditsValue)}`
   const subtitle = companyName ? `${companyName} • ${creditsLabel}` : creditsLabel
 

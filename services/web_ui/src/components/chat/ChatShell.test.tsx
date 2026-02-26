@@ -143,7 +143,7 @@ describe('ChatShell', () => {
     expect(subtitle.textContent).toBe(`${CHAT_UI_TEXT.creditsLabel}: 12`)
   })
 
-  it('prefers effective credits over remaining credits when available', () => {
+  it('uses remaining credits even when effective credits are available', () => {
     renderShell({
       user: {
         company_name: null,
@@ -153,10 +153,10 @@ describe('ChatShell', () => {
     })
 
     expect(
-      screen.getByText((content) => content.includes(`${CHAT_UI_TEXT.creditsLabel}: 88`)),
+      screen.getByText((content) => content.includes(`${CHAT_UI_TEXT.creditsLabel}: 5`)),
     ).toBeTruthy()
     expect(
-      screen.queryByText((content) => content.includes(`${CHAT_UI_TEXT.creditsLabel}: 5`)),
+      screen.queryByText((content) => content.includes(`${CHAT_UI_TEXT.creditsLabel}: 88`)),
     ).toBeNull()
   })
 
