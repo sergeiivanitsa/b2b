@@ -100,6 +100,17 @@ describe('ChatShell', () => {
     expect(screen.getByText('Ivan Petrov')).toBeTruthy()
   })
 
+  it('shows trimmed cyrillic full name when names are present', () => {
+    renderShell({
+      user: {
+        first_name: '  Олег ',
+        last_name: ' Олеговна  ',
+      },
+    })
+
+    expect(screen.getByText('Олег Олеговна')).toBeTruthy()
+  })
+
   it('falls back to email when first and last name are empty', () => {
     renderShell({
       user: {

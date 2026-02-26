@@ -1,7 +1,10 @@
+from datetime import timedelta
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from product_api.models import Ledger, UserCreditLimit
+from product_api.auth import utcnow
+from product_api.models import Invite, Ledger, UserCreditLimit
 from product_api.settings import get_settings
 
 from .utils import create_company, create_session_cookie, create_user
@@ -101,6 +104,36 @@ async def test_whoami_profile_without_name_returns_null_names(async_client, engi
     assert payload["company_allocated_total"] == 11
     assert payload["company_unallocated_balance"] == 39
     assert payload["effective_credits"] == 11
+
+
+async def test_whoami_profile_falls_back_to_used_invite_names(async_client, engine):
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        company = await create_company(session, "Whoami Invite Name Fallback Co")
+        user = await create_user(session, "invite-name@whoami.test", "member", company.id)
+        now = utcnow()
+        session.add(
+            Invite(
+                company_id=company.id,
+                email=user.email,
+                first_name="Олег",
+                last_name="Олеговна",
+                role="member",
+                token_hash=f"whoami-name-fallback-{company.id}-{user.id}",
+                expires_at=now + timedelta(days=7),
+                used_at=now,
+                invited_by_user_id=None,
+            )
+        )
+        await session.commit()
+        cookie = await create_session_cookie(session, user.id)
+
+    response = await _get_whoami(async_client, cookie)
+    assert response.status_code == 200
+    payload = response.json()
+    _assert_whoami_contract(payload)
+    assert payload["first_name"] == "Олег"
+    assert payload["last_name"] == "Олеговна"
+    assert payload["company_name"] == "Whoami Invite Name Fallback Co"
 
 
 async def test_whoami_profile_without_limit_returns_zero_remaining_credits(async_client, engine):
