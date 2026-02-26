@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { ChatShell } from '../components/chat/ChatShell'
@@ -21,6 +21,16 @@ export function ChatPage() {
     sendMessage,
     stopGenerating,
   } = useChat(user?.id)
+
+  useEffect(() => {
+    document.documentElement.classList.add('is-chat-page')
+    document.body.classList.add('is-chat-page')
+
+    return () => {
+      document.documentElement.classList.remove('is-chat-page')
+      document.body.classList.remove('is-chat-page')
+    }
+  }, [])
 
   async function onLogout() {
     setIsSubmittingLogout(true)

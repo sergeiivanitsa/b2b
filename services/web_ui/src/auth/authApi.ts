@@ -27,6 +27,10 @@ type RawAuthUser = {
   last_name?: string | null
   company_name?: string | null
   remaining_credits?: number | null
+  company_pool_balance?: number | null
+  company_allocated_total?: number | null
+  company_unallocated_balance?: number | null
+  effective_credits?: number | null
 }
 
 export async function fetchWhoami(): Promise<AuthUser> {
@@ -46,6 +50,10 @@ export async function fetchWhoami(): Promise<AuthUser> {
     last_name: normalizeOptionalString(user.last_name),
     company_name: normalizeOptionalString(user.company_name),
     remaining_credits: normalizeRemainingCredits(user.remaining_credits),
+    company_pool_balance: normalizeInteger(user.company_pool_balance),
+    company_allocated_total: normalizeInteger(user.company_allocated_total),
+    company_unallocated_balance: normalizeInteger(user.company_unallocated_balance),
+    effective_credits: normalizeRemainingCredits(user.effective_credits),
   }
 }
 
@@ -69,6 +77,13 @@ function normalizeRemainingCredits(value: number | null | undefined): number {
     return 0
   }
   return Math.max(0, Math.trunc(value))
+}
+
+function normalizeInteger(value: number | null | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 0
+  }
+  return Math.trunc(value)
 }
 
 export async function requestMagicLink(email: string): Promise<void> {

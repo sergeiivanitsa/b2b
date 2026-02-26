@@ -12,6 +12,10 @@ export type AuthUser = {
   last_name?: string | null
   company_name?: string | null
   remaining_credits?: number
+  company_pool_balance?: number
+  company_allocated_total?: number
+  company_unallocated_balance?: number
+  effective_credits?: number
 }
 
 export type AuthContextValue = {

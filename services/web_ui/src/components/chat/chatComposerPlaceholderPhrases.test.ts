@@ -14,7 +14,7 @@ describe('chatComposerPlaceholderPhrases', () => {
   })
 
   it('contains the expected number of phrases', () => {
-    expect(CHAT_COMPOSER_PLACEHOLDER_PHRASES.length).toBe(19)
+    expect(CHAT_COMPOSER_PLACEHOLDER_PHRASES.length).toBe(38)
   })
 
   it('uses the first phrase as static placeholder fallback', () => {

@@ -381,10 +381,23 @@ async def test_internal_whoami_auth_and_contract(async_client, engine):
     assert auth.status_code == 200
     payload = auth.json()
     old_keys = {"id", "email", "role", "org_id", "company_id", "is_superadmin", "is_active"}
-    new_keys = {"first_name", "last_name", "company_name", "remaining_credits"}
+    new_keys = {
+        "first_name",
+        "last_name",
+        "company_name",
+        "remaining_credits",
+        "company_pool_balance",
+        "company_allocated_total",
+        "company_unallocated_balance",
+        "effective_credits",
+    }
     assert old_keys <= set(payload.keys())
     assert new_keys <= set(payload.keys())
     assert payload["first_name"] is None
     assert payload["last_name"] is None
     assert payload["company_name"] == "Whoami Contract Co"
     assert payload["remaining_credits"] == 0
+    assert payload["company_pool_balance"] == 0
+    assert payload["company_allocated_total"] == 0
+    assert payload["company_unallocated_balance"] == 0
+    assert payload["effective_credits"] == 0

@@ -1320,6 +1320,10 @@ async def whoami(
         "last_name": current_user.last_name,
         "company_name": profile["company_name"],
         "remaining_credits": profile["remaining_credits"],
+        "company_pool_balance": profile["company_pool_balance"],
+        "company_allocated_total": profile["company_allocated_total"],
+        "company_unallocated_balance": profile["company_unallocated_balance"],
+        "effective_credits": profile["effective_credits"],
     }
 
 

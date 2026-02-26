@@ -45,8 +45,9 @@ export function ChatWindow({ thread }: ChatWindowProps) {
           className="chat-scroll-bottom button button--secondary"
           type="button"
           onClick={() => scrollToBottom('smooth')}
+          aria-label="Прокрутить вниз"
         >
-          Scroll to bottom
+          <img className="chat-scroll-bottom__icon" src="/arrow.webp" alt="" aria-hidden />
         </button>
       ) : null}
     </section>
