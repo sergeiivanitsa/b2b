@@ -17,7 +17,7 @@ from product_api.db.session import get_session
 from product_api.emailer import send_magic_link
 from product_api.gateway_client import GatewayError, send_chat, stream_chat
 from product_api.logging_config import configure_logging
-from product_api.models import AuthToken, Conversation, Message, User
+from product_api.models import AuthToken, Conversation, Invite, Message, User
 from product_api.request_id import REQUEST_ID_HEADER, set_request_id
 from product_api.rbac import (
     ROLE_ADMIN,
@@ -582,6 +582,41 @@ def _normalize_person_name(value: str | None, field_name: str) -> str | None:
     if len(normalized) > 120:
         raise HTTPException(status_code=400, detail=f"{field_name} is too long")
     return normalized
+
+
+def _normalize_whoami_name(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+async def _resolve_whoami_names(
+    session: AsyncSession,
+    current_user: User,
+) -> tuple[str | None, str | None]:
+    first_name = _normalize_whoami_name(current_user.first_name)
+    last_name = _normalize_whoami_name(current_user.last_name)
+    if first_name or last_name or current_user.company_id is None:
+        return first_name, last_name
+
+    invite_result = await session.execute(
+        select(Invite.first_name, Invite.last_name)
+        .where(
+            Invite.company_id == current_user.company_id,
+            Invite.email == current_user.email,
+            Invite.used_at.is_not(None),
+        )
+        .order_by(Invite.created_at.desc())
+        .limit(1)
+    )
+    invite_row = invite_result.first()
+    if not invite_row:
+        return first_name, last_name
+
+    invite_first_name = _normalize_whoami_name(invite_row[0])
+    invite_last_name = _normalize_whoami_name(invite_row[1])
+    return invite_first_name or first_name, invite_last_name or last_name
 
 
 def _require_company_id(current_user: User) -> int:
@@ -1303,6 +1338,7 @@ async def whoami(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    first_name, last_name = await _resolve_whoami_names(session=session, current_user=current_user)
     profile = await get_whoami_header_profile(
         session=session,
         user_id=current_user.id,
@@ -1316,8 +1352,8 @@ async def whoami(
         "company_id": current_user.company_id,
         "is_superadmin": current_user.is_superadmin,
         "is_active": current_user.is_active,
-        "first_name": current_user.first_name,
-        "last_name": current_user.last_name,
+        "first_name": first_name,
+        "last_name": last_name,
         "company_name": profile["company_name"],
         "remaining_credits": profile["remaining_credits"],
         "company_pool_balance": profile["company_pool_balance"],

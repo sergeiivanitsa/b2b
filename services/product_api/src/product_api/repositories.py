@@ -288,28 +288,20 @@ async def get_whoami_header_profile(
     if company_id is None:
         return default_profile
 
-    result = await session.execute(
-        select(
-            Company.name,
-            UserCreditLimit.remaining_credits,
-        )
-        .select_from(Company)
-        .outerjoin(
-            UserCreditLimit,
-            (UserCreditLimit.company_id == Company.id)
-            & (UserCreditLimit.user_id == user_id),
-        )
-        .where(Company.id == company_id)
+    company_result = await session.execute(
+        select(Company.name).where(Company.id == company_id)
     )
-    row = result.one_or_none()
+    row = company_result.one_or_none()
     if row is None:
         return default_profile
+
+    user_limit = await get_user_credit_limit(session, user_id)
+    has_user_limit = user_limit is not None
+    remaining_credits = int(user_limit.remaining_credits or 0) if user_limit else 0
 
     pool_balance = await get_company_pool_balance(session, company_id)
     allocated_total = await get_company_allocated_total(session, company_id)
     unallocated_balance = pool_balance - allocated_total
-    has_user_limit = row[1] is not None
-    remaining_credits = int(row[1] or 0)
     effective_credits = (
         remaining_credits if has_user_limit else int(unallocated_balance)
     )
