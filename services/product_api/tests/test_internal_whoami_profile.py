@@ -136,6 +136,41 @@ async def test_whoami_profile_without_limit_returns_zero_remaining_credits(async
     assert payload["effective_credits"] == 120
 
 
+async def test_whoami_profile_uses_user_limit_by_user_id(async_client, engine):
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        user_company = await create_company(session, "Whoami User Limit Source Co")
+        foreign_company = await create_company(session, "Foreign Company")
+        user = await create_user(session, "userlimit@whoami.test", "member", user_company.id)
+        user.first_name = "User"
+        user.last_name = "Limit"
+        session.add(
+            Ledger(
+                company_id=user_company.id,
+                user_id=None,
+                message_id=None,
+                delta=20,
+                reason="whoami_test_topup",
+                idempotency_key="whoami-user-limit-source-topup",
+            )
+        )
+        # Keep the limit row attached to another company_id to mirror real-world
+        # data drift where whoami and admin previously disagreed.
+        session.add(UserCreditLimit(company_id=foreign_company.id, user_id=user.id, remaining_credits=9))
+        await session.commit()
+        cookie = await create_session_cookie(session, user.id)
+
+    response = await _get_whoami(async_client, cookie)
+    assert response.status_code == 200
+    payload = response.json()
+    _assert_whoami_contract(payload)
+    assert payload["company_name"] == "Whoami User Limit Source Co"
+    assert payload["remaining_credits"] == 9
+    assert payload["company_pool_balance"] == 20
+    assert payload["company_allocated_total"] == 0
+    assert payload["company_unallocated_balance"] == 20
+    assert payload["effective_credits"] == 9
+
+
 async def test_whoami_profile_without_company_returns_null_company_and_zero_credits(
     async_client,
     engine,
