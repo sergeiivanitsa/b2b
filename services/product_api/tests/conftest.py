@@ -22,6 +22,9 @@ os.environ.setdefault("APP_ENV", "dev")
 os.environ.setdefault("GATEWAY_URL", "http://gateway_api:8001")
 os.environ.setdefault("GATEWAY_SHARED_SECRET", "test-shared-secret")
 os.environ.setdefault("AUTH_TOKEN_SECRET", "test-auth-secret")
+os.environ.setdefault("CLAIM_EDIT_TOKEN_SECRET", "test-claim-edit-secret")
+os.environ.setdefault("CLAIMS_PRICE_RUB", "990")
+os.environ.setdefault("CLAIMS_UPLOAD_DIR", "/tmp/product_api_claims")
 os.environ.setdefault("INVITE_TOKEN_SECRET", "test-invite-secret")
 os.environ.setdefault("SESSION_SECRET", "test-session-secret")
 os.environ.setdefault("EMAIL_FROM", "no-reply@example.com")
@@ -34,6 +37,9 @@ from product_api.db.session import get_session
 from product_api.main import app
 
 TABLES = [
+    "claim_events",
+    "claim_files",
+    "claims",
     "audit_log",
     "messages",
     "ledger",

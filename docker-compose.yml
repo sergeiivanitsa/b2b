@@ -15,6 +15,9 @@ services:
       GATEWAY_SHARED_SECRET: dev-shared-secret
       AUTH_TOKEN_SECRET: dev-auth-secret
       AUTH_TOKEN_TTL_SECONDS: "900"
+      CLAIM_EDIT_TOKEN_SECRET: dev-claim-edit-secret
+      CLAIMS_PRICE_RUB: "990"
+      CLAIMS_UPLOAD_DIR: /var/lib/product_api/claims_uploads
       INVITE_TOKEN_SECRET: dev-invite-secret
       SESSION_SECRET: dev-session-secret
       SESSION_TTL_SECONDS: "1209600"
@@ -35,6 +38,8 @@ services:
       RATE_LIMIT_COMPANY_RPM: "60"
       RATE_LIMIT_USER_RPM: "30"
       RATE_LIMIT_IP_RPM: "120"
+    volumes:
+      - claims_uploads:/var/lib/product_api/claims_uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -88,6 +93,7 @@ services:
       retries: 5
 
 volumes:
+  claims_uploads:
   pg_data:
 
 networks:

@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     auth_token_ttl_seconds: int = Field(
         default=900, validation_alias="AUTH_TOKEN_TTL_SECONDS"
     )
+    claim_edit_token_secret: str = Field(..., validation_alias="CLAIM_EDIT_TOKEN_SECRET")
+    claims_price_rub: int = Field(default=990, validation_alias="CLAIMS_PRICE_RUB")
+    claims_upload_dir: str = Field(..., validation_alias="CLAIMS_UPLOAD_DIR")
     invite_token_secret: str = Field(..., validation_alias="INVITE_TOKEN_SECRET")
     session_secret: str = Field(..., validation_alias="SESSION_SECRET")
     session_ttl_seconds: int = Field(default=1209600, validation_alias="SESSION_TTL_SECONDS")
@@ -59,6 +62,21 @@ class Settings(BaseSettings):
         if value not in {"lax", "strict", "none"}:
             raise ValueError("COOKIE_SAMESITE must be one of: lax, strict, none")
         return value
+
+    @field_validator("claims_price_rub")
+    @classmethod
+    def _validate_claims_price(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("CLAIMS_PRICE_RUB must be >= 0")
+        return value
+
+    @field_validator("claims_upload_dir")
+    @classmethod
+    def _validate_claims_upload_dir(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("CLAIMS_UPLOAD_DIR must not be empty")
+        return normalized
 
 
 @lru_cache
