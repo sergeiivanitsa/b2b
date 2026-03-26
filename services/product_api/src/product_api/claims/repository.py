@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -73,3 +74,27 @@ async def append_claim_event(
     )
     session.add(event)
     return event
+
+
+def derive_generation_state_for_extract(normalized_data: dict[str, Any]) -> str:
+    missing_fields = normalized_data.get("missing_fields")
+    if isinstance(missing_fields, list) and len(missing_fields) == 0:
+        return "ready"
+    return "insufficient_data"
+
+
+async def apply_claim_extraction_result(
+    session: AsyncSession,
+    claim: Claim,
+    *,
+    case_type: str | None,
+    normalized_data: dict[str, Any],
+) -> Claim:
+    claim.case_type = case_type
+    claim.normalized_data_json = normalized_data
+    if claim.generation_state != "manual_review_required":
+        claim.generation_state = derive_generation_state_for_extract(normalized_data)
+    claim.updated_at = utcnow()
+    session.add(claim)
+    await session.flush()
+    return claim

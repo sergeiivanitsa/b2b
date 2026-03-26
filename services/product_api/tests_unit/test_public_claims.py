@@ -2,10 +2,19 @@ from datetime import datetime, timezone
 
 import pytest
 
-from product_api.claims.security import require_claim_access
+from product_api.claims.security import hash_claim_edit_token, require_claim_access
+from product_api.gateway_client import GatewayError
 from product_api.models import Claim, ClaimEvent
 
 pytestmark = pytest.mark.asyncio
+
+
+class DummyResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
 
 
 async def test_create_public_claim_ok(async_client, mock_session):
@@ -87,3 +96,109 @@ async def test_get_public_claim_ok(async_client):
     assert "edit_token_hash" not in payload
     assert "risk_flags_json" not in payload
     assert "summary_for_admin" not in payload
+
+
+async def test_extract_public_claim_ok(async_client, mock_session, monkeypatch):
+    claim = Claim(
+        id=88,
+        status="draft",
+        generation_state="insufficient_data",
+        price_rub=990,
+        input_text="OOO Vector did not pay for delivery",
+        edit_token_hash=hash_claim_edit_token("valid-token"),
+    )
+    mock_session.execute.return_value = DummyResult(claim)
+
+    created_events: list[ClaimEvent] = []
+
+    def add_side_effect(instance):
+        if isinstance(instance, ClaimEvent):
+            created_events.append(instance)
+
+    mock_session.add.side_effect = add_side_effect
+
+    async def fake_run_claim_extraction(_settings, *, claim_id, input_text):
+        assert claim_id == 88
+        assert input_text == "OOO Vector did not pay for delivery"
+        return {
+            "case_type": "supply",
+            "normalized_data": {
+                "creditor_name": "OOO Alpha",
+                "debtor_name": "OOO Vector",
+                "contract_signed": True,
+                "contract_number": "17",
+                "contract_date": "2026-01-12",
+                "debt_amount": 380000,
+                "payment_due_date": "2026-02-01",
+                "partial_payments_present": False,
+                "partial_payments": [],
+                "penalty_exists": False,
+                "penalty_rate_text": None,
+                "documents_mentioned": ["contract"],
+                "missing_fields": [],
+            },
+            "error_code": None,
+        }
+
+    from product_api.routers import public_claims as public_claims_router
+
+    monkeypatch.setattr(public_claims_router, "run_claim_extraction", fake_run_claim_extraction)
+
+    resp = await async_client.post(
+        "/claims/88/extract",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["id"] == 88
+    assert payload["case_type"] == "supply"
+    assert payload["generation_state"] == "ready"
+    assert payload["normalized_data"]["debtor_name"] == "OOO Vector"
+    assert claim.case_type == "supply"
+    assert claim.generation_state == "ready"
+    assert mock_session.flush.await_count == 1
+    assert mock_session.commit.await_count == 1
+    assert len(created_events) == 1
+    assert created_events[0].event_type == "claim.extract_succeeded"
+    assert created_events[0].payload_json["result"] == "success"
+
+
+async def test_extract_public_claim_gateway_error_502(async_client, mock_session, monkeypatch):
+    claim = Claim(
+        id=89,
+        status="draft",
+        generation_state="insufficient_data",
+        price_rub=990,
+        input_text="OOO Vector did not pay for delivery",
+        edit_token_hash=hash_claim_edit_token("valid-token"),
+    )
+    mock_session.execute.return_value = DummyResult(claim)
+
+    created_events: list[ClaimEvent] = []
+
+    def add_side_effect(instance):
+        if isinstance(instance, ClaimEvent):
+            created_events.append(instance)
+
+    mock_session.add.side_effect = add_side_effect
+
+    async def fake_run_claim_extraction(_settings, *, claim_id, input_text):
+        raise GatewayError("boom")
+
+    from product_api.routers import public_claims as public_claims_router
+
+    monkeypatch.setattr(public_claims_router, "run_claim_extraction", fake_run_claim_extraction)
+
+    resp = await async_client.post(
+        "/claims/89/extract",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+    )
+
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "gateway error"
+    assert mock_session.flush.await_count == 0
+    assert mock_session.commit.await_count == 1
+    assert len(created_events) == 1
+    assert created_events[0].event_type == "claim.extract_failed"
+    assert created_events[0].payload_json["error_code"] == "gateway_error"

@@ -5,11 +5,14 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from product_api.auth import generate_raw_token
+from product_api.claims.extraction import build_extraction_event_payload, run_claim_extraction
 from product_api.db.session import get_session
+from product_api.gateway_client import GatewayError
 from product_api.models import Claim
 from product_api.settings import get_settings
 
 from product_api.claims.repository import (
+    apply_claim_extraction_result,
     append_claim_event,
     build_public_claim_snapshot,
     create_claim,
@@ -95,4 +98,43 @@ async def create_public_claim(
 async def get_public_claim(
     claim: Claim = Depends(require_claim_access),
 ):
+    return build_public_claim_snapshot(claim)
+
+
+@router.post("/claims/{claim_id}/extract", response_model=PublicClaimOut)
+async def extract_public_claim(
+    claim: Claim = Depends(require_claim_access),
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        result = await run_claim_extraction(
+            settings,
+            claim_id=claim.id,
+            input_text=claim.input_text,
+        )
+    except GatewayError:
+        await append_claim_event(
+            session,
+            claim_id=claim.id,
+            event_type="claim.extract_failed",
+            payload_json={"error_code": "gateway_error"},
+        )
+        await session.commit()
+        raise HTTPException(status_code=502, detail="gateway error")
+
+    await apply_claim_extraction_result(
+        session,
+        claim,
+        case_type=result["case_type"],
+        normalized_data=result["normalized_data"],
+    )
+    await append_claim_event(
+        session,
+        claim_id=claim.id,
+        event_type="claim.extract_fallback"
+        if result["error_code"]
+        else "claim.extract_succeeded",
+        payload_json=build_extraction_event_payload(result),
+    )
+    await session.commit()
     return build_public_claim_snapshot(claim)
