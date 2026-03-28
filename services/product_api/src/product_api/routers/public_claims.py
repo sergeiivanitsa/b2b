@@ -1,12 +1,14 @@
+import re
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from product_api.auth import generate_raw_token
 from product_api.claims.extraction import build_extraction_event_payload, run_claim_extraction
 from product_api.claims.schemas import ClaimPatchIn, Step2Out
+from product_api.claims.storage import delete_claim_upload, save_claim_upload
 from product_api.db.session import get_session
 from product_api.gateway_client import GatewayError
 from product_api.models import Claim
@@ -17,7 +19,10 @@ from product_api.claims.repository import (
     apply_claim_extraction_result,
     append_claim_event,
     build_public_claim_snapshot,
+    build_public_claim_file_snapshot,
     create_claim,
+    create_claim_file,
+    list_claim_files,
 )
 from product_api.claims.security import hash_claim_edit_token, require_claim_access
 
@@ -54,12 +59,31 @@ class ClaimCreateOut(BaseModel):
     claim: PublicClaimOut
 
 
+class ClaimFileOut(BaseModel):
+    id: int
+    filename: str
+    mime_type: str
+    file_role: str
+    uploaded_at: str | None
+
+
 def _normalize_input_text(raw_value: str) -> str:
     normalized = raw_value.strip()
     if not normalized:
         raise HTTPException(status_code=400, detail="input_text is required")
     if len(normalized) > settings.max_message_chars:
         raise HTTPException(status_code=400, detail="input_text is too long")
+    return normalized
+
+
+def _normalize_file_role(raw_value: str) -> str:
+    normalized = raw_value.strip().lower()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="file_role is required")
+    if len(normalized) > 32:
+        raise HTTPException(status_code=400, detail="file_role is too long")
+    if not re.fullmatch(r"[a-z0-9_]+", normalized):
+        raise HTTPException(status_code=400, detail="invalid file_role")
     return normalized
 
 
@@ -186,3 +210,60 @@ async def update_public_claim(
     )
     await session.commit()
     return snapshot
+
+
+@router.post("/claims/{claim_id}/files", response_model=ClaimFileOut)
+async def upload_public_claim_file(
+    claim: Claim = Depends(require_claim_access),
+    session: AsyncSession = Depends(get_session),
+    file: UploadFile = File(...),
+    file_role: str = Form(default="supporting_document"),
+):
+    normalized_file_role = _normalize_file_role(file_role)
+    stored_upload = None
+    try:
+        stored_upload = await save_claim_upload(
+            settings,
+            claim_id=claim.id,
+            upload_file=file,
+        )
+        claim_file = await create_claim_file(
+            session,
+            claim_id=claim.id,
+            filename=stored_upload.filename,
+            storage_path=stored_upload.storage_path,
+            mime_type=stored_upload.mime_type,
+            file_role=normalized_file_role,
+        )
+        await append_claim_event(
+            session,
+            claim_id=claim.id,
+            event_type="claim.file_uploaded",
+            payload_json={
+                "file_id": claim_file.id,
+                "file_role": claim_file.file_role,
+                "mime_type": claim_file.mime_type,
+                "size_bytes": stored_upload.size_bytes,
+            },
+        )
+        await session.commit()
+        return build_public_claim_file_snapshot(claim_file)
+    except ValueError as exc:
+        if stored_upload is not None:
+            delete_claim_upload(settings, stored_upload.storage_path)
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        if stored_upload is not None:
+            delete_claim_upload(settings, stored_upload.storage_path)
+        raise
+    finally:
+        await file.close()
+
+
+@router.get("/claims/{claim_id}/files", response_model=list[ClaimFileOut])
+async def get_public_claim_files(
+    claim: Claim = Depends(require_claim_access),
+    session: AsyncSession = Depends(get_session),
+):
+    files = await list_claim_files(session, claim.id)
+    return [build_public_claim_file_snapshot(item) for item in files]

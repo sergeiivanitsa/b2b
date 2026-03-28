@@ -3,8 +3,9 @@ from datetime import datetime, timezone
 import pytest
 
 from product_api.claims.security import hash_claim_edit_token, require_claim_access
+from product_api.claims.storage import StoredClaimUpload
 from product_api.gateway_client import GatewayError
-from product_api.models import Claim, ClaimEvent
+from product_api.models import Claim, ClaimEvent, ClaimFile
 
 pytestmark = pytest.mark.asyncio
 
@@ -302,3 +303,143 @@ async def test_update_public_claim_patch_invalid_case_type_returns_400(async_cli
     assert resp.json()["detail"] == "invalid case_type"
     assert mock_session.flush.await_count == 0
     assert mock_session.commit.await_count == 0
+
+
+async def test_upload_public_claim_file_ok(async_client, mock_session, monkeypatch):
+    claim = Claim(
+        id=92,
+        status="draft",
+        generation_state="ready",
+        price_rub=990,
+        input_text="OOO Vector did not pay for delivery",
+        edit_token_hash=hash_claim_edit_token("valid-token"),
+    )
+    mock_session.execute.return_value = DummyResult(claim)
+
+    created_events: list[ClaimEvent] = []
+    created_files: list[ClaimFile] = []
+
+    def add_side_effect(instance):
+        if isinstance(instance, ClaimFile):
+            instance.id = 501
+            created_files.append(instance)
+        elif isinstance(instance, ClaimEvent):
+            created_events.append(instance)
+
+    mock_session.add.side_effect = add_side_effect
+
+    async def fake_save_claim_upload(_settings, *, claim_id, upload_file):
+        assert claim_id == 92
+        return StoredClaimUpload(
+            filename="contract.pdf",
+            storage_path="claims/92/a.pdf",
+            mime_type="application/pdf",
+            size_bytes=2048,
+        )
+
+    from product_api.routers import public_claims as public_claims_router
+
+    monkeypatch.setattr(public_claims_router, "save_claim_upload", fake_save_claim_upload)
+
+    resp = await async_client.post(
+        "/claims/92/files",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+        data={"file_role": "contract"},
+        files={"file": ("contract.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["id"] == 501
+    assert payload["filename"] == "contract.pdf"
+    assert payload["mime_type"] == "application/pdf"
+    assert payload["file_role"] == "contract"
+    assert len(created_files) == 1
+    assert mock_session.flush.await_count == 1
+    assert mock_session.commit.await_count == 1
+    assert len(created_events) == 1
+    assert created_events[0].event_type == "claim.file_uploaded"
+    assert created_events[0].payload_json["size_bytes"] == 2048
+
+
+async def test_upload_public_claim_file_validation_error(async_client, mock_session, monkeypatch):
+    claim = Claim(
+        id=93,
+        status="draft",
+        generation_state="ready",
+        price_rub=990,
+        input_text="OOO Vector did not pay for delivery",
+        edit_token_hash=hash_claim_edit_token("valid-token"),
+    )
+    mock_session.execute.return_value = DummyResult(claim)
+
+    async def fake_save_claim_upload(_settings, *, claim_id, upload_file):
+        raise ValueError("unsupported mime type")
+
+    from product_api.routers import public_claims as public_claims_router
+
+    monkeypatch.setattr(public_claims_router, "save_claim_upload", fake_save_claim_upload)
+
+    resp = await async_client.post(
+        "/claims/93/files",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+        data={"file_role": "contract"},
+        files={"file": ("contract.gif", b"GIF89a", "image/gif")},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "unsupported mime type"
+    assert mock_session.flush.await_count == 0
+    assert mock_session.commit.await_count == 0
+
+
+async def test_get_public_claim_files_ok(async_client, mock_session, monkeypatch):
+    claim = Claim(
+        id=94,
+        status="draft",
+        generation_state="ready",
+        price_rub=990,
+        input_text="OOO Vector did not pay for delivery",
+        edit_token_hash=hash_claim_edit_token("valid-token"),
+    )
+    mock_session.execute.return_value = DummyResult(claim)
+
+    async def fake_list_claim_files(_session, claim_id):
+        assert claim_id == 94
+        return [
+            ClaimFile(
+                id=1,
+                claim_id=94,
+                filename="contract.pdf",
+                storage_path="claims/94/a.pdf",
+                mime_type="application/pdf",
+                file_role="contract",
+                uploaded_at=datetime(2026, 2, 20, 12, 0, tzinfo=timezone.utc),
+            ),
+            ClaimFile(
+                id=2,
+                claim_id=94,
+                filename="invoice.pdf",
+                storage_path="claims/94/b.pdf",
+                mime_type="application/pdf",
+                file_role="invoice",
+                uploaded_at=datetime(2026, 2, 20, 12, 5, tzinfo=timezone.utc),
+            ),
+        ]
+
+    from product_api.routers import public_claims as public_claims_router
+
+    monkeypatch.setattr(public_claims_router, "list_claim_files", fake_list_claim_files)
+
+    resp = await async_client.get(
+        "/claims/94/files",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert isinstance(payload, list)
+    assert len(payload) == 2
+    assert payload[0]["id"] == 1
+    assert payload[0]["filename"] == "contract.pdf"
+    assert payload[0]["file_role"] == "contract"

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -305,3 +307,80 @@ async def test_patch_claims_invalid_case_type_returns_400(async_client):
 
     assert resp.status_code == 400
     assert resp.json()["detail"] == "invalid case_type"
+
+
+async def test_post_claims_files_upload_and_list(async_client, engine):
+    settings = get_settings()
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    upload_resp = await async_client.post(
+        f"/claims/{created['claim_id']}/files",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+        data={"file_role": "contract"},
+        files={"file": ("contract.pdf", b"%PDF-1.4 test", "application/pdf")},
+    )
+    assert upload_resp.status_code == 200
+    uploaded = upload_resp.json()
+    assert uploaded["filename"] == "contract.pdf"
+    assert uploaded["mime_type"] == "application/pdf"
+    assert uploaded["file_role"] == "contract"
+
+    list_resp = await async_client.get(
+        f"/claims/{created['claim_id']}/files",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+    )
+    assert list_resp.status_code == 200
+    files_payload = list_resp.json()
+    assert len(files_payload) == 1
+    assert files_payload[0]["id"] == uploaded["id"]
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        file_row = await session.execute(
+            text(
+                "SELECT storage_path, filename, mime_type, file_role "
+                "FROM claim_files WHERE id = :id"
+            ),
+            {"id": uploaded["id"]},
+        )
+        row = file_row.first()
+        assert row is not None
+        assert row[1] == "contract.pdf"
+        assert row[2] == "application/pdf"
+        assert row[3] == "contract"
+        assert (Path(settings.claims_upload_dir) / row[0]).is_file()
+
+        event_row = await session.execute(
+            text(
+                "SELECT event_type, payload_json "
+                "FROM claim_events WHERE claim_id = :claim_id ORDER BY id DESC LIMIT 1"
+            ),
+            {"claim_id": created["claim_id"]},
+        )
+        event = event_row.first()
+        assert event is not None
+        assert event[0] == "claim.file_uploaded"
+        assert event[1]["file_id"] == uploaded["id"]
+
+
+async def test_post_claims_files_rejects_unsupported_mime(async_client):
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    upload_resp = await async_client.post(
+        f"/claims/{created['claim_id']}/files",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+        data={"file_role": "contract"},
+        files={"file": ("contract.gif", b"GIF89a", "image/gif")},
+    )
+
+    assert upload_resp.status_code == 400
+    assert upload_resp.json()["detail"] == "unsupported mime type"

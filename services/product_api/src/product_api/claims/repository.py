@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from product_api.auth import utcnow
-from product_api.models import Claim, ClaimEvent
+from product_api.models import Claim, ClaimEvent, ClaimFile
 
 from .normalization import (
     build_step2_contract,
@@ -166,3 +166,42 @@ async def apply_claim_patch(
     session.add(claim)
     await session.flush()
     return claim, changed_fields
+
+
+def build_public_claim_file_snapshot(claim_file: ClaimFile) -> dict:
+    return {
+        "id": claim_file.id,
+        "filename": claim_file.filename,
+        "mime_type": claim_file.mime_type,
+        "file_role": claim_file.file_role,
+        "uploaded_at": _isoformat(claim_file.uploaded_at),
+    }
+
+
+async def create_claim_file(
+    session: AsyncSession,
+    *,
+    claim_id: int,
+    filename: str,
+    storage_path: str,
+    mime_type: str,
+    file_role: str,
+) -> ClaimFile:
+    claim_file = ClaimFile(
+        claim_id=claim_id,
+        filename=filename,
+        storage_path=storage_path,
+        mime_type=mime_type,
+        file_role=file_role,
+        uploaded_at=utcnow(),
+    )
+    session.add(claim_file)
+    await session.flush()
+    return claim_file
+
+
+async def list_claim_files(session: AsyncSession, claim_id: int) -> list[ClaimFile]:
+    result = await session.execute(
+        select(ClaimFile).where(ClaimFile.claim_id == claim_id).order_by(ClaimFile.id.asc())
+    )
+    return list(result.scalars().all())
