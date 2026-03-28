@@ -212,3 +212,96 @@ async def test_post_claims_extract_gateway_error_returns_502(async_client, engin
         assert event is not None
         assert event[0] == "claim.extract_failed"
         assert event[1]["error_code"] == "gateway_error"
+
+
+async def test_patch_claims_updates_claim_step2(async_client, engine):
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    resp = await async_client.patch(
+        f"/claims/{created['claim_id']}",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+        json={
+            "case_type": "подряд",
+            "client_email": " CLIENT@Example.com ",
+            "normalized_data": {
+                "creditor_name": "OOO Alpha",
+                "debtor_name": "OOO Vector",
+                "contract_signed": "да",
+                "contract_number": "17",
+                "debt_amount": "380 000 ₽",
+                "payment_due_date": "2000-01-01",
+                "partial_payments_present": "да",
+                "partial_payments": [
+                    {"amount": "50 000 ₽", "date": "20.01.2026"},
+                    {"amount": 30000, "date": "2026-01-28"},
+                ],
+                "penalty_exists": "нет",
+                "penalty_rate_text": "0.1% per day",
+                "documents_mentioned": ["Договор", "Счёт"],
+            },
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["case_type"] == "contract_work"
+    assert payload["client_email"] == "client@example.com"
+    assert payload["generation_state"] == "ready"
+    assert payload["normalized_data"]["partial_payments"] == [
+        {"amount": 50000, "date": "2026-01-20"},
+        {"amount": 30000, "date": "2026-01-28"},
+    ]
+    assert payload["normalized_data"]["penalty_rate_text"] is None
+    assert payload["step2"]["derived"]["total_paid_amount"] == 80000
+    assert payload["step2"]["derived"]["remaining_debt_amount"] == 300000
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        claim_row = await session.execute(
+            text(
+                "SELECT case_type, client_email, generation_state, normalized_data_json "
+                "FROM claims WHERE id = :id"
+            ),
+            {"id": created["claim_id"]},
+        )
+        row = claim_row.first()
+        assert row is not None
+        assert row[0] == "contract_work"
+        assert row[1] == "client@example.com"
+        assert row[2] == "ready"
+        assert row[3]["partial_payments"][0]["amount"] == 50000
+        assert row[3]["penalty_rate_text"] is None
+
+        event_row = await session.execute(
+            text(
+                "SELECT event_type, payload_json "
+                "FROM claim_events WHERE claim_id = :claim_id ORDER BY id DESC LIMIT 1"
+            ),
+            {"claim_id": created["claim_id"]},
+        )
+        event = event_row.first()
+        assert event is not None
+        assert event[0] == "claim.step2_updated"
+        assert "case_type" in event[1]["changed_fields"]
+
+
+async def test_patch_claims_invalid_case_type_returns_400(async_client):
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    resp = await async_client.patch(
+        f"/claims/{created['claim_id']}",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+        json={"case_type": "other"},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "invalid case_type"

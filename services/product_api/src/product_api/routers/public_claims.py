@@ -6,12 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from product_api.auth import generate_raw_token
 from product_api.claims.extraction import build_extraction_event_payload, run_claim_extraction
+from product_api.claims.schemas import ClaimPatchIn, Step2Out
 from product_api.db.session import get_session
 from product_api.gateway_client import GatewayError
 from product_api.models import Claim
 from product_api.settings import get_settings
 
 from product_api.claims.repository import (
+    apply_claim_patch,
     apply_claim_extraction_result,
     append_claim_event,
     build_public_claim_snapshot,
@@ -38,6 +40,7 @@ class PublicClaimOut(BaseModel):
     client_phone: str | None
     case_type: str | None
     normalized_data: dict[str, Any] | None
+    step2: Step2Out
     created_at: str | None
     updated_at: str | None
     paid_at: str | None
@@ -138,3 +141,48 @@ async def extract_public_claim(
     )
     await session.commit()
     return build_public_claim_snapshot(claim)
+
+
+@router.patch("/claims/{claim_id}", response_model=PublicClaimOut)
+async def update_public_claim(
+    payload: ClaimPatchIn,
+    claim: Claim = Depends(require_claim_access),
+    session: AsyncSession = Depends(get_session),
+):
+    normalized_patch_fields: set[str] = set()
+    normalized_patch_values: dict[str, Any] = {}
+    if payload.normalized_data is not None:
+        normalized_patch_fields = set(payload.normalized_data.model_fields_set)
+        normalized_patch_values = payload.normalized_data.model_dump(exclude_unset=True)
+
+    payload_fields = set(payload.model_fields_set)
+    try:
+        _, changed_fields = await apply_claim_patch(
+            session,
+            claim,
+            case_type_provided="case_type" in payload_fields,
+            case_type_value=payload.case_type,
+            client_email_provided="client_email" in payload_fields,
+            client_email_value=payload.client_email,
+            client_phone_provided="client_phone" in payload_fields,
+            client_phone_value=payload.client_phone,
+            normalized_patch_values=normalized_patch_values,
+            normalized_patch_fields=normalized_patch_fields,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    snapshot = build_public_claim_snapshot(claim)
+    await append_claim_event(
+        session,
+        claim_id=claim.id,
+        event_type="claim.step2_updated",
+        payload_json={
+            "changed_fields": changed_fields,
+            "missing_fields_count": len(snapshot["step2"]["missing_fields"]),
+            "generation_state": claim.generation_state,
+            "derived": snapshot["step2"]["derived"],
+        },
+    )
+    await session.commit()
+    return snapshot

@@ -202,3 +202,103 @@ async def test_extract_public_claim_gateway_error_502(async_client, mock_session
     assert len(created_events) == 1
     assert created_events[0].event_type == "claim.extract_failed"
     assert created_events[0].payload_json["error_code"] == "gateway_error"
+
+
+async def test_update_public_claim_patch_merges_user_edits(async_client, mock_session):
+    claim = Claim(
+        id=90,
+        status="draft",
+        generation_state="insufficient_data",
+        price_rub=990,
+        input_text="OOO Vector did not pay for delivery",
+        edit_token_hash=hash_claim_edit_token("valid-token"),
+        case_type="supply",
+        normalized_data_json={
+            "creditor_name": "OOO Alpha",
+            "debtor_name": "OOO Vector",
+            "contract_signed": True,
+            "contract_number": "17",
+            "contract_date": "2026-01-12",
+            "debt_amount": 380000,
+            "payment_due_date": "2000-01-01",
+            "partial_payments_present": False,
+            "partial_payments": [],
+            "penalty_exists": True,
+            "penalty_rate_text": "0.1% per day",
+            "documents_mentioned": ["contract"],
+            "missing_fields": [],
+        },
+    )
+    mock_session.execute.return_value = DummyResult(claim)
+
+    created_events: list[ClaimEvent] = []
+
+    def add_side_effect(instance):
+        if isinstance(instance, ClaimEvent):
+            created_events.append(instance)
+
+    mock_session.add.side_effect = add_side_effect
+
+    resp = await async_client.patch(
+        "/claims/90",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+        json={
+            "case_type": "подряд",
+            "client_email": " CLIENT@Example.com ",
+            "normalized_data": {
+                "partial_payments_present": "да",
+                "partial_payments": [
+                    {"amount": "50 000 ₽", "date": "20.01.2026"},
+                    {"amount": 30000, "date": "2026-01-28"},
+                ],
+                "penalty_exists": "нет",
+                "penalty_rate_text": "0.1% per day",
+                "documents_mentioned": ["Договор", "Счёт"],
+            },
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["case_type"] == "contract_work"
+    assert payload["client_email"] == "client@example.com"
+    assert payload["normalized_data"]["partial_payments_present"] is True
+    assert payload["normalized_data"]["partial_payments"] == [
+        {"amount": 50000, "date": "2026-01-20"},
+        {"amount": 30000, "date": "2026-01-28"},
+    ]
+    assert payload["normalized_data"]["penalty_exists"] is False
+    assert payload["normalized_data"]["penalty_rate_text"] is None
+    assert payload["step2"]["derived"]["total_paid_amount"] == 80000
+    assert payload["step2"]["derived"]["remaining_debt_amount"] == 300000
+    assert payload["step2"]["conditional_visibility"]["show_partial_payments"] is True
+    assert payload["step2"]["conditional_visibility"]["show_penalty_rate"] is False
+    assert claim.generation_state == "ready"
+    assert mock_session.flush.await_count == 1
+    assert mock_session.commit.await_count == 1
+    assert len(created_events) == 1
+    assert created_events[0].event_type == "claim.step2_updated"
+    assert "case_type" in created_events[0].payload_json["changed_fields"]
+
+
+async def test_update_public_claim_patch_invalid_case_type_returns_400(async_client, mock_session):
+    claim = Claim(
+        id=91,
+        status="draft",
+        generation_state="insufficient_data",
+        price_rub=990,
+        input_text="OOO Vector did not pay for delivery",
+        edit_token_hash=hash_claim_edit_token("valid-token"),
+    )
+    mock_session.execute.return_value = DummyResult(claim)
+
+    resp = await async_client.patch(
+        "/claims/91",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+        json={"case_type": "other"},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "invalid case_type"
+    assert mock_session.flush.await_count == 0
+    assert mock_session.commit.await_count == 0
