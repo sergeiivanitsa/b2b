@@ -36,6 +36,13 @@ class ClaimPatchIn(BaseModel):
     normalized_data: NormalizedDataPatchIn | None = None
 
 
+class ClaimContactIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    client_email: Any
+    client_phone: Any | None = None
+
+
 class Step2DerivedOut(BaseModel):
     total_paid_amount: int | float
     remaining_debt_amount: int | float | None

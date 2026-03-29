@@ -168,6 +168,35 @@ async def apply_claim_patch(
     return claim, changed_fields
 
 
+async def apply_claim_contact(
+    session: AsyncSession,
+    claim: Claim,
+    *,
+    client_email_value: Any,
+    client_phone_provided: bool,
+    client_phone_value: Any,
+) -> tuple[Claim, list[str]]:
+    changed_fields: list[str] = []
+
+    normalized_client_email = normalize_client_email(client_email_value)
+    if normalized_client_email is None:
+        raise ValueError("client_email is required")
+    if claim.client_email != normalized_client_email:
+        claim.client_email = normalized_client_email
+        changed_fields.append("client_email")
+
+    if client_phone_provided:
+        normalized_client_phone = normalize_client_phone(client_phone_value)
+        if claim.client_phone != normalized_client_phone:
+            claim.client_phone = normalized_client_phone
+            changed_fields.append("client_phone")
+
+    claim.updated_at = utcnow()
+    session.add(claim)
+    await session.flush()
+    return claim, changed_fields
+
+
 def build_public_claim_file_snapshot(claim_file: ClaimFile) -> dict:
     return {
         "id": claim_file.id,

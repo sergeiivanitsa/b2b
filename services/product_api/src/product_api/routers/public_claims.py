@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from product_api.auth import generate_raw_token
 from product_api.claims.extraction import build_extraction_event_payload, run_claim_extraction
-from product_api.claims.schemas import ClaimPatchIn, Step2Out
+from product_api.claims.schemas import ClaimContactIn, ClaimPatchIn, Step2Out
 from product_api.claims.storage import delete_claim_upload, save_claim_upload
 from product_api.db.session import get_session
 from product_api.gateway_client import GatewayError
@@ -15,6 +15,7 @@ from product_api.models import Claim
 from product_api.settings import get_settings
 
 from product_api.claims.repository import (
+    apply_claim_contact,
     apply_claim_patch,
     apply_claim_extraction_result,
     append_claim_event,
@@ -206,6 +207,37 @@ async def update_public_claim(
             "missing_fields_count": len(snapshot["step2"]["missing_fields"]),
             "generation_state": claim.generation_state,
             "derived": snapshot["step2"]["derived"],
+        },
+    )
+    await session.commit()
+    return snapshot
+
+
+@router.post("/claims/{claim_id}/contact", response_model=PublicClaimOut)
+async def update_public_claim_contact(
+    payload: ClaimContactIn,
+    claim: Claim = Depends(require_claim_access),
+    session: AsyncSession = Depends(get_session),
+):
+    payload_fields = set(payload.model_fields_set)
+    try:
+        _, changed_fields = await apply_claim_contact(
+            session,
+            claim,
+            client_email_value=payload.client_email,
+            client_phone_provided="client_phone" in payload_fields,
+            client_phone_value=payload.client_phone,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    snapshot = build_public_claim_snapshot(claim)
+    await append_claim_event(
+        session,
+        claim_id=claim.id,
+        event_type="claim.contact_updated",
+        payload_json={
+            "changed_fields": changed_fields,
         },
     )
     await session.commit()
