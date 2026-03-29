@@ -57,6 +57,7 @@ from product_api.repositories import (
 from product_api.rate_limit import RateLimitConfig, RateLimiter
 from product_api.settings import get_settings
 from product_api.routers.auth import router as auth_router
+from product_api.routers.admin_claims_auth import router as admin_claims_auth_router
 from product_api.routers.invites import router as invites_router
 from product_api.routers.public_claims import router as public_claims_router
 from shared.constants import MODEL_GPT_5_2
@@ -78,6 +79,7 @@ chat_ip_limiter = RateLimiter(
     RateLimitConfig(max_requests=settings.rate_limit_ip_rpm, window_seconds=60)
 )
 app.include_router(auth_router)
+app.include_router(admin_claims_auth_router)
 app.include_router(invites_router)
 app.include_router(public_claims_router)
 

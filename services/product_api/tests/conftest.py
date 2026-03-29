@@ -32,6 +32,10 @@ os.environ.setdefault(
     "CLAIMS_ALLOWED_UPLOAD_MIME_TYPES",
     '["application/pdf","image/jpeg","image/png","text/plain"]',
 )
+os.environ.setdefault(
+    "CLAIMS_ADMIN_EMAILS",
+    '["claims-admin@example.com"]',
+)
 os.environ.setdefault("INVITE_TOKEN_SECRET", "test-invite-secret")
 os.environ.setdefault("SESSION_SECRET", "test-session-secret")
 os.environ.setdefault("EMAIL_FROM", "no-reply@example.com")

@@ -36,6 +36,10 @@ class Settings(BaseSettings):
         ],
         validation_alias="CLAIMS_ALLOWED_UPLOAD_MIME_TYPES",
     )
+    claims_admin_emails: list[str] = Field(
+        default=[],
+        validation_alias="CLAIMS_ADMIN_EMAILS",
+    )
     invite_token_secret: str = Field(..., validation_alias="INVITE_TOKEN_SECRET")
     session_secret: str = Field(..., validation_alias="SESSION_SECRET")
     session_ttl_seconds: int = Field(default=1209600, validation_alias="SESSION_TTL_SECONDS")
@@ -123,6 +127,30 @@ class Settings(BaseSettings):
             normalized.append(candidate)
         if not normalized:
             raise ValueError("CLAIMS_ALLOWED_UPLOAD_MIME_TYPES must not be empty")
+        return normalized
+
+    @field_validator("claims_admin_emails", mode="before")
+    @classmethod
+    def _parse_claims_admin_emails(cls, value: str | list[str]) -> list[str]:
+        if isinstance(value, str):
+            parts = [item.strip().lower() for item in value.split(",")]
+            return [item for item in parts if item]
+        return value
+
+    @field_validator("claims_admin_emails")
+    @classmethod
+    def _validate_claims_admin_emails(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError("CLAIMS_ADMIN_EMAILS must contain strings only")
+            candidate = item.strip().lower()
+            if not candidate:
+                continue
+            if "@" not in candidate:
+                raise ValueError("CLAIMS_ADMIN_EMAILS must contain valid emails")
+            if candidate not in normalized:
+                normalized.append(candidate)
         return normalized
 
 
