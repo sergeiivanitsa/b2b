@@ -270,3 +270,25 @@ async def apply_claim_generation_preview(
     session.add(claim)
     await session.flush()
     return claim
+
+
+async def apply_claim_payment_stub(
+    session: AsyncSession,
+    claim: Claim,
+) -> tuple[Claim, list[str]]:
+    if claim.generation_state == "insufficient_data":
+        raise ValueError("insufficient_data")
+    if claim.status in {"paid", "in_review", "sent"}:
+        raise ValueError("already_paid_or_later_state")
+
+    changed_fields: list[str] = []
+    if claim.status != "paid":
+        claim.status = "paid"
+        changed_fields.append("status")
+    if claim.paid_at is None:
+        claim.paid_at = utcnow()
+        changed_fields.append("paid_at")
+    claim.updated_at = utcnow()
+    session.add(claim)
+    await session.flush()
+    return claim, changed_fields

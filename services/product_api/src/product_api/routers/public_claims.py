@@ -19,6 +19,7 @@ from product_api.settings import get_settings
 from product_api.claims.repository import (
     apply_claim_contact,
     apply_claim_generation_preview,
+    apply_claim_payment_stub,
     apply_claim_patch,
     apply_claim_extraction_result,
     append_claim_event,
@@ -342,6 +343,37 @@ async def get_public_claim_preview(
     if not preview["generated_preview_text"]:
         raise HTTPException(status_code=404, detail="preview not generated")
     return preview
+
+
+@router.post("/claims/{claim_id}/pay", response_model=PublicClaimOut)
+async def pay_public_claim(
+    claim: Claim = Depends(require_claim_access),
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        _, changed_fields = await apply_claim_payment_stub(session, claim)
+    except ValueError as exc:
+        detail = str(exc)
+        if detail == "insufficient_data":
+            raise HTTPException(status_code=409, detail="insufficient_data")
+        if detail == "already_paid_or_later_state":
+            raise HTTPException(status_code=409, detail="already_paid_or_later_state")
+        raise HTTPException(status_code=400, detail=detail)
+
+    snapshot = build_public_claim_snapshot(claim)
+    await append_claim_event(
+        session,
+        claim_id=claim.id,
+        event_type="claim.paid_stub",
+        payload_json={
+            "payment_mode": "stub",
+            "changed_fields": changed_fields,
+            "status": claim.status,
+            "generation_state": claim.generation_state,
+        },
+    )
+    await session.commit()
+    return snapshot
 
 
 @router.post("/claims/{claim_id}/files", response_model=ClaimFileOut)

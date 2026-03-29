@@ -443,3 +443,84 @@ async def test_get_public_claim_files_ok(async_client, mock_session, monkeypatch
     assert payload[0]["id"] == 1
     assert payload[0]["filename"] == "contract.pdf"
     assert payload[0]["file_role"] == "contract"
+
+
+async def test_pay_public_claim_ok(async_client, mock_session):
+    claim = Claim(
+        id=95,
+        status="draft",
+        generation_state="ready",
+        price_rub=990,
+        input_text="OOO Vector did not pay for delivery",
+        edit_token_hash=hash_claim_edit_token("valid-token"),
+    )
+    mock_session.execute.return_value = DummyResult(claim)
+
+    created_events: list[ClaimEvent] = []
+
+    def add_side_effect(instance):
+        if isinstance(instance, ClaimEvent):
+            created_events.append(instance)
+
+    mock_session.add.side_effect = add_side_effect
+
+    resp = await async_client.post(
+        "/claims/95/pay",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "paid"
+    assert payload["paid_at"] is not None
+    assert claim.status == "paid"
+    assert claim.paid_at is not None
+    assert mock_session.flush.await_count == 1
+    assert mock_session.commit.await_count == 1
+    assert len(created_events) == 1
+    assert created_events[0].event_type == "claim.paid_stub"
+    assert created_events[0].payload_json["payment_mode"] == "stub"
+
+
+async def test_pay_public_claim_insufficient_data_returns_409(async_client, mock_session):
+    claim = Claim(
+        id=96,
+        status="draft",
+        generation_state="insufficient_data",
+        price_rub=990,
+        input_text="OOO Vector did not pay for delivery",
+        edit_token_hash=hash_claim_edit_token("valid-token"),
+    )
+    mock_session.execute.return_value = DummyResult(claim)
+
+    resp = await async_client.post(
+        "/claims/96/pay",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "insufficient_data"
+    assert mock_session.flush.await_count == 0
+    assert mock_session.commit.await_count == 0
+
+
+async def test_pay_public_claim_repeated_returns_409(async_client, mock_session):
+    claim = Claim(
+        id=97,
+        status="paid",
+        generation_state="ready",
+        price_rub=990,
+        input_text="OOO Vector did not pay for delivery",
+        edit_token_hash=hash_claim_edit_token("valid-token"),
+    )
+    mock_session.execute.return_value = DummyResult(claim)
+
+    resp = await async_client.post(
+        "/claims/97/pay",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "already_paid_or_later_state"
+    assert mock_session.flush.await_count == 0
+    assert mock_session.commit.await_count == 0
