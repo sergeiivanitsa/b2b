@@ -207,6 +207,21 @@ def build_public_claim_file_snapshot(claim_file: ClaimFile) -> dict:
     }
 
 
+def build_public_claim_preview_snapshot(claim: Claim) -> dict:
+    normalized_data = claim.normalized_data_json if isinstance(claim.normalized_data_json, dict) else None
+    step2 = build_step2_contract(normalized_data)
+    return {
+        "claim_id": claim.id,
+        "generation_state": claim.generation_state,
+        "manual_review_required": claim.generation_state == "manual_review_required",
+        "risk_flags": list(claim.risk_flags_json or []),
+        "allowed_blocks": list(claim.allowed_blocks_json or []),
+        "blocked_blocks": list(claim.blocked_blocks_json or []),
+        "generated_preview_text": claim.generated_preview_text or "",
+        "missing_fields": list(step2["missing_fields"]),
+    }
+
+
 async def create_claim_file(
     session: AsyncSession,
     *,
@@ -234,3 +249,24 @@ async def list_claim_files(session: AsyncSession, claim_id: int) -> list[ClaimFi
         select(ClaimFile).where(ClaimFile.claim_id == claim_id).order_by(ClaimFile.id.asc())
     )
     return list(result.scalars().all())
+
+
+async def apply_claim_generation_preview(
+    session: AsyncSession,
+    claim: Claim,
+    *,
+    generation_state: str,
+    risk_flags: list[str],
+    allowed_blocks: list[str],
+    blocked_blocks: list[str],
+    generated_preview_text: str | None,
+) -> Claim:
+    claim.generation_state = generation_state
+    claim.risk_flags_json = risk_flags
+    claim.allowed_blocks_json = allowed_blocks
+    claim.blocked_blocks_json = blocked_blocks
+    claim.generated_preview_text = generated_preview_text
+    claim.updated_at = utcnow()
+    session.add(claim)
+    await session.flush()
+    return claim

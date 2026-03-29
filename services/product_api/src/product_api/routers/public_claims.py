@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from product_api.auth import generate_raw_token
 from product_api.claims.extraction import build_extraction_event_payload, run_claim_extraction
-from product_api.claims.schemas import ClaimContactIn, ClaimPatchIn, Step2Out
+from product_api.claims.generation import generate_claim_preview
+from product_api.claims.rules import evaluate_claim_rules
+from product_api.claims.schemas import ClaimContactIn, ClaimPatchIn, ClaimPreviewOut, Step2Out
 from product_api.claims.storage import delete_claim_upload, save_claim_upload
 from product_api.db.session import get_session
 from product_api.gateway_client import GatewayError
@@ -16,9 +18,11 @@ from product_api.settings import get_settings
 
 from product_api.claims.repository import (
     apply_claim_contact,
+    apply_claim_generation_preview,
     apply_claim_patch,
     apply_claim_extraction_result,
     append_claim_event,
+    build_public_claim_preview_snapshot,
     build_public_claim_snapshot,
     build_public_claim_file_snapshot,
     create_claim,
@@ -242,6 +246,102 @@ async def update_public_claim_contact(
     )
     await session.commit()
     return snapshot
+
+
+@router.post("/claims/{claim_id}/generate-preview", response_model=ClaimPreviewOut)
+async def generate_public_claim_preview(
+    claim: Claim = Depends(require_claim_access),
+    session: AsyncSession = Depends(get_session),
+):
+    decision = evaluate_claim_rules(
+        case_type=claim.case_type,
+        normalized_data=claim.normalized_data_json if isinstance(claim.normalized_data_json, dict) else None,
+    )
+
+    if decision["generation_state"] == "insufficient_data":
+        await apply_claim_generation_preview(
+            session,
+            claim,
+            generation_state=decision["generation_state"],
+            risk_flags=decision["risk_flags"],
+            allowed_blocks=decision["allowed_blocks"],
+            blocked_blocks=decision["blocked_blocks"],
+            generated_preview_text=None,
+        )
+        await append_claim_event(
+            session,
+            claim_id=claim.id,
+            event_type="claim.preview_blocked_insufficient_data",
+            payload_json={
+                "missing_fields": decision["missing_fields"],
+                "risk_flags": decision["risk_flags"],
+            },
+        )
+        await session.commit()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "insufficient_data",
+                "missing_fields": decision["missing_fields"],
+            },
+        )
+
+    generation_result = await generate_claim_preview(
+        settings,
+        claim_id=claim.id,
+        input_text=claim.input_text,
+        case_type=claim.case_type,
+        normalized_data=claim.normalized_data_json if isinstance(claim.normalized_data_json, dict) else None,
+        decision=decision,
+    )
+    await apply_claim_generation_preview(
+        session,
+        claim,
+        generation_state=decision["generation_state"],
+        risk_flags=decision["risk_flags"],
+        allowed_blocks=decision["allowed_blocks"],
+        blocked_blocks=decision["blocked_blocks"],
+        generated_preview_text=generation_result["generated_preview_text"],
+    )
+    await append_claim_event(
+        session,
+        claim_id=claim.id,
+        event_type="claim.preview_generated",
+        payload_json={
+            "generation_state": decision["generation_state"],
+            "used_fallback": generation_result["used_fallback"],
+            "risk_flags": decision["risk_flags"],
+            "allowed_blocks": decision["allowed_blocks"],
+            "blocked_blocks": decision["blocked_blocks"],
+        },
+    )
+    if generation_result["used_fallback"]:
+        await append_claim_event(
+            session,
+            claim_id=claim.id,
+            event_type="claim.preview_fallback",
+            payload_json={"error_code": generation_result["error_code"]},
+        )
+    await session.commit()
+    return build_public_claim_preview_snapshot(claim)
+
+
+@router.get("/claims/{claim_id}/preview", response_model=ClaimPreviewOut)
+async def get_public_claim_preview(
+    claim: Claim = Depends(require_claim_access),
+):
+    preview = build_public_claim_preview_snapshot(claim)
+    if claim.generation_state == "insufficient_data":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "insufficient_data",
+                "missing_fields": preview["missing_fields"],
+            },
+        )
+    if not preview["generated_preview_text"]:
+        raise HTTPException(status_code=404, detail="preview not generated")
+    return preview
 
 
 @router.post("/claims/{claim_id}/files", response_model=ClaimFileOut)

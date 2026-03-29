@@ -60,3 +60,14 @@ class Step2Out(BaseModel):
     conditional_visibility: Step2ConditionalVisibilityOut
     missing_fields: list[str]
     derived: Step2DerivedOut
+
+
+class ClaimPreviewOut(BaseModel):
+    claim_id: int
+    generation_state: str
+    manual_review_required: bool
+    risk_flags: list[str]
+    allowed_blocks: list[str]
+    blocked_blocks: list[str]
+    generated_preview_text: str
+    missing_fields: list[str]
