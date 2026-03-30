@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createClaim, getClaim } from './claimsApi'
+import { ApiHttpError } from '../lib/api'
+import { createClaim, generateClaimPreview, getClaim, getInsufficientDataDetail } from './claimsApi'
 
 describe('claimsApi', () => {
   beforeEach(() => {
@@ -130,5 +131,51 @@ describe('claimsApi', () => {
   it('validates token for getClaim', async () => {
     await expect(getClaim(0, 'token')).rejects.toThrow('claimId must be a positive integer')
     await expect(getClaim(1, '   ')).rejects.toThrow('editToken is required')
+  })
+
+  it('POST /claims/{id}/generate-preview sends claim edit token header', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          claim_id: 12,
+          generation_state: 'ready',
+          manual_review_required: false,
+          risk_flags: [],
+          allowed_blocks: [],
+          blocked_blocks: [],
+          generated_preview_text: 'preview',
+          missing_fields: [],
+        }),
+        {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+          },
+        },
+      ),
+    )
+
+    const payload = await generateClaimPreview(12, 'edit-token')
+
+    expect(payload.claim_id).toBe(12)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const [path, options] = fetchSpy.mock.calls[0]
+    expect(path).toBe('/api/claims/12/generate-preview')
+    expect(options?.method).toBe('POST')
+
+    const headers = new Headers(options?.headers)
+    expect(headers.get('X-Claim-Edit-Token')).toBe('edit-token')
+  })
+
+  it('extracts insufficient_data detail fields from api errors', () => {
+    const error = new ApiHttpError(409, {
+      detail: {
+        code: 'insufficient_data',
+        missing_fields: ['debt_amount', 'payment_due_date'],
+      },
+    })
+
+    const payload = getInsufficientDataDetail(error)
+    expect(payload).toEqual(['debt_amount', 'payment_due_date'])
   })
 })

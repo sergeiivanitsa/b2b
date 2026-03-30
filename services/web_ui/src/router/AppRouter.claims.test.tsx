@@ -43,13 +43,13 @@ describe('AppRouter claims shell', () => {
     sessionStorage.clear()
   })
 
-  it('renders claims shell at /claims', () => {
+  it('renders step 1 at /claims', () => {
     mockedUseAuth.mockReturnValue(buildAuthContext('anonymous'))
 
     renderRouter('/claims')
 
-    expect(screen.getByText('Public Claims Flow')).toBeTruthy()
-    expect(screen.getByText(/No active claim session/i)).toBeTruthy()
+    expect(screen.getByText('СОЗДАТЬ ПРЕТЕНЗИЮ')).toBeTruthy()
+    expect(screen.getByText('шаг 1 из 4: описание ситуации')).toBeTruthy()
   })
 
   it('redirects /claims/* to /claims shell', () => {
@@ -57,7 +57,7 @@ describe('AppRouter claims shell', () => {
 
     renderRouter('/claims/step-unknown')
 
-    expect(screen.getByText('Public Claims Flow')).toBeTruthy()
+    expect(screen.getByText('СОЗДАТЬ ПРЕТЕНЗИЮ')).toBeTruthy()
   })
 
   it('keeps root redirect behavior unchanged', () => {
