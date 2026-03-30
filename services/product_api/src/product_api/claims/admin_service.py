@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from product_api.auth import utcnow
 from product_api.models import Claim
 
-from .normalization import build_step2_contract
+from .normalization import build_step2_contract, normalize_client_email
 from .repository import (
     append_claim_event,
     build_public_claim_file_snapshot,
@@ -123,26 +123,20 @@ def build_admin_claim_detail_snapshot(claim: Claim) -> dict[str, Any]:
 
 def apply_admin_status_transition(claim: Claim, *, target_status: str) -> tuple[str, list[str]]:
     normalized_target = normalize_admin_target_status(target_status)
+    if normalized_target == "sent":
+        raise ValueError("use_send_action")
+
     from_status = claim.status
     changed_fields: list[str] = []
 
-    if normalized_target == "in_review":
-        if claim.status != "paid":
-            raise ValueError("invalid_transition")
-        claim.status = "in_review"
-        changed_fields.append("status")
-        if claim.reviewed_at is None:
-            claim.reviewed_at = utcnow()
-            changed_fields.append("reviewed_at")
-        return from_status, changed_fields
-
-    if claim.status != "in_review":
+    if claim.status != "paid":
         raise ValueError("invalid_transition")
-    claim.status = "sent"
+
+    claim.status = "in_review"
     changed_fields.append("status")
-    if claim.sent_at is None:
-        claim.sent_at = utcnow()
-        changed_fields.append("sent_at")
+    if claim.reviewed_at is None:
+        claim.reviewed_at = utcnow()
+        changed_fields.append("reviewed_at")
     return from_status, changed_fields
 
 
@@ -246,6 +240,90 @@ async def update_admin_claim_final_text(
         )
     await session.flush()
     return build_admin_claim_detail_snapshot(claim)
+
+
+def prepare_admin_claim_send(claim: Claim) -> tuple[str, str]:
+    if claim.status == "sent":
+        raise ValueError("already_sent")
+    if claim.status != "in_review":
+        raise ValueError("invalid_transition")
+
+    client_email = normalize_client_email(claim.client_email)
+    if not client_email:
+        raise ValueError("client_email_required")
+
+    try:
+        final_text = normalize_final_text(claim.final_text)
+    except ValueError as exc:
+        if str(exc) == "final_text is required":
+            raise ValueError("final_text_required") from exc
+        raise
+
+    return client_email, final_text
+
+
+async def send_admin_claim_final_result(
+    session: AsyncSession,
+    *,
+    claim_id: int,
+    to_email: str,
+) -> dict[str, Any]:
+    claim = await get_claim_by_id(session, claim_id)
+    if not claim:
+        raise LookupError("claim not found")
+
+    from_status = claim.status
+    if claim.status == "sent":
+        raise ValueError("already_sent")
+    if claim.status != "in_review":
+        raise ValueError("invalid_transition")
+
+    changed_fields: list[str] = []
+    claim.status = "sent"
+    changed_fields.append("status")
+    if claim.sent_at is None:
+        claim.sent_at = utcnow()
+        changed_fields.append("sent_at")
+    claim.updated_at = utcnow()
+    session.add(claim)
+    await append_claim_event(
+        session,
+        claim_id=claim.id,
+        event_type="claim.admin_final_sent",
+        payload_json={
+            "from_status": from_status,
+            "to_status": claim.status,
+            "to_email": to_email,
+            "changed_fields": changed_fields,
+        },
+    )
+    await session.flush()
+    return build_admin_claim_detail_snapshot(claim)
+
+
+async def append_admin_claim_send_failed_event(
+    session: AsyncSession,
+    *,
+    claim_id: int,
+    to_email: str | None,
+    error_code: str,
+    error_payload: dict[str, Any] | None = None,
+) -> None:
+    claim = await get_claim_by_id(session, claim_id)
+    if not claim:
+        raise LookupError("claim not found")
+    await append_claim_event(
+        session,
+        claim_id=claim.id,
+        event_type="claim.admin_final_send_failed",
+        payload_json={
+            "to_email": to_email,
+            "error_code": error_code,
+            "error_payload": error_payload or {},
+            "status": claim.status,
+        },
+    )
+    await session.flush()
 
 
 async def get_admin_claim_files(

@@ -8,6 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from product_api.auth import generate_raw_token
 from product_api.claims.extraction import build_extraction_event_payload, run_claim_extraction
 from product_api.claims.generation import generate_claim_preview
+from product_api.claims.notifications import (
+    NotificationSendError,
+    notify_admins_about_paid_claim,
+)
 from product_api.claims.rules import evaluate_claim_rules
 from product_api.claims.schemas import ClaimContactIn, ClaimPatchIn, ClaimPreviewOut, Step2Out
 from product_api.claims.storage import delete_claim_upload, save_claim_upload
@@ -372,6 +376,33 @@ async def pay_public_claim(
             "generation_state": claim.generation_state,
         },
     )
+
+    try:
+        notification_payload = notify_admins_about_paid_claim(
+            settings,
+            claim_id=claim.id,
+            case_type=claim.case_type,
+            client_email=claim.client_email,
+            price_rub=claim.price_rub,
+        )
+    except NotificationSendError as exc:
+        await append_claim_event(
+            session,
+            claim_id=claim.id,
+            event_type="claim.admin_paid_notification_failed",
+            payload_json={
+                "error_code": exc.code,
+                "error_payload": exc.payload,
+            },
+        )
+    else:
+        await append_claim_event(
+            session,
+            claim_id=claim.id,
+            event_type="claim.admin_paid_notification_sent",
+            payload_json=notification_payload,
+        )
+
     await session.commit()
     return snapshot
 

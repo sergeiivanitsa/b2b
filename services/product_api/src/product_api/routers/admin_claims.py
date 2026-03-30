@@ -6,15 +6,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from product_api.claims.admin_auth import require_claims_admin
 from product_api.claims.admin_service import (
+    append_admin_claim_send_failed_event,
     get_admin_claim,
     get_admin_claim_files,
     list_admin_claims,
+    prepare_admin_claim_send,
+    send_admin_claim_final_result,
     update_admin_claim_final_text,
     update_admin_claim_status,
 )
+from product_api.claims.notifications import NotificationSendError, send_claim_final_result
+from product_api.claims.repository import get_claim_by_id
 from product_api.claims.schemas import Step2Out
 from product_api.db.session import get_session
+from product_api.settings import get_settings
 
+settings = get_settings()
 router = APIRouter()
 
 
@@ -135,6 +142,8 @@ async def set_admin_claim_status(
         detail = str(exc)
         if detail == "invalid_transition":
             raise HTTPException(status_code=409, detail="invalid_transition")
+        if detail == "use_send_action":
+            raise HTTPException(status_code=409, detail="use_send_action")
         raise HTTPException(status_code=400, detail=detail)
 
     await session.commit()
@@ -161,6 +170,56 @@ async def set_admin_claim_final_text(
 
     await session.commit()
     return claim
+
+
+@router.post("/admin/claims/{claim_id}/send", response_model=AdminClaimOut)
+async def send_admin_claim_to_client(
+    claim_id: int,
+    _admin=Depends(require_claims_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    claim = await get_claim_by_id(session, claim_id)
+    if not claim:
+        raise HTTPException(status_code=404, detail="claim not found")
+
+    try:
+        to_email, final_text = prepare_admin_claim_send(claim)
+    except ValueError as exc:
+        detail = str(exc)
+        if detail in {
+            "invalid_transition",
+            "already_sent",
+            "client_email_required",
+            "final_text_required",
+        }:
+            raise HTTPException(status_code=409, detail=detail)
+        raise HTTPException(status_code=400, detail=detail)
+
+    try:
+        send_result = send_claim_final_result(
+            settings,
+            claim_id=claim.id,
+            client_email=to_email,
+            final_text=final_text,
+        )
+    except NotificationSendError as exc:
+        await append_admin_claim_send_failed_event(
+            session,
+            claim_id=claim.id,
+            to_email=to_email,
+            error_code=exc.code,
+            error_payload=exc.payload,
+        )
+        await session.commit()
+        raise HTTPException(status_code=502, detail=exc.code)
+
+    snapshot = await send_admin_claim_final_result(
+        session,
+        claim_id=claim.id,
+        to_email=send_result["to_email"],
+    )
+    await session.commit()
+    return snapshot
 
 
 @router.get("/admin/claims/{claim_id}/files", response_model=list[ClaimFileOut])

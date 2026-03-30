@@ -3,7 +3,10 @@ from datetime import datetime, timezone
 import pytest
 
 from product_api.claims.admin_service import (
+    append_admin_claim_send_failed_event,
     apply_admin_final_text,
+    prepare_admin_claim_send,
+    send_admin_claim_final_result,
     apply_admin_status_transition,
     build_admin_claim_detail_snapshot,
     normalize_claim_generation_state_filter,
@@ -42,19 +45,14 @@ async def test_apply_admin_status_transition_paid_to_in_review_sets_reviewed_at(
     assert "reviewed_at" in changed_fields
 
 
-async def test_apply_admin_status_transition_in_review_to_sent_sets_sent_at():
+async def test_apply_admin_status_transition_sent_requires_send_action():
     claim = _base_claim(status="in_review")
 
-    from_status, changed_fields = apply_admin_status_transition(
-        claim,
-        target_status="sent",
-    )
-
-    assert from_status == "in_review"
-    assert claim.status == "sent"
-    assert claim.sent_at is not None
-    assert "status" in changed_fields
-    assert "sent_at" in changed_fields
+    with pytest.raises(ValueError, match="use_send_action"):
+        apply_admin_status_transition(
+            claim,
+            target_status="sent",
+        )
 
 
 async def test_apply_admin_status_transition_invalid_raises_value_error():
@@ -110,3 +108,82 @@ async def test_build_admin_claim_detail_snapshot_is_safe():
     assert snapshot["final_text"] == "Final"
     assert snapshot["risk_flags"] == ["risk_1"]
     assert "edit_token_hash" not in snapshot
+
+
+async def test_prepare_admin_claim_send_validates_requirements():
+    claim = _base_claim(status="in_review")
+    claim.client_email = " CLIENT@example.com "
+    claim.final_text = " Final version "
+
+    to_email, final_text = prepare_admin_claim_send(claim)
+
+    assert to_email == "client@example.com"
+    assert final_text == "Final version"
+
+
+async def test_prepare_admin_claim_send_requires_final_text():
+    claim = _base_claim(status="in_review")
+    claim.client_email = "client@example.com"
+    claim.final_text = "   "
+
+    with pytest.raises(ValueError, match="final_text_required"):
+        prepare_admin_claim_send(claim)
+
+
+async def test_prepare_admin_claim_send_requires_client_email():
+    claim = _base_claim(status="in_review")
+    claim.client_email = None
+    claim.final_text = "Final version"
+
+    with pytest.raises(ValueError, match="client_email_required"):
+        prepare_admin_claim_send(claim)
+
+
+async def test_send_admin_claim_final_result_sets_sent(mock_session, monkeypatch):
+    claim = _base_claim(status="in_review")
+    claim.id = 702
+    claim.client_email = "client@example.com"
+    claim.final_text = "Final version"
+
+    async def fake_get_claim_by_id(_session, claim_id):
+        assert claim_id == 702
+        return claim
+
+    monkeypatch.setattr(
+        "product_api.claims.admin_service.get_claim_by_id",
+        fake_get_claim_by_id,
+    )
+
+    snapshot = await send_admin_claim_final_result(
+        mock_session,
+        claim_id=702,
+        to_email="client@example.com",
+    )
+
+    assert snapshot["status"] == "sent"
+    assert claim.sent_at is not None
+    assert mock_session.flush.await_count == 1
+
+
+async def test_append_admin_claim_send_failed_event(mock_session, monkeypatch):
+    claim = _base_claim(status="in_review")
+    claim.id = 703
+
+    async def fake_get_claim_by_id(_session, claim_id):
+        assert claim_id == 703
+        return claim
+
+    monkeypatch.setattr(
+        "product_api.claims.admin_service.get_claim_by_id",
+        fake_get_claim_by_id,
+    )
+
+    await append_admin_claim_send_failed_event(
+        mock_session,
+        claim_id=703,
+        to_email="client@example.com",
+        error_code="client_send_failed",
+        error_payload={"error": "smtp down"},
+    )
+
+    assert mock_session.flush.await_count == 1

@@ -50,17 +50,21 @@ async def test_post_claims_pay_success(async_client, engine):
         assert row[1] == "ready"
         assert row[2] is not None
 
-        event_row = await session.execute(
+        event_rows = await session.execute(
             text(
                 "SELECT event_type, payload_json "
-                "FROM claim_events WHERE claim_id = :claim_id ORDER BY id DESC LIMIT 1"
+                "FROM claim_events WHERE claim_id = :claim_id ORDER BY id ASC"
             ),
             {"claim_id": created["claim_id"]},
         )
-        event = event_row.first()
-        assert event is not None
-        assert event[0] == "claim.paid_stub"
-        assert event[1]["payment_mode"] == "stub"
+        events = event_rows.fetchall()
+        assert len(events) >= 2
+        assert events[-2][0] == "claim.paid_stub"
+        assert events[-2][1]["payment_mode"] == "stub"
+        assert events[-1][0] in {
+            "claim.admin_paid_notification_sent",
+            "claim.admin_paid_notification_failed",
+        }
 
 
 async def test_post_claims_pay_rejects_insufficient_data(async_client):

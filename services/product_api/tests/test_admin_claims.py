@@ -72,7 +72,7 @@ async def test_admin_claims_list_and_detail(async_client, engine):
     assert "edit_token_hash" not in detail_payload
 
 
-async def test_admin_claim_status_transition_and_files(async_client, engine):
+async def test_admin_claim_status_transition_send_and_files(async_client, engine):
     settings = get_settings()
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         cookie = await _create_claims_admin_cookie(session)
@@ -98,9 +98,24 @@ async def test_admin_claim_status_transition_and_files(async_client, engine):
     assert in_review_resp.json()["status"] == "in_review"
     assert in_review_resp.json()["reviewed_at"] is not None
 
-    sent_resp = await async_client.post(
+    sent_by_status_resp = await async_client.post(
         f"/admin/claims/{claim.id}/status",
         json={"status": "sent"},
+        cookies=cookies,
+    )
+    assert sent_by_status_resp.status_code == 409
+    assert sent_by_status_resp.json()["detail"] == "use_send_action"
+
+    final_text_resp = await async_client.post(
+        f"/admin/claims/{claim.id}/final-text",
+        json={"final_text": "Final claim text"},
+        cookies=cookies,
+    )
+    assert final_text_resp.status_code == 200
+    assert final_text_resp.json()["final_text"] == "Final claim text"
+
+    sent_resp = await async_client.post(
+        f"/admin/claims/{claim.id}/send",
         cookies=cookies,
     )
     assert sent_resp.status_code == 200
@@ -135,7 +150,16 @@ async def test_admin_claim_status_transition_and_files(async_client, engine):
             ),
             {"claim_id": claim.id},
         )
-        assert int(events_row.scalar_one()) == 2
+        assert int(events_row.scalar_one()) == 1
+
+        sent_events_row = await session.execute(
+            text(
+                "SELECT COUNT(*) FROM claim_events "
+                "WHERE claim_id = :claim_id AND event_type = 'claim.admin_final_sent'"
+            ),
+            {"claim_id": claim.id},
+        )
+        assert int(sent_events_row.scalar_one()) == 1
 
 
 async def test_admin_claim_final_text_update(async_client, engine):
@@ -192,3 +216,75 @@ async def test_admin_claims_forbidden_for_non_whitelisted_user(async_client, eng
     )
     assert resp.status_code == 403
     assert resp.json()["detail"] == "forbidden"
+
+
+async def test_admin_claim_send_failure_keeps_in_review(async_client, engine, monkeypatch):
+    from product_api.claims.notifications import NotificationSendError
+    from product_api.routers import admin_claims as admin_claims_router
+
+    settings = get_settings()
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        cookie = await _create_claims_admin_cookie(session)
+        claim = await _create_claim(session, status="in_review", generation_state="ready")
+        claim.client_email = "client@example.com"
+        claim.final_text = "Final claim text"
+        session.add(claim)
+        await session.commit()
+
+    def fake_send_claim_final_result(_settings, *, claim_id, client_email, final_text):
+        raise NotificationSendError(
+            "client_send_failed",
+            {"to_email": client_email, "error": "smtp down"},
+        )
+
+    monkeypatch.setattr(
+        admin_claims_router,
+        "send_claim_final_result",
+        fake_send_claim_final_result,
+    )
+
+    resp = await async_client.post(
+        f"/admin/claims/{claim.id}/send",
+        cookies={settings.session_cookie_name: cookie},
+    )
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "client_send_failed"
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        claim_row = await session.execute(
+            text("SELECT status, sent_at FROM claims WHERE id = :id"),
+            {"id": claim.id},
+        )
+        row = claim_row.first()
+        assert row is not None
+        assert row[0] == "in_review"
+        assert row[1] is None
+
+        event_row = await session.execute(
+            text(
+                "SELECT event_type FROM claim_events "
+                "WHERE claim_id = :claim_id ORDER BY id DESC LIMIT 1"
+            ),
+            {"claim_id": claim.id},
+        )
+        event = event_row.first()
+        assert event is not None
+        assert event[0] == "claim.admin_final_send_failed"
+
+
+async def test_admin_claim_send_already_sent_returns_409(async_client, engine):
+    settings = get_settings()
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        cookie = await _create_claims_admin_cookie(session)
+        claim = await _create_claim(session, status="sent", generation_state="ready")
+        claim.client_email = "client@example.com"
+        claim.final_text = "Final claim text"
+        session.add(claim)
+        await session.commit()
+
+    resp = await async_client.post(
+        f"/admin/claims/{claim.id}/send",
+        cookies={settings.session_cookie_name: cookie},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "already_sent"

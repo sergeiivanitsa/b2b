@@ -477,9 +477,66 @@ async def test_pay_public_claim_ok(async_client, mock_session):
     assert claim.paid_at is not None
     assert mock_session.flush.await_count == 1
     assert mock_session.commit.await_count == 1
-    assert len(created_events) == 1
+    assert len(created_events) == 2
     assert created_events[0].event_type == "claim.paid_stub"
     assert created_events[0].payload_json["payment_mode"] == "stub"
+    assert created_events[1].event_type == "claim.admin_paid_notification_sent"
+    assert "recipients" in created_events[1].payload_json
+
+
+async def test_pay_public_claim_notification_failure_keeps_paid(async_client, mock_session, monkeypatch):
+    from product_api.claims.notifications import NotificationSendError
+    from product_api.routers import public_claims as public_claims_router
+
+    claim = Claim(
+        id=98,
+        status="draft",
+        generation_state="ready",
+        price_rub=990,
+        input_text="OOO Vector did not pay for delivery",
+        edit_token_hash=hash_claim_edit_token("valid-token"),
+    )
+    mock_session.execute.return_value = DummyResult(claim)
+
+    created_events: list[ClaimEvent] = []
+
+    def add_side_effect(instance):
+        if isinstance(instance, ClaimEvent):
+            created_events.append(instance)
+
+    mock_session.add.side_effect = add_side_effect
+
+    def fake_notify_admins_about_paid_claim(_settings, *, claim_id, case_type, client_email, price_rub):
+        raise NotificationSendError(
+            "admin_notification_failed",
+            {
+                "recipients": ["claims-admin@example.com"],
+                "sent_recipients": [],
+                "failed_recipients": [{"email": "claims-admin@example.com", "error": "smtp down"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        public_claims_router,
+        "notify_admins_about_paid_claim",
+        fake_notify_admins_about_paid_claim,
+    )
+
+    resp = await async_client.post(
+        "/claims/98/pay",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "paid"
+    assert claim.status == "paid"
+    assert claim.paid_at is not None
+    assert mock_session.flush.await_count == 1
+    assert mock_session.commit.await_count == 1
+    assert len(created_events) == 2
+    assert created_events[0].event_type == "claim.paid_stub"
+    assert created_events[1].event_type == "claim.admin_paid_notification_failed"
 
 
 async def test_pay_public_claim_insufficient_data_returns_409(async_client, mock_session):
