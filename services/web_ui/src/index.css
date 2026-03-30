@@ -1014,6 +1014,114 @@ body.is-chat-page #root {
   align-items: end;
 }
 
+.claims-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: linear-gradient(180deg, #f0f6f1 0%, #edf3ef 100%);
+}
+
+.claims-shell__card {
+  width: min(780px, 100%);
+  background: #ffffff;
+  border: 1px solid #d7e4d8;
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 12px 34px rgba(36, 79, 47, 0.08);
+  display: grid;
+  gap: 14px;
+}
+
+.claims-shell__title {
+  margin: 0;
+  font-size: 1.8rem;
+  line-height: 1.2;
+  color: #173a1f;
+}
+
+.claims-shell__subtitle {
+  margin: 0;
+  color: #2f4935;
+  line-height: 1.55;
+}
+
+.claims-shell__subtitle code,
+.claims-shell__empty code {
+  border: 1px solid #cfe0d1;
+  border-radius: 6px;
+  background: #f4faf5;
+  padding: 1px 5px;
+  font-size: 0.92em;
+}
+
+.claims-shell__hint {
+  margin: 0;
+  color: #4d6552;
+}
+
+.claims-shell__session {
+  border: 1px solid #d9e6dc;
+  border-radius: 12px;
+  background: #f8fcf9;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.claims-shell__session-title {
+  margin: 0;
+  font-size: 1rem;
+  color: #1f4327;
+}
+
+.claims-shell__kv {
+  margin: 0;
+  display: grid;
+  gap: 6px 14px;
+  grid-template-columns: minmax(100px, max-content) 1fr;
+}
+
+.claims-shell__kv dt {
+  margin: 0;
+  color: #315337;
+}
+
+.claims-shell__kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #122f18;
+}
+
+.claims-shell__token {
+  font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
+  font-size: 0.86rem;
+}
+
+.claims-shell__button {
+  border: 1px solid #1f7836;
+  border-radius: 8px;
+  background: #1f7836;
+  color: #ffffff;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.claims-shell__button--secondary {
+  background: #ffffff;
+  color: #175827;
+}
+
+.claims-shell__button--secondary:hover {
+  background: #f2fbf3;
+}
+
+.claims-shell__empty {
+  margin: 0;
+  color: #405b46;
+}
+
 @media (max-width: 1024px) {
   .chat-shell {
     grid-template-columns: 1fr;
@@ -1097,5 +1205,13 @@ body.is-chat-page #root {
 
   .company-admin-inline-form {
     grid-template-columns: 1fr;
+  }
+
+  .claims-shell__card {
+    padding: 18px;
+  }
+
+  .claims-shell__title {
+    font-size: 1.5rem;
   }
 }
