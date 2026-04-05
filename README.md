@@ -166,5 +166,104 @@ Run from `services/product_api`:
 - alembic upgrade head
 - alembic revision --autogenerate -m "init"
 
+## Claims MVP route map
+Frontend public routes:
+- `/claims`
+- `/claims/step-2`
+- `/claims/step-3`
+- `/claims/step-4`
 
-- merge smoke test: 2026-02-26_06:45
+Frontend claims-admin routes:
+- `/admin/login`
+- `/admin/auth/confirm`
+- `/admin/claims`
+- `/admin/claims/:id`
+
+Backend public claims endpoints:
+- `POST /claims`
+- `GET /claims/{claim_id}` (required for restore after refresh/back)
+- `POST /claims/{claim_id}/extract`
+- `PATCH /claims/{claim_id}`
+- `POST /claims/{claim_id}/files`
+- `GET /claims/{claim_id}/files`
+- `POST /claims/{claim_id}/contact`
+- `POST /claims/{claim_id}/generate-preview`
+- `GET /claims/{claim_id}/preview`
+- `POST /claims/{claim_id}/pay` (MVP stub/business event, not acquiring integration)
+
+Backend claims-admin endpoints:
+- `POST /admin/auth/request-link`
+- `POST /admin/auth/confirm`
+- `GET /admin/auth/confirm` (magic-link landing fallback)
+- `GET /admin/claims`
+- `GET /admin/claims/{claim_id}`
+- `POST /admin/claims/{claim_id}/status`
+- `POST /admin/claims/{claim_id}/final-text`
+- `POST /admin/claims/{claim_id}/send`
+- `GET /admin/claims/{claim_id}/files`
+
+## Claims state model (MVP)
+- `status`: `draft | preview_ready | paid | in_review | sent`
+- `generation_state`: `ready | manual_review_required | insufficient_data`
+- `manual_review_required` is derived in API response:
+  - `manual_review_required = generation_state == "manual_review_required"`
+- `generation_state = insufficient_data` blocks preview/pay and returns user to step 2.
+- `generation_state = manual_review_required` does not block preview/pay.
+- Operational timestamps:
+  - `paid_at`
+  - `reviewed_at`
+  - `sent_at`
+- Timeline and operational details are captured in `claim_events`.
+
+## Claims env vars (product_api)
+Required claims settings in `services/product_api/.env`:
+- `CLAIM_EDIT_TOKEN_SECRET`
+- `CLAIMS_PRICE_RUB`
+- `CLAIMS_UPLOAD_DIR`
+- `CLAIMS_MAX_FILE_SIZE_BYTES`
+- `CLAIMS_ALLOWED_UPLOAD_MIME_TYPES`
+- `CLAIMS_ADMIN_EMAILS`
+
+Default local values are documented in:
+- `services/product_api/.env.example`
+- `docker-compose.yml`
+
+## Upload persistence and deploy notes
+- Docker local dev uses named volume:
+  - `claims_uploads:/var/lib/product_api/claims_uploads`
+- For production, `CLAIMS_UPLOAD_DIR` must point to persistent storage (volume or mounted disk).
+- Redeploy/checklist:
+  1. verify storage mount exists and is writable by `product_api`;
+  2. verify free disk space and backup policy for uploaded evidence files;
+  3. verify restore procedure for `claims_uploads` before production cutover.
+
+## Claims smoke checklist (manual)
+Public `/claims/*`:
+1. Step 1: create claim with free-text input.
+2. Step 2: refresh page and verify restore via `GET /claims/{id}`.
+3. Step 2: submit guided fields, upload at least one file.
+4. Step 3: save contact, generate preview.
+5. Step 4: verify preview/paywall is shown; run pay stub (`POST /claims/{id}/pay`).
+
+State checks:
+1. `manual_review_required`: preview/pay still available.
+2. `insufficient_data`: preview/pay blocked, user returns to step 2 with missing fields.
+
+Admin `/admin/*`:
+1. Request magic link on `/admin/login`.
+2. Confirm token on `/admin/auth/confirm`.
+3. Open `/admin/claims`, verify list and filters.
+4. Open `/admin/claims/:id`, save `final_text`.
+5. Run status/send flow: `paid -> in_review -> sent`.
+
+## Validation commands before release
+Backend:
+- `cd services/product_api`
+- `pytest tests tests_unit`
+
+Frontend:
+- `cd services/web_ui`
+- `npm run test`
+- `npm run build`
+
+- claims/docs smoke baseline: 2026-03-30

@@ -18,6 +18,28 @@ class Settings(BaseSettings):
     auth_token_ttl_seconds: int = Field(
         default=900, validation_alias="AUTH_TOKEN_TTL_SECONDS"
     )
+    claim_edit_token_secret: str = Field(..., validation_alias="CLAIM_EDIT_TOKEN_SECRET")
+    claims_price_rub: int = Field(default=990, validation_alias="CLAIMS_PRICE_RUB")
+    claims_upload_dir: str = Field(..., validation_alias="CLAIMS_UPLOAD_DIR")
+    claims_max_file_size_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        validation_alias="CLAIMS_MAX_FILE_SIZE_BYTES",
+    )
+    claims_allowed_upload_mime_types: list[str] = Field(
+        default=[
+            "application/pdf",
+            "image/jpeg",
+            "image/png",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/msword",
+            "text/plain",
+        ],
+        validation_alias="CLAIMS_ALLOWED_UPLOAD_MIME_TYPES",
+    )
+    claims_admin_emails: list[str] = Field(
+        default=[],
+        validation_alias="CLAIMS_ADMIN_EMAILS",
+    )
     invite_token_secret: str = Field(..., validation_alias="INVITE_TOKEN_SECRET")
     session_secret: str = Field(..., validation_alias="SESSION_SECRET")
     session_ttl_seconds: int = Field(default=1209600, validation_alias="SESSION_TTL_SECONDS")
@@ -59,6 +81,77 @@ class Settings(BaseSettings):
         if value not in {"lax", "strict", "none"}:
             raise ValueError("COOKIE_SAMESITE must be one of: lax, strict, none")
         return value
+
+    @field_validator("claims_price_rub")
+    @classmethod
+    def _validate_claims_price(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("CLAIMS_PRICE_RUB must be >= 0")
+        return value
+
+    @field_validator("claims_upload_dir")
+    @classmethod
+    def _validate_claims_upload_dir(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("CLAIMS_UPLOAD_DIR must not be empty")
+        return normalized
+
+    @field_validator("claims_max_file_size_bytes")
+    @classmethod
+    def _validate_claims_max_file_size_bytes(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("CLAIMS_MAX_FILE_SIZE_BYTES must be > 0")
+        return value
+
+    @field_validator("claims_allowed_upload_mime_types", mode="before")
+    @classmethod
+    def _parse_claims_allowed_upload_mime_types(
+        cls, value: str | list[str]
+    ) -> list[str]:
+        if isinstance(value, str):
+            parts = [item.strip().lower() for item in value.split(",")]
+            return [item for item in parts if item]
+        return value
+
+    @field_validator("claims_allowed_upload_mime_types")
+    @classmethod
+    def _validate_claims_allowed_upload_mime_types(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError("CLAIMS_ALLOWED_UPLOAD_MIME_TYPES must contain strings only")
+            candidate = item.strip().lower()
+            if not candidate:
+                continue
+            normalized.append(candidate)
+        if not normalized:
+            raise ValueError("CLAIMS_ALLOWED_UPLOAD_MIME_TYPES must not be empty")
+        return normalized
+
+    @field_validator("claims_admin_emails", mode="before")
+    @classmethod
+    def _parse_claims_admin_emails(cls, value: str | list[str]) -> list[str]:
+        if isinstance(value, str):
+            parts = [item.strip().lower() for item in value.split(",")]
+            return [item for item in parts if item]
+        return value
+
+    @field_validator("claims_admin_emails")
+    @classmethod
+    def _validate_claims_admin_emails(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError("CLAIMS_ADMIN_EMAILS must contain strings only")
+            candidate = item.strip().lower()
+            if not candidate:
+                continue
+            if "@" not in candidate:
+                raise ValueError("CLAIMS_ADMIN_EMAILS must contain valid emails")
+            if candidate not in normalized:
+                normalized.append(candidate)
+        return normalized
 
 
 @lru_cache

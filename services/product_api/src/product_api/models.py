@@ -1,6 +1,16 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, JSON, Boolean, DateTime, ForeignKey, String, func, text
+from sqlalchemy import (
+    CheckConstraint,
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    String,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db.base import Base
@@ -222,5 +232,102 @@ class UserCreditLimit(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class Claim(Base):
+    __tablename__ = "claims"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'preview_ready', 'paid', 'in_review', 'sent')",
+            name="ck_claims_status",
+        ),
+        CheckConstraint(
+            "generation_state IN ('ready', 'manual_review_required', 'insufficient_data')",
+            name="ck_claims_generation_state",
+        ),
+        CheckConstraint(
+            "price_rub >= 0",
+            name="ck_claims_price_rub_non_negative",
+        ),
+        CheckConstraint(
+            "case_type IS NULL OR case_type IN ('supply', 'contract_work', 'services')",
+            name="ck_claims_case_type",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        server_default=text("'draft'"),
+        nullable=False,
+        index=True,
+    )
+    generation_state: Mapped[str] = mapped_column(
+        String(32),
+        server_default=text("'insufficient_data'"),
+        nullable=False,
+        index=True,
+    )
+    price_rub: Mapped[int] = mapped_column(nullable=False)
+    edit_token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    client_email: Mapped[str | None] = mapped_column(String(320))
+    client_phone: Mapped[str | None] = mapped_column(String(32))
+    case_type: Mapped[str | None] = mapped_column(String(32))
+    input_text: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_data_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    generation_notes_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    allowed_blocks_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    blocked_blocks_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    risk_flags_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    generated_preview_text: Mapped[str | None] = mapped_column(Text)
+    generated_full_text: Mapped[str | None] = mapped_column(Text)
+    final_text: Mapped[str | None] = mapped_column(Text)
+    summary_for_admin: Mapped[str | None] = mapped_column(Text)
+    review_comment: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ClaimFile(Base):
+    __tablename__ = "claim_files"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claims.id"), nullable=False, index=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_role: Mapped[str] = mapped_column(String(32), nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class ClaimEvent(Base):
+    __tablename__ = "claim_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claims.id"), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
         nullable=False,
     )
