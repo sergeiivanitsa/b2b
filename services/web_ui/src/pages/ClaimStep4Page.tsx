@@ -9,8 +9,14 @@ import {
   getClaimPreview,
   getInsufficientDataDetail,
   payClaim,
+  type PublicClaimSnapshot,
 } from '../claims/claimsApi'
 import { ApiHttpError } from '../lib/api'
+
+type DocumentHeader = {
+  senderLines: string[]
+  recipientLines: string[]
+}
 
 type LoadedClaimMeta = {
   claimId: number
@@ -18,6 +24,7 @@ type LoadedClaimMeta = {
   priceRub: number
   manualReviewRequired: boolean
   alreadyPaid: boolean
+  header: DocumentHeader
 }
 
 const PACKAGE_ITEMS = [
@@ -28,6 +35,11 @@ const PACKAGE_ITEMS = [
   'Сопроводительное письмо',
   'Инструкция по дальнейшим действиям',
 ]
+
+const DEFAULT_DOCUMENT_HEADER: DocumentHeader = {
+  senderLines: ['Кредитор'],
+  recipientLines: ['Должник'],
+}
 
 export function ClaimStep4Page() {
   const navigate = useNavigate()
@@ -69,6 +81,7 @@ export function ClaimStep4Page() {
           priceRub: restored.claim.price_rub,
           manualReviewRequired: restored.claim.manual_review_required,
           alreadyPaid: restored.claim.status === 'paid' || restored.claim.status === 'in_review' || restored.claim.status === 'sent',
+          header: buildDocumentHeader(restored.claim),
         })
 
         const loadedPreviewText = await loadPreviewText(restored.claimId, restored.editToken)
@@ -110,7 +123,8 @@ export function ClaimStep4Page() {
     }
   }, [navigate])
 
-  const blurredPreviewText = useMemo(() => createBlurredPreview(previewText), [previewText])
+  const previewParagraphs = useMemo(() => buildPreviewParagraphs(previewText), [previewText])
+  const documentHeader = meta?.header ?? DEFAULT_DOCUMENT_HEADER
   const discountPrice = useMemo(() => {
     if (!meta) {
       return 990
@@ -184,15 +198,42 @@ export function ClaimStep4Page() {
 
         <section className="claims-step4-layout">
           <article className="claims-preview-card">
-            <div className="claims-preview-card__head">
-              <span>ОТ КОГО:</span>
-              <span>КОМУ:</span>
+            <div className="claims-document-sheet">
+              <div className="claims-document-sheet__inner">
+                <div className="claims-document-header">
+                  <section className="claims-document-party">
+                    <p className="claims-document-party__label">ОТ КОГО:</p>
+                    {documentHeader.senderLines.map((line, index) => (
+                      <p key={`sender-${index}-${line}`} className="claims-document-party__line">
+                        {line}
+                      </p>
+                    ))}
+                  </section>
+                  <section className="claims-document-party claims-document-party--to">
+                    <p className="claims-document-party__label">КОМУ:</p>
+                    {documentHeader.recipientLines.map((line, index) => (
+                      <p key={`recipient-${index}-${line}`} className="claims-document-party__line">
+                        {line}
+                      </p>
+                    ))}
+                  </section>
+                </div>
+                <div className="claims-document-divider" />
+                <h2 className="claims-document-title">
+                  <span>ПРЕТЕНЗИЯ</span>
+                </h2>
+                <section className="claims-document-body">
+                  {previewParagraphs.map((paragraph, index) => (
+                    <p key={`${index}-${paragraph.slice(0, 32)}`}>{paragraph}</p>
+                  ))}
+                </section>
+              </div>
+              <div className="claims-document-paywall" aria-hidden="true">
+                <p className="claims-document-paywall__message">
+                  Полная версия документа доступна после оплаты
+                </p>
+              </div>
             </div>
-            <h2>ПРЕТЕНЗИЯ</h2>
-            <pre>{blurredPreviewText}</pre>
-            <p className="claims-preview-card__paywall-note">
-              Полная версия документа доступна после оплаты
-            </p>
           </article>
 
           <aside className="claims-paywall-card">
@@ -244,6 +285,31 @@ export function ClaimStep4Page() {
   )
 }
 
+function buildDocumentHeader(claim: PublicClaimSnapshot): DocumentHeader {
+  const normalizedData = claim.normalized_data
+  const senderLines = [
+    normalizeTextLine(normalizedData?.creditor_name),
+    normalizeTextLine(claim.client_email ? `Email: ${claim.client_email}` : null),
+    normalizeTextLine(claim.client_phone ? `Тел.: ${claim.client_phone}` : null),
+  ].filter((line): line is string => Boolean(line))
+
+  const recipientLines = [
+    normalizeTextLine(normalizedData?.debtor_name),
+  ].filter((line): line is string => Boolean(line))
+
+  if (senderLines.length === 0) {
+    senderLines.push('Кредитор')
+  }
+  if (recipientLines.length === 0) {
+    recipientLines.push('Должник')
+  }
+
+  return {
+    senderLines: senderLines.slice(0, 3),
+    recipientLines: recipientLines.slice(0, 3),
+  }
+}
+
 async function loadPreviewText(claimId: number, editToken: string): Promise<string> {
   try {
     const preview = await getClaimPreview(claimId, editToken)
@@ -257,21 +323,47 @@ async function loadPreviewText(claimId: number, editToken: string): Promise<stri
   }
 }
 
-function createBlurredPreview(previewText: string): string {
-  if (!previewText.trim()) {
-    return 'Текст предпросмотра пока не готов. Вернитесь на шаг 3 и повторите генерацию.'
+function buildPreviewParagraphs(previewText: string): string[] {
+  const normalized = previewText.replace(/\r\n?/g, '\n').trim()
+  if (!normalized) {
+    return ['Текст предпросмотра пока не готов. Вернитесь на шаг 3 и повторите генерацию.']
   }
 
-  const lines = previewText.split('\n')
-  if (lines.length <= 12) {
-    return previewText
+  const blocks = normalized
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+  if (blocks.length > 1) {
+    return blocks
   }
-  const visible = lines.slice(0, 12)
-  visible.push('...')
-  visible.push('████████████████████████████████████████████')
-  visible.push('████████████████████████████████████████████')
-  visible.push('████████████████████████████████████████████')
-  return visible.join('\n')
+
+  const lines = normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (lines.length > 1) {
+    return lines
+  }
+
+  const sentenceParts =
+    normalized.match(/[^.!?]+[.!?]+/g)?.map((part) => part.trim()).filter(Boolean) ?? []
+  if (sentenceParts.length >= 3) {
+    const paragraphs: string[] = []
+    for (let index = 0; index < sentenceParts.length; index += 2) {
+      paragraphs.push(sentenceParts.slice(index, index + 2).join(' '))
+    }
+    return paragraphs
+  }
+
+  return [normalized]
+}
+
+function normalizeTextLine(value: string | null | undefined): string | null {
+  if (!value) {
+    return null
+  }
+  const normalized = value.trim()
+  return normalized || null
 }
 
 function formatRub(value: number): string {
