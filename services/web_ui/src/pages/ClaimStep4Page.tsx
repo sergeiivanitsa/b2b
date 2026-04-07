@@ -290,7 +290,6 @@ function buildDocumentHeader(claim: PublicClaimSnapshot): DocumentHeader {
   const senderLines = [
     normalizeTextLine(normalizedData?.creditor_name),
     normalizeTextLine(claim.client_email ? `Email: ${claim.client_email}` : null),
-    normalizeTextLine(claim.client_phone ? `Тел.: ${claim.client_phone}` : null),
   ].filter((line): line is string => Boolean(line))
 
   const recipientLines = [

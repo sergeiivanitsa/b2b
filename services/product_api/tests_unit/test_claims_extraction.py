@@ -12,7 +12,9 @@ def test_parse_claim_extraction_response_normalizes_payload():
         {
           "case_type": "supply",
           "creditor_name": "OOO Alpha",
+          "creditor_inn": "7701234567",
           "debtor_name": "OOO Vector",
+          "debtor_inn": "780123456789",
           "contract_signed": true,
           "contract_number": "17",
           "contract_date": "12.01.2026",
@@ -31,7 +33,9 @@ def test_parse_claim_extraction_response_normalizes_payload():
     assert result["case_type"] == "supply"
     normalized = result["normalized_data"]
     assert normalized["creditor_name"] == "OOO Alpha"
+    assert normalized["creditor_inn"] == "7701234567"
     assert normalized["debtor_name"] == "OOO Vector"
+    assert normalized["debtor_inn"] == "780123456789"
     assert normalized["contract_date"] == "2026-01-12"
     assert normalized["debt_amount"] == 380000
     assert normalized["payment_due_date"] == "2026-02-01"

@@ -125,7 +125,9 @@ async def test_extract_public_claim_ok(async_client, mock_session, monkeypatch):
             "case_type": "supply",
             "normalized_data": {
                 "creditor_name": "OOO Alpha",
+                "creditor_inn": "7701234567",
                 "debtor_name": "OOO Vector",
+                "debtor_inn": "780123456789",
                 "contract_signed": True,
                 "contract_number": "17",
                 "contract_date": "2026-01-12",
@@ -216,7 +218,9 @@ async def test_update_public_claim_patch_merges_user_edits(async_client, mock_se
         case_type="supply",
         normalized_data_json={
             "creditor_name": "OOO Alpha",
+            "creditor_inn": "7701234567",
             "debtor_name": "OOO Vector",
+            "debtor_inn": "780123456789",
             "contract_signed": True,
             "contract_number": "17",
             "contract_date": "2026-01-12",

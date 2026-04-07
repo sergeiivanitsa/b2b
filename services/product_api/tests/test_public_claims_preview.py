@@ -20,7 +20,9 @@ async def test_generate_preview_and_get_preview(async_client, engine, monkeypatc
             "case_type": "supply",
             "normalized_data": {
                 "creditor_name": "OOO Alpha",
+                "creditor_inn": "7701234567",
                 "debtor_name": "OOO Vector",
+                "debtor_inn": "780123456789",
                 "contract_signed": True,
                 "debt_amount": 380000,
                 "payment_due_date": "2026-02-01",

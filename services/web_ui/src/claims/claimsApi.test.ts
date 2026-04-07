@@ -26,7 +26,6 @@ describe('claimsApi', () => {
             price_rub: 990,
             input_text: 'Text',
             client_email: null,
-            client_phone: null,
             case_type: null,
             normalized_data: null,
             step2: {
@@ -81,7 +80,6 @@ describe('claimsApi', () => {
           price_rub: 990,
           input_text: 'Text',
           client_email: null,
-          client_phone: null,
           case_type: null,
           normalized_data: null,
           step2: {

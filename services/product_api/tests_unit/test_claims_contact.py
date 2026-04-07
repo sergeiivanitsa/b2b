@@ -47,7 +47,8 @@ async def test_post_claim_contact_updates_contact(async_client, mock_session):
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["client_email"] == "client@example.com"
-    assert payload["client_phone"] == "+79991234567"
+    assert "client_phone" not in payload
+    assert claim.client_phone == "+79990000000"
     assert claim.status == "in_review"
     assert claim.generation_state == "manual_review_required"
     assert mock_session.flush.await_count == 1
@@ -55,7 +56,7 @@ async def test_post_claim_contact_updates_contact(async_client, mock_session):
     assert len(created_events) == 1
     assert created_events[0].event_type == "claim.contact_updated"
     assert "client_email" in created_events[0].payload_json["changed_fields"]
-    assert "client_phone" in created_events[0].payload_json["changed_fields"]
+    assert "client_phone" not in created_events[0].payload_json["changed_fields"]
 
 
 async def test_post_claim_contact_invalid_email_returns_400(async_client, mock_session):
@@ -81,7 +82,7 @@ async def test_post_claim_contact_invalid_email_returns_400(async_client, mock_s
     assert mock_session.commit.await_count == 0
 
 
-async def test_post_claim_contact_can_clear_phone(async_client, mock_session):
+async def test_post_claim_contact_does_not_touch_phone(async_client, mock_session):
     claim = Claim(
         id=203,
         status="draft",
@@ -107,17 +108,16 @@ async def test_post_claim_contact_can_clear_phone(async_client, mock_session):
         headers={"X-Claim-Edit-Token": "valid-token"},
         json={
             "client_email": "client@example.com",
-            "client_phone": None,
         },
     )
 
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["client_email"] == "client@example.com"
-    assert payload["client_phone"] is None
-    assert claim.client_phone is None
+    assert "client_phone" not in payload
+    assert claim.client_phone == "+79990000000"
     assert mock_session.flush.await_count == 1
     assert mock_session.commit.await_count == 1
     assert len(created_events) == 1
     assert created_events[0].event_type == "claim.contact_updated"
-    assert "client_phone" in created_events[0].payload_json["changed_fields"]
+    assert created_events[0].payload_json["changed_fields"] == []

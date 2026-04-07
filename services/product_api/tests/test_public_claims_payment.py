@@ -20,7 +20,9 @@ async def test_post_claims_pay_success(async_client, engine):
             "case_type": "supply",
             "normalized_data": {
                 "creditor_name": "OOO Alpha",
+                "creditor_inn": "7701234567",
                 "debtor_name": "OOO Vector",
+                "debtor_inn": "780123456789",
                 "contract_signed": True,
                 "debt_amount": 380000,
                 "payment_due_date": "2026-02-01",

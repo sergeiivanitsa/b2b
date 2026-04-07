@@ -14,7 +14,9 @@ class NormalizedDataPatchIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     creditor_name: Any | None = None
+    creditor_inn: Any | None = None
     debtor_name: Any | None = None
+    debtor_inn: Any | None = None
     contract_signed: Any | None = None
     contract_number: Any | None = None
     contract_date: Any | None = None

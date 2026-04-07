@@ -12,7 +12,6 @@ from .normalization import (
     merge_normalized_data_patch,
     normalize_case_type,
     normalize_client_email,
-    normalize_client_phone,
 )
 
 
@@ -30,7 +29,6 @@ def build_public_claim_snapshot(claim: Claim) -> dict:
         "price_rub": claim.price_rub,
         "input_text": claim.input_text,
         "client_email": claim.client_email,
-        "client_phone": claim.client_phone,
         "case_type": claim.case_type,
         "normalized_data": normalized_data,
         "step2": build_step2_contract(normalized_data),
@@ -122,8 +120,6 @@ async def apply_claim_patch(
     case_type_value: Any,
     client_email_provided: bool,
     client_email_value: Any,
-    client_phone_provided: bool,
-    client_phone_value: Any,
     normalized_patch_values: dict[str, Any],
     normalized_patch_fields: set[str],
 ) -> tuple[Claim, list[str]]:
@@ -140,12 +136,6 @@ async def apply_claim_patch(
         if claim.client_email != normalized_client_email:
             claim.client_email = normalized_client_email
             changed_fields.append("client_email")
-
-    if client_phone_provided:
-        normalized_client_phone = normalize_client_phone(client_phone_value)
-        if claim.client_phone != normalized_client_phone:
-            claim.client_phone = normalized_client_phone
-            changed_fields.append("client_phone")
 
     merged_normalized_data, normalized_changed_fields = merge_normalized_data_patch(
         claim.normalized_data_json if isinstance(claim.normalized_data_json, dict) else None,
@@ -173,8 +163,6 @@ async def apply_claim_contact(
     claim: Claim,
     *,
     client_email_value: Any,
-    client_phone_provided: bool,
-    client_phone_value: Any,
 ) -> tuple[Claim, list[str]]:
     changed_fields: list[str] = []
 
@@ -184,12 +172,6 @@ async def apply_claim_contact(
     if claim.client_email != normalized_client_email:
         claim.client_email = normalized_client_email
         changed_fields.append("client_email")
-
-    if client_phone_provided:
-        normalized_client_phone = normalize_client_phone(client_phone_value)
-        if claim.client_phone != normalized_client_phone:
-            claim.client_phone = normalized_client_phone
-            changed_fields.append("client_phone")
 
     claim.updated_at = utcnow()
     session.add(claim)

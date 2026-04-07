@@ -121,7 +121,9 @@ async def test_post_claims_extract_updates_claim(async_client, engine, monkeypat
             "case_type": "supply",
             "normalized_data": {
                 "creditor_name": "OOO Alpha",
+                "creditor_inn": "7701234567",
                 "debtor_name": "OOO Vector",
+                "debtor_inn": "780123456789",
                 "contract_signed": True,
                 "contract_number": "17",
                 "contract_date": "2026-01-12",
@@ -232,7 +234,9 @@ async def test_patch_claims_updates_claim_step2(async_client, engine):
             "client_email": " CLIENT@Example.com ",
             "normalized_data": {
                 "creditor_name": "OOO Alpha",
+                "creditor_inn": "7701234567",
                 "debtor_name": "OOO Vector",
+                "debtor_inn": "780123456789",
                 "contract_signed": "да",
                 "contract_number": "17",
                 "debt_amount": "380 000 ₽",

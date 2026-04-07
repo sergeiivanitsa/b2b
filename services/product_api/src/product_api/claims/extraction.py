@@ -10,7 +10,9 @@ from .gateway_adapter import request_claim_extraction
 
 REQUIRED_FIELDS = (
     "creditor_name",
+    "creditor_inn",
     "debtor_name",
+    "debtor_inn",
     "contract_signed",
     "debt_amount",
     "payment_due_date",
@@ -62,7 +64,9 @@ DOCUMENT_ALIASES = {
 def build_empty_normalized_data() -> dict[str, Any]:
     normalized = {
         "creditor_name": None,
+        "creditor_inn": None,
         "debtor_name": None,
+        "debtor_inn": None,
         "contract_signed": None,
         "contract_number": None,
         "contract_date": None,
@@ -83,7 +87,8 @@ def build_claim_extraction_messages(input_text: str) -> list[ChatMessage]:
         "You extract structured facts from a Russian B2B debt-claim description. "
         "Return only one JSON object. Do not use markdown fences. "
         "Use these keys exactly: "
-        "case_type, creditor_name, debtor_name, contract_signed, contract_number, "
+        "case_type, creditor_name, creditor_inn, debtor_name, debtor_inn, "
+        "contract_signed, contract_number, "
         "contract_date, debt_amount, payment_due_date, partial_payments_present, "
         "partial_payments, penalty_exists, penalty_rate_text, documents_mentioned. "
         "case_type must be one of supply, contract_work, services, or null. "
@@ -120,7 +125,9 @@ def build_missing_fields(normalized_data: dict[str, Any]) -> list[str]:
 def count_populated_fields(normalized_data: dict[str, Any]) -> int:
     fields = (
         "creditor_name",
+        "creditor_inn",
         "debtor_name",
+        "debtor_inn",
         "contract_signed",
         "contract_number",
         "contract_date",
@@ -180,7 +187,9 @@ def normalize_extraction_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = build_empty_normalized_data()
 
     normalized["creditor_name"] = _normalize_string(payload.get("creditor_name"))
+    normalized["creditor_inn"] = _normalize_inn(payload.get("creditor_inn"))
     normalized["debtor_name"] = _normalize_string(payload.get("debtor_name"))
+    normalized["debtor_inn"] = _normalize_inn(payload.get("debtor_inn"))
     normalized["contract_signed"] = _normalize_bool(payload.get("contract_signed"))
     normalized["contract_number"] = _normalize_string(payload.get("contract_number"))
     normalized["contract_date"] = _normalize_date(payload.get("contract_date"))
@@ -234,6 +243,18 @@ def _normalize_string(value: Any) -> str | None:
         value = str(value)
     normalized = value.strip()
     return normalized or None
+
+
+def _normalize_inn(value: Any) -> str | None:
+    normalized = _normalize_string(value)
+    if normalized is None:
+        return None
+    digits_only = re.sub(r"\D+", "", normalized)
+    if not digits_only:
+        return None
+    if len(digits_only) not in {10, 12}:
+        return None
+    return digits_only
 
 
 def _normalize_case_type(value: Any) -> str | None:

@@ -52,7 +52,6 @@ class PublicClaimOut(BaseModel):
     price_rub: int
     input_text: str
     client_email: str | None
-    client_phone: str | None
     case_type: str | None
     normalized_data: dict[str, Any] | None
     step2: Step2Out
@@ -198,8 +197,6 @@ async def update_public_claim(
             case_type_value=payload.case_type,
             client_email_provided="client_email" in payload_fields,
             client_email_value=payload.client_email,
-            client_phone_provided="client_phone" in payload_fields,
-            client_phone_value=payload.client_phone,
             normalized_patch_values=normalized_patch_values,
             normalized_patch_fields=normalized_patch_fields,
         )
@@ -228,14 +225,11 @@ async def update_public_claim_contact(
     claim: Claim = Depends(require_claim_access),
     session: AsyncSession = Depends(get_session),
 ):
-    payload_fields = set(payload.model_fields_set)
     try:
         _, changed_fields = await apply_claim_contact(
             session,
             claim,
             client_email_value=payload.client_email,
-            client_phone_provided="client_phone" in payload_fields,
-            client_phone_value=payload.client_phone,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
