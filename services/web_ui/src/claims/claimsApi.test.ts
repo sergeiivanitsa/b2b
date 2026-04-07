@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiHttpError } from '../lib/api'
-import { createClaim, generateClaimPreview, getClaim, getInsufficientDataDetail } from './claimsApi'
+import {
+  createClaim,
+  generateClaimPreview,
+  getApiHttpErrorDetail,
+  getClaim,
+  getInsufficientDataDetail,
+} from './claimsApi'
 
 describe('claimsApi', () => {
   beforeEach(() => {
@@ -175,5 +181,20 @@ describe('claimsApi', () => {
 
     const payload = getInsufficientDataDetail(error)
     expect(payload).toEqual(['debt_amount', 'payment_due_date'])
+  })
+
+  it('extracts validation detail message from structured api errors', () => {
+    const error = new ApiHttpError(422, {
+      detail: [
+        {
+          type: 'extra_forbidden',
+          loc: ['body', 'normalized_data', 'creditor_inn'],
+          msg: 'Extra inputs are not permitted',
+        },
+      ],
+    })
+
+    const detail = getApiHttpErrorDetail(error)
+    expect(detail).toBe('body.normalized_data.creditor_inn: Extra inputs are not permitted')
   })
 })

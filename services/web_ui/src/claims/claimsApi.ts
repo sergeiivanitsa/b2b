@@ -258,6 +258,43 @@ export function getApiHttpErrorDetail(error: unknown): string | null {
   if (typeof detail === 'string') {
     return detail
   }
+  if (Array.isArray(detail)) {
+    const firstValidationItem = detail.find(
+      (item): item is { msg?: unknown; loc?: unknown } =>
+        Boolean(item) && typeof item === 'object',
+    )
+    if (!firstValidationItem) {
+      return null
+    }
+
+    const message =
+      typeof firstValidationItem.msg === 'string'
+        ? firstValidationItem.msg
+        : null
+    const location =
+      Array.isArray(firstValidationItem.loc)
+        ? firstValidationItem.loc.filter((part): part is string => typeof part === 'string')
+        : []
+
+    if (message && location.length > 0) {
+      return `${location.join('.')}: ${message}`
+    }
+    if (message) {
+      return message
+    }
+  }
+  if (detail && typeof detail === 'object') {
+    const payload = detail as Record<string, unknown>
+    if (typeof payload.message === 'string') {
+      return payload.message
+    }
+    if (typeof payload.error === 'string') {
+      return payload.error
+    }
+    if (typeof payload.code === 'string') {
+      return payload.code
+    }
+  }
   return null
 }
 
