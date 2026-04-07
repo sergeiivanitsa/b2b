@@ -4,7 +4,9 @@ from product_api.claims.rules import evaluate_claim_rules
 def _complete_normalized_data() -> dict:
     return {
         "creditor_name": "OOO Alpha",
+        "creditor_inn": "7701234567",
         "debtor_name": "OOO Vector",
+        "debtor_inn": "780123456789",
         "contract_signed": True,
         "contract_number": "17",
         "contract_date": "2026-01-12",

@@ -24,7 +24,9 @@ export type ClaimNormalizedPartialPayment = {
 
 export type ClaimNormalizedData = {
   creditor_name: string | null
+  creditor_inn: string | null
   debtor_name: string | null
+  debtor_inn: string | null
   contract_signed: boolean | null
   contract_number: string | null
   contract_date: string | null
@@ -46,7 +48,6 @@ export type PublicClaimSnapshot = {
   price_rub: number
   input_text: string
   client_email: string | null
-  client_phone: string | null
   case_type: ClaimCaseType | null
   normalized_data: ClaimNormalizedData | null
   step2: PublicClaimStep2
@@ -79,13 +80,11 @@ export type ClaimFileSnapshot = {
 export type ClaimPatchInput = {
   case_type?: ClaimCaseType | null
   client_email?: string | null
-  client_phone?: string | null
   normalized_data?: Partial<ClaimNormalizedData>
 }
 
 export type ClaimContactInput = {
   client_email: string
-  client_phone?: string | null
 }
 
 type DetailPayload = {

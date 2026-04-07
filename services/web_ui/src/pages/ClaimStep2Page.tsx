@@ -25,7 +25,9 @@ type PartialPaymentFormRow = {
 
 type Step2FormState = {
   creditorName: string
+  creditorInn: string
   debtorName: string
+  debtorInn: string
   caseType: ClaimCaseType | ''
   contractSigned: TriState
   contractNumber: string
@@ -37,6 +39,11 @@ type Step2FormState = {
   penaltyExists: TriState
   penaltyRateText: string
   documentsMentioned: string[]
+}
+
+type Step2InnErrors = {
+  creditorInn: string | null
+  debtorInn: string | null
 }
 
 type Step2LocationState = {
@@ -71,6 +78,16 @@ const FILE_ROLE_OPTIONS: Array<{ value: string; label: string }> = [
 
 let nextPaymentRowId = 1
 
+const STEP2_REQUIRED_BASE_FIELDS = [
+  'creditor_name',
+  'creditor_inn',
+  'debtor_name',
+  'debtor_inn',
+  'contract_signed',
+  'debt_amount',
+  'payment_due_date',
+]
+
 export function ClaimStep2Page() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -88,6 +105,10 @@ export function ClaimStep2Page() {
   const [isUploading, setIsUploading] = useState(false)
   const [notice, setNotice] = useState<string | null>(locationState.notice ?? null)
   const [error, setError] = useState<string | null>(null)
+  const [innErrors, setInnErrors] = useState<Step2InnErrors>({
+    creditorInn: null,
+    debtorInn: null,
+  })
 
   useEffect(() => {
     let isCanceled = false
@@ -131,8 +152,8 @@ export function ClaimStep2Page() {
 
   const derived = useMemo(() => computeDerivedValues(formState), [formState])
   const completionPercent = useMemo(
-    () => computeCompletionPercent(missingFields.length),
-    [missingFields.length],
+    () => computeCompletionPercent(formState, missingFields),
+    [formState, missingFields],
   )
   const missingFieldSet = useMemo(() => new Set(missingFields), [missingFields])
 
@@ -140,6 +161,14 @@ export function ClaimStep2Page() {
     event.preventDefault()
     if (!claimId || !editToken) {
       setError('Сессия не найдена. Начните заново с шага 1.')
+      return
+    }
+
+    const validation = validateInnFields(formState)
+    setInnErrors(validation.errors)
+    if (!validation.isValid) {
+      setError(validation.message)
+      setNotice(null)
       return
     }
 
@@ -233,6 +262,18 @@ export function ClaimStep2Page() {
     setFileToUpload(file)
   }
 
+  function onInnChange(field: 'creditorInn' | 'debtorInn', value: string) {
+    const normalizedValue = normalizeInnInput(value)
+    setFormState((current) => ({
+      ...current,
+      [field]: normalizedValue,
+    }))
+    setInnErrors((current) => ({
+      ...current,
+      [field]: null,
+    }))
+  }
+
   if (isLoading) {
     return (
       <main className="claims-page claims-page--step2">
@@ -284,6 +325,39 @@ export function ClaimStep2Page() {
                     setFormState((current) => ({ ...current, debtorName: event.target.value }))
                   }
                   className={missingFieldSet.has('debtor_name') ? 'is-missing' : ''}
+                />
+              </div>
+            </div>
+
+            <div className="claims-form-grid">
+              <div>
+                <label htmlFor="creditor-inn">ИНН кредитора</label>
+                <input
+                  id="creditor-inn"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={formState.creditorInn}
+                  onChange={(event) => onInnChange('creditorInn', event.target.value)}
+                  className={
+                    missingFieldSet.has('creditor_inn') || innErrors.creditorInn ? 'is-missing' : ''
+                  }
+                  placeholder="10 или 12 цифр"
+                />
+              </div>
+              <div>
+                <label htmlFor="debtor-inn">ИНН должника</label>
+                <input
+                  id="debtor-inn"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={formState.debtorInn}
+                  onChange={(event) => onInnChange('debtorInn', event.target.value)}
+                  className={
+                    missingFieldSet.has('debtor_inn') || innErrors.debtorInn ? 'is-missing' : ''
+                  }
+                  placeholder="10 или 12 цифр"
                 />
               </div>
             </div>
@@ -588,7 +662,9 @@ function buildInitialFormState(
 
   return {
     creditorName: source?.creditor_name ?? '',
+    creditorInn: normalizeInnInput(source?.creditor_inn ?? ''),
     debtorName: source?.debtor_name ?? '',
+    debtorInn: normalizeInnInput(source?.debtor_inn ?? ''),
     caseType: caseType ?? '',
     contractSigned: boolToTri(source?.contract_signed),
     contractNumber: source?.contract_number ?? '',
@@ -618,7 +694,9 @@ function buildPatchPayload(formState: Step2FormState) {
     case_type: formState.caseType || null,
     normalized_data: {
       creditor_name: normalizeOptionalField(formState.creditorName),
+      creditor_inn: normalizeInnForPayload(formState.creditorInn),
       debtor_name: normalizeOptionalField(formState.debtorName),
+      debtor_inn: normalizeInnForPayload(formState.debtorInn),
       contract_signed: triToBool(formState.contractSigned),
       contract_number: normalizeOptionalField(formState.contractNumber),
       contract_date: normalizeOptionalField(formState.contractDate),
@@ -683,6 +761,71 @@ function normalizeOptionalField(value: string): string | null {
   return normalized || null
 }
 
+function normalizeInnInput(value: string): string {
+  return value.replace(/\D+/g, '').slice(0, 12)
+}
+
+function normalizeInnForPayload(value: string): string | null {
+  const normalized = normalizeInnInput(value)
+  return normalized || null
+}
+
+function validateInnFields(formState: Step2FormState): {
+  isValid: boolean
+  message: string
+  errors: Step2InnErrors
+} {
+  const creditorInnError = validateInnValue(formState.creditorInn, 'ИНН кредитора')
+  const debtorInnError = validateInnValue(formState.debtorInn, 'ИНН должника')
+  const errors: Step2InnErrors = {
+    creditorInn: creditorInnError,
+    debtorInn: debtorInnError,
+  }
+
+  if (creditorInnError) {
+    return {
+      isValid: false,
+      message: creditorInnError,
+      errors,
+    }
+  }
+  if (debtorInnError) {
+    return {
+      isValid: false,
+      message: debtorInnError,
+      errors,
+    }
+  }
+
+  return {
+    isValid: true,
+    message: '',
+    errors,
+  }
+}
+
+function validateInnValue(value: string, label: string): string | null {
+  const normalized = normalizeInnInput(value)
+  if (!normalized) {
+    return `${label}: заполните поле.`
+  }
+  if (normalized.length !== 10 && normalized.length !== 12) {
+    return `${label}: должно быть 10 или 12 цифр.`
+  }
+  return null
+}
+
+function getRequiredStep2Fields(formState: Step2FormState): string[] {
+  const requiredFields = [...STEP2_REQUIRED_BASE_FIELDS]
+  if (formState.partialPaymentsPresent === 'yes') {
+    requiredFields.push('partial_payments')
+  }
+  if (formState.penaltyExists === 'yes') {
+    requiredFields.push('penalty_rate_text')
+  }
+  return requiredFields
+}
+
 function boolToTri(value: boolean | null | undefined): TriState {
   if (value === true) {
     return 'yes'
@@ -703,8 +846,11 @@ function triToBool(value: TriState): boolean | null {
   return null
 }
 
-function computeCompletionPercent(missingFieldsCount: number): number {
-  const maxMissing = 8
+function computeCompletionPercent(formState: Step2FormState, missingFields: string[]): number {
+  const requiredFields = getRequiredStep2Fields(formState)
+  const requiredFieldSet = new Set(requiredFields)
+  const missingFieldsCount = missingFields.filter((field) => requiredFieldSet.has(field)).length
+  const maxMissing = Math.max(requiredFields.length, 1)
   const ratio = Math.max(0, Math.min(1, 1 - missingFieldsCount / maxMissing))
   return Math.round(35 + ratio * 57)
 }

@@ -10,7 +10,9 @@ from .extraction import CASE_TYPE_ALIASES, DOCUMENT_ALIASES, build_empty_normali
 SUPPORTED_CASE_TYPES = {"supply", "contract_work", "services"}
 STEP2_ALWAYS_VISIBLE_FIELDS = [
     "creditor_name",
+    "creditor_inn",
     "debtor_name",
+    "debtor_inn",
     "case_type",
     "contract_signed",
     "contract_number",
@@ -134,7 +136,9 @@ def _normalize_existing_payload(payload: dict[str, Any] | None) -> dict[str, Any
                 merged[field_name] = payload[field_name]
 
     merged["creditor_name"] = _normalize_string(merged.get("creditor_name"))
+    merged["creditor_inn"] = normalize_inn(merged.get("creditor_inn"))
     merged["debtor_name"] = _normalize_string(merged.get("debtor_name"))
+    merged["debtor_inn"] = normalize_inn(merged.get("debtor_inn"))
     merged["contract_signed"] = _normalize_bool(merged.get("contract_signed"))
     merged["contract_number"] = _normalize_string(merged.get("contract_number"))
     merged["contract_date"] = _normalize_date(merged.get("contract_date"))
@@ -152,6 +156,8 @@ def _normalize_existing_payload(payload: dict[str, Any] | None) -> dict[str, Any
 def _normalize_patch_field(field_name: str, value: Any) -> Any:
     if field_name in {"creditor_name", "debtor_name", "contract_number", "penalty_rate_text"}:
         return _normalize_string(value)
+    if field_name in {"creditor_inn", "debtor_inn"}:
+        return normalize_inn(value, field_name=field_name, strict=True)
     if field_name in {"contract_signed", "partial_payments_present", "penalty_exists"}:
         return _normalize_bool(value)
     if field_name in {"contract_date", "payment_due_date"}:
@@ -172,6 +178,25 @@ def _normalize_string(value: Any) -> str | None:
         value = str(value)
     normalized = value.strip()
     return normalized or None
+
+
+def normalize_inn(value: Any, *, field_name: str = "inn", strict: bool = False) -> str | None:
+    normalized = _normalize_string(value)
+    if normalized is None:
+        return None
+
+    digits_only = re.sub(r"\D+", "", normalized)
+    if not digits_only:
+        if strict:
+            raise ValueError(f"invalid {field_name}: must contain 10 or 12 digits")
+        return None
+
+    if len(digits_only) not in {10, 12}:
+        if strict:
+            raise ValueError(f"invalid {field_name}: must contain 10 or 12 digits")
+        return None
+
+    return digits_only
 
 
 def _normalize_bool(value: Any) -> bool | None:

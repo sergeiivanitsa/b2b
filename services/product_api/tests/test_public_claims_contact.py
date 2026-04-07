@@ -24,7 +24,7 @@ async def test_post_claim_contact_persists_and_restores_via_get(async_client, en
     assert contact_resp.status_code == 200
     contact_payload = contact_resp.json()
     assert contact_payload["client_email"] == "client@example.com"
-    assert contact_payload["client_phone"] == "+79991234567"
+    assert "client_phone" not in contact_payload
 
     get_resp = await async_client.get(
         f"/claims/{created['claim_id']}",
@@ -33,7 +33,7 @@ async def test_post_claim_contact_persists_and_restores_via_get(async_client, en
     assert get_resp.status_code == 200
     restored = get_resp.json()
     assert restored["client_email"] == "client@example.com"
-    assert restored["client_phone"] == "+79991234567"
+    assert "client_phone" not in restored
 
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         claim_row = await session.execute(
@@ -45,7 +45,7 @@ async def test_post_claim_contact_persists_and_restores_via_get(async_client, en
         row = claim_row.first()
         assert row is not None
         assert row[0] == "client@example.com"
-        assert row[1] == "+79991234567"
+        assert row[1] is None
 
         event_row = await session.execute(
             text(

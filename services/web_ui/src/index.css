@@ -1563,7 +1563,7 @@ body.is-chat-page #root {
 
 .claims-step3-contact__form {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) minmax(220px, 360px);
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 360px);
   gap: 10px;
 }
 

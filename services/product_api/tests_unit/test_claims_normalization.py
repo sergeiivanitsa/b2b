@@ -12,7 +12,9 @@ from product_api.claims.normalization import (
 def _base_normalized_data() -> dict:
     return {
         "creditor_name": "OOO Alpha",
+        "creditor_inn": "7701234567",
         "debtor_name": "OOO Vector",
+        "debtor_inn": "780123456789",
         "contract_signed": True,
         "contract_number": "17",
         "contract_date": "2026-01-12",
@@ -110,3 +112,28 @@ def test_normalize_case_type_uses_canonical_enum():
     assert normalize_case_type(None) is None
     with pytest.raises(ValueError):
         normalize_case_type("other")
+
+
+def test_merge_normalized_data_patch_normalizes_inn_fields():
+    merged, changed_fields = merge_normalized_data_patch(
+        _base_normalized_data(),
+        patch_values={
+            "creditor_inn": " 77 0123 4567 ",
+            "debtor_inn": " 7801-2345-6789 ",
+        },
+        patch_fields={"creditor_inn", "debtor_inn"},
+    )
+
+    assert merged["creditor_inn"] == "7701234567"
+    assert merged["debtor_inn"] == "780123456789"
+    assert "creditor_inn" not in changed_fields
+    assert "debtor_inn" not in changed_fields
+
+
+def test_merge_normalized_data_patch_rejects_invalid_inn():
+    with pytest.raises(ValueError, match="invalid creditor_inn"):
+        merge_normalized_data_patch(
+            _base_normalized_data(),
+            patch_values={"creditor_inn": "12345"},
+            patch_fields={"creditor_inn"},
+        )

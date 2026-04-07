@@ -50,7 +50,6 @@ export function ClaimStep3Page() {
   const [claimId, setClaimId] = useState<number | null>(null)
   const [editToken, setEditToken] = useState('')
   const [email, setEmail] = useState('')
-  const [phone, setPhone] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -79,7 +78,6 @@ export function ClaimStep3Page() {
         setClaimId(restored.claimId)
         setEditToken(restored.editToken)
         setEmail(restored.claim.client_email ?? '')
-        setPhone(restored.claim.client_phone ?? '')
       } catch (loadError) {
         if (isCanceled) {
           return
@@ -124,7 +122,6 @@ export function ClaimStep3Page() {
     try {
       await updateClaimContact(claimId, editToken, {
         client_email: email.trim(),
-        client_phone: phone.trim() || null,
       })
       setProgress(96)
 
@@ -207,12 +204,6 @@ export function ClaimStep3Page() {
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               required
-            />
-            <input
-              type="tel"
-              placeholder="+7 (900) 000-00-00"
-              value={phone}
-              onChange={(event) => setPhone(event.target.value)}
             />
             <button type="submit" disabled={isSubmitting}>
               {submitButtonText}
