@@ -53,19 +53,19 @@ type Step2LocationState = {
 }
 
 const CASE_TYPE_OPTIONS: Array<{ value: ClaimCaseType; label: string }> = [
-  { value: 'supply', label: 'Р”РѕРіРѕРІРѕСЂ РїРѕСЃС‚Р°РІРєРё С‚РѕРІР°СЂР°' },
-  { value: 'services', label: 'Р”РѕРіРѕРІРѕСЂ РѕРєР°Р·Р°РЅРёСЏ СѓСЃР»СѓРі' },
-  { value: 'contract_work', label: 'Р”РѕРіРѕРІРѕСЂ РїРѕРґСЂСЏРґР°' },
+  { value: 'supply', label: 'Договор поставки товара' },
+  { value: 'services', label: 'Договор оказания услуг' },
+  { value: 'contract_work', label: 'Договор подряда' },
 ]
 
 const DOCUMENT_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: 'contract', label: 'Р”РѕРіРѕРІРѕСЂ' },
-  { value: 'waybill', label: 'РќР°РєР»Р°РґРЅС‹Рµ / РЈРџР”' },
-  { value: 'services_act', label: 'РђРєС‚С‹ СѓСЃР»СѓРі' },
-  { value: 'acceptance_act', label: 'РђРєС‚С‹ РІС‹РїРѕР»РЅРµРЅРЅС‹С… СЂР°Р±РѕС‚' },
-  { value: 'invoice', label: 'РЎС‡РµС‚Р°' },
-  { value: 'payment_order', label: 'РџР»Р°С‚С‘Р¶РЅС‹Рµ РїРѕСЂСѓС‡РµРЅРёСЏ' },
-  { value: 'specification', label: 'РЎРїРµС†РёС„РёРєР°С†РёСЏ' },
+  { value: 'contract', label: 'Договор' },
+  { value: 'waybill', label: 'Накладные / УПД' },
+  { value: 'services_act', label: 'Акты услуг' },
+  { value: 'acceptance_act', label: 'Акты выполненных работ' },
+  { value: 'invoice', label: 'Счета' },
+  { value: 'payment_order', label: 'Платёжные поручения' },
+  { value: 'specification', label: 'Спецификация' },
 ]
 
 let nextPaymentRowId = 1
@@ -153,7 +153,7 @@ export function ClaimStep2Page() {
           navigate('/claims', { replace: true })
           return
         }
-        setError('РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ С‡РµСЂРЅРѕРІРёРє Р·Р°СЏРІРєРё. РћР±РЅРѕРІРёС‚Рµ СЃС‚СЂР°РЅРёС†Сѓ.')
+        setError('Не удалось загрузить черновик заявки. Обновите страницу.')
       } finally {
         if (!isCanceled) {
           setIsLoading(false)
@@ -177,7 +177,7 @@ export function ClaimStep2Page() {
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!claimId || !editToken) {
-      setError('РЎРµСЃСЃРёСЏ РЅРµ РЅР°Р№РґРµРЅР°. РќР°С‡РЅРёС‚Рµ Р·Р°РЅРѕРІРѕ СЃ С€Р°РіР° 1.')
+      setError('Сессия не найдена. Начните заново с шага 1.')
       return
     }
 
@@ -199,33 +199,33 @@ export function ClaimStep2Page() {
       navigate('/claims/step-3')
     } catch (saveError) {
       const detail = getApiHttpErrorDetail(saveError)
-      setError(detail ?? 'РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ РґР°РЅРЅС‹Рµ С€Р°РіР° 2.')
+      setError(detail ?? 'Не удалось сохранить данные шага 2.')
     } finally {
       setIsSaving(false)
     }
   }
 
   async function onDeleteFile(fileId: number) {
-    if (!claimId || !editToken) {
-      setError('Сессия не найдена. Начните заново с шага 1.')
-      return
-    }
-
-    setDeletingFileId(fileId)
-    setNotice(null)
-    setError(null)
-    try {
-      await deleteClaimFile(claimId, editToken, fileId)
-      const nextFiles = await listClaimFiles(claimId, editToken)
-      setFiles(nextFiles)
-      setNotice('Файл удалён.')
-    } catch (deleteError) {
-      const detail = getApiHttpErrorDetail(deleteError)
-      setError(detail ?? 'Не удалось удалить файл.')
-    } finally {
-      setDeletingFileId(null)
-    }
+  if (!claimId || !editToken) {
+    setError('Сессия не найдена. Начните заново с шага 1.')
+    return
   }
+
+  setDeletingFileId(fileId)
+  setNotice(null)
+  setError(null)
+  try {
+    await deleteClaimFile(claimId, editToken, fileId)
+    const nextFiles = await listClaimFiles(claimId, editToken)
+    setFiles(nextFiles)
+    setNotice('Файл удалён.')
+  } catch (deleteError) {
+    const detail = getApiHttpErrorDetail(deleteError)
+    setError(detail ?? 'Не удалось удалить файл.')
+  } finally {
+    setDeletingFileId(null)
+  }
+}
 
   function toggleDocument(documentCode: string) {
     setFormState((current) => {
@@ -271,11 +271,11 @@ export function ClaimStep2Page() {
   }
 
   async function onFileChange(event: ChangeEvent<HTMLInputElement>) {
-    if (!claimId || !editToken) {
-      setError('Сессия не найдена. Начните заново с шага 1.')
-      event.target.value = ''
-      return
-    }
+  if (!claimId || !editToken) {
+    setError('Сессия не найдена. Начните заново с шага 1.')
+    event.target.value = ''
+    return
+  }
 
     const selectedFiles = Array.from(event.target.files ?? [])
     event.target.value = ''
@@ -345,7 +345,7 @@ export function ClaimStep2Page() {
       <main className="claims-page claims-page--step2">
         <section className="claims-wrap">
           <ClaimsBrand compact />
-          <p className="claims-loading">Р—Р°РіСЂСѓР¶Р°РµРј РґР°РЅРЅС‹Рµ С€Р°РіР° 2...</p>
+          <p className="claims-loading">Загружаем данные шага 2...</p>
         </section>
       </main>
     )
@@ -356,21 +356,21 @@ export function ClaimStep2Page() {
       <section className="claims-wrap">
         <div className="claims-topline">
           <ClaimsBrand compact />
-          <p className="claims-topline__step">РЁРђР“ 2 РР— 4</p>
+          <p className="claims-topline__step">ШАГ 2 ИЗ 4</p>
         </div>
 
         <header className="claims-step-header">
-          <h1>РЈРўРћР§РќРРўР• Р”РђРќРќР«Р• Р”Р›РЇ РџР Р•РўР•РќР—РР</h1>
-          <p>AI СѓР¶Рµ РїСЂРѕР°РЅР°Р»РёР·РёСЂРѕРІР°Р» РІР°С€Сѓ СЃРёС‚СѓР°С†РёСЋ. РџСЂРѕРІРµСЂСЊС‚Рµ Рё РґРѕРїРѕР»РЅРёС‚Рµ РєР»СЋС‡РµРІС‹Рµ РґР°РЅРЅС‹Рµ.</p>
-          <ClaimsProgressBar label="Р“РѕС‚РѕРІРЅРѕСЃС‚СЊ РґРѕРєСѓРјРµРЅС‚Р°:" value={completionPercent} />
+          <h1>УТОЧНИТЕ ДАННЫЕ ДЛЯ ПРЕТЕНЗИИ</h1>
+          <p>AI уже проанализировал вашу ситуацию. Проверьте и дополните ключевые данные.</p>
+          <ClaimsProgressBar label="Готовность документа:" value={completionPercent} />
         </header>
 
         <form className="claims-step2-form" onSubmit={onSubmit}>
           <section className="claims-step2-card">
-            <h2>РЎС‚РѕСЂРѕРЅС‹ СЃРїРѕСЂР°</h2>
+            <h2>Стороны спора</h2>
             <div className="claims-form-grid">
               <div>
-                <label htmlFor="creditor-name">Р’Р°С€Р° РєРѕРјРїР°РЅРёСЏ</label>
+                <label htmlFor="creditor-name">Ваша компания</label>
                 <input
                   id="creditor-name"
                   type="text"
@@ -382,7 +382,7 @@ export function ClaimStep2Page() {
                 />
               </div>
               <div>
-                <label htmlFor="debtor-name">РљРѕРјРїР°РЅРёСЏ РґРѕР»Р¶РЅРёРєР°</label>
+                <label htmlFor="debtor-name">Компания должника</label>
                 <input
                   id="debtor-name"
                   type="text"
@@ -397,7 +397,7 @@ export function ClaimStep2Page() {
 
             <div className="claims-form-grid">
               <div>
-                <label htmlFor="creditor-inn">РРќРќ РєСЂРµРґРёС‚РѕСЂР°</label>
+                <label htmlFor="creditor-inn">ИНН кредитора</label>
                 <input
                   id="creditor-inn"
                   type="text"
@@ -410,11 +410,11 @@ export function ClaimStep2Page() {
                       ? 'is-missing'
                       : ''
                   }
-                  placeholder="10 РёР»Рё 12 С†РёС„СЂ"
+                  placeholder="10 или 12 цифр"
                 />
               </div>
               <div>
-                <label htmlFor="debtor-inn">РРќРќ РґРѕР»Р¶РЅРёРєР°</label>
+                <label htmlFor="debtor-inn">ИНН должника</label>
                 <input
                   id="debtor-inn"
                   type="text"
@@ -427,7 +427,7 @@ export function ClaimStep2Page() {
                       ? 'is-missing'
                       : ''
                   }
-                  placeholder="10 РёР»Рё 12 С†РёС„СЂ"
+                  placeholder="10 или 12 цифр"
                 />
               </div>
             </div>
@@ -435,7 +435,7 @@ export function ClaimStep2Page() {
 
             <div className="claims-form-grid claims-form-grid--2">
               <fieldset>
-                <legend>РўРёРї РґРѕРіРѕРІРѕСЂР°</legend>
+                <legend>Тип договора</legend>
                 {CASE_TYPE_OPTIONS.map((option) => (
                   <label key={option.value} className="claims-radio">
                     <input
@@ -453,7 +453,7 @@ export function ClaimStep2Page() {
 
               <div className="claims-fields-stack">
                 <fieldset>
-                  <legend>Р”РѕРіРѕРІРѕСЂ РїРѕРґРїРёСЃР°РЅ?</legend>
+                  <legend>Договор подписан?</legend>
                   <label className="claims-radio">
                     <input
                       type="radio"
@@ -463,7 +463,7 @@ export function ClaimStep2Page() {
                         setFormState((current) => ({ ...current, contractSigned: 'yes' }))
                       }
                     />
-                    Р”Р°
+                    Да
                   </label>
                   <label className="claims-radio">
                     <input
@@ -474,11 +474,11 @@ export function ClaimStep2Page() {
                         setFormState((current) => ({ ...current, contractSigned: 'no' }))
                       }
                     />
-                    РќРµС‚
+                    Нет
                   </label>
                 </fieldset>
 
-                <label htmlFor="contract-number">РќРѕРјРµСЂ РґРѕРіРѕРІРѕСЂР°</label>
+                <label htmlFor="contract-number">Номер договора</label>
                 <input
                   id="contract-number"
                   type="text"
@@ -487,7 +487,7 @@ export function ClaimStep2Page() {
                     setFormState((current) => ({ ...current, contractNumber: event.target.value }))
                   }
                 />
-                <label htmlFor="contract-date">Р”Р°С‚Р° РґРѕРіРѕРІРѕСЂР°</label>
+                <label htmlFor="contract-date">Дата договора</label>
                 <input
                   id="contract-date"
                   type="date"
@@ -501,7 +501,7 @@ export function ClaimStep2Page() {
 
             <div className="claims-form-grid">
               <div>
-                <label htmlFor="debt-amount">РћР±С‰Р°СЏ СЃСѓРјРјР° РїРѕ РґРѕРіРѕРІРѕСЂСѓ</label>
+                <label htmlFor="debt-amount">Общая сумма по договору</label>
                 <input
                   id="debt-amount"
                   type="text"
@@ -514,7 +514,7 @@ export function ClaimStep2Page() {
                 />
               </div>
               <div>
-                <label htmlFor="payment-due-date">РљРѕРіРґР° РґРѕР»Р¶РЅР° Р±С‹Р»Р° Р±С‹С‚СЊ РѕРїР»Р°С‚Р°</label>
+                <label htmlFor="payment-due-date">Когда должна была быть оплата</label>
                 <input
                   id="payment-due-date"
                   type="date"
@@ -525,14 +525,14 @@ export function ClaimStep2Page() {
                   className={isFieldMissing(missingFieldSet, 'payment_due_date', formState.paymentDueDate) ? 'is-missing' : ''}
                 />
                 {derived.overdueDays !== null ? (
-                  <p className="claims-step2-overdue">РџСЂРѕСЃСЂРѕС‡РєР°: {derived.overdueDays} РґРЅРµР№</p>
+                  <p className="claims-step2-overdue">Просрочка: {derived.overdueDays} дней</p>
                 ) : null}
               </div>
             </div>
 
             <div className="claims-form-grid">
               <fieldset>
-                <legend>Р‘С‹Р»Рё Р»Рё С‡Р°СЃС‚РёС‡РЅС‹Рµ РѕРїР»Р°С‚С‹?</legend>
+                <legend>Были ли частичные оплаты?</legend>
                 <label className="claims-radio">
                   <input
                     type="radio"
@@ -542,7 +542,7 @@ export function ClaimStep2Page() {
                       setFormState((current) => ({ ...current, partialPaymentsPresent: 'no' }))
                     }
                   />
-                  РќРµС‚
+                  Нет
                 </label>
                 <label className="claims-radio">
                   <input
@@ -553,7 +553,7 @@ export function ClaimStep2Page() {
                       setFormState((current) => ({ ...current, partialPaymentsPresent: 'yes' }))
                     }
                   />
-                  Р”Р°, С‡Р°СЃС‚РёС‡РЅРѕ
+                  Да, частично
                 </label>
                 {formState.partialPaymentsPresent === 'yes' ? (
                   <div className="claims-partial-payments">
@@ -561,7 +561,7 @@ export function ClaimStep2Page() {
                       <div key={row.id} className="claims-partial-payments__row">
                         <input
                           type="text"
-                          placeholder="РЎСѓРјРјР°"
+                          placeholder="Сумма"
                           value={row.amount}
                           onChange={(event) =>
                             updatePartialPayment(row.id, 'amount', event.target.value)
@@ -575,19 +575,19 @@ export function ClaimStep2Page() {
                           }
                         />
                         <button type="button" onClick={() => removePartialPaymentRow(row.id)}>
-                          РЈРґР°Р»РёС‚СЊ
+                          Удалить
                         </button>
                       </div>
                     ))}
                     <button type="button" onClick={addPartialPaymentRow}>
-                      + Р”РћР‘РђР’РРўР¬ РћРџР›РђРўРЈ
+                      + ДОБАВИТЬ ОПЛАТУ
                     </button>
                   </div>
                 ) : null}
               </fieldset>
 
               <fieldset>
-                <legend>Р•СЃС‚СЊ Р»Рё РІ РґРѕРіРѕРІРѕСЂРµ РЅРµСѓСЃС‚РѕР№РєР°?</legend>
+                <legend>Есть ли в договоре неустойка?</legend>
                 <label className="claims-radio">
                   <input
                     type="radio"
@@ -597,7 +597,7 @@ export function ClaimStep2Page() {
                       setFormState((current) => ({ ...current, penaltyExists: 'yes' }))
                     }
                   />
-                  Р”Р°
+                  Да
                 </label>
                 <label className="claims-radio">
                   <input
@@ -608,7 +608,7 @@ export function ClaimStep2Page() {
                       setFormState((current) => ({ ...current, penaltyExists: 'no' }))
                     }
                   />
-                  РќРµС‚
+                  Нет
                 </label>
                 <label className="claims-radio">
                   <input
@@ -619,11 +619,11 @@ export function ClaimStep2Page() {
                       setFormState((current) => ({ ...current, penaltyExists: 'unknown' }))
                     }
                   />
-                  РќРµ Р·РЅР°СЋ
+                  Не знаю
                 </label>
                 {formState.penaltyExists === 'yes' ? (
                   <>
-                    <label htmlFor="penalty-rate">РЎС‚Р°РІРєР° РЅРµСѓСЃС‚РѕР№РєРё</label>
+                    <label htmlFor="penalty-rate">Ставка неустойки</label>
                     <input
                       id="penalty-rate"
                       type="text"
@@ -632,7 +632,7 @@ export function ClaimStep2Page() {
                         setFormState((current) => ({ ...current, penaltyRateText: event.target.value }))
                       }
                       className={isFieldMissing(missingFieldSet, 'penalty_rate_text', formState.penaltyRateText) ? 'is-missing' : ''}
-                      placeholder="0,1 % РІ РґРµРЅСЊ"
+                      placeholder="0,1 % в день"
                     />
                   </>
                 ) : null}
@@ -641,16 +641,16 @@ export function ClaimStep2Page() {
 
             <section className="claims-amount-summary">
               <p>
-                РС‚РѕРіРѕ РѕРїР»Р°С‡РµРЅРѕ: <strong>{formatRub(derived.totalPaidAmount)}</strong>
+                Итого оплачено: <strong>{formatRub(derived.totalPaidAmount)}</strong>
               </p>
               <p>
-                РћСЃС‚Р°С‚РѕРє РґРѕР»РіР°:{' '}
-                <strong>{derived.remainingDebtAmount === null ? 'вЂ”' : formatRub(derived.remainingDebtAmount)}</strong>
+                Остаток долга:{' '}
+                <strong>{derived.remainingDebtAmount === null ? '—' : formatRub(derived.remainingDebtAmount)}</strong>
               </p>
             </section>
 
             <section className="claims-documents">
-              <h3>РџРѕРґС‚РІРµСЂР¶РґР°СЋС‰РёРµ РґРѕРєСѓРјРµРЅС‚С‹</h3>
+              <h3>Подтверждающие документы</h3>
               <div className="claims-documents__grid">
                 {DOCUMENT_OPTIONS.map((option) => (
                   <label key={option.value} className="claims-check">
@@ -663,7 +663,7 @@ export function ClaimStep2Page() {
                   </label>
                 ))}
               </div>
-              <p className="claims-documents__hint">Р”РѕРєСѓРјРµРЅС‚С‹ РјРѕР¶РЅРѕ РїСЂРёР»РѕР¶РёС‚СЊ РїРѕР·Р¶Рµ.</p>
+              <p className="claims-documents__hint">Документы можно приложить позже.</p>
             </section>
 
             <section className="claims-file-upload">
@@ -711,16 +711,16 @@ export function ClaimStep2Page() {
                   ))}
                 </ul>
               ) : (
-                <p className="claims-file-upload__empty">Файлы пока не загружены.</p>
+                <p className="claims-file-upload__empty">Файлы не загружены.</p>
               )}
             </section>
           </section>
 
           <button className="claims-primary-button" type="submit" disabled={isSaving}>
-            {isSaving ? 'РЎРћРҐР РђРќРЇР•Рњ...' : 'РЎР¤РћР РњРР РћР’РђРўР¬ РџР Р•РўР•РќР—РР®'}
+            {isSaving ? 'СОХРАНЯЕМ...' : 'СФОРМИРОВАТЬ ПРЕТЕНЗИЮ'}
           </button>
           <p className="claims-step2-note">
-            AI РїРѕРґРіРѕС‚РѕРІРёС‚ РїСЂРµС‚РµРЅР·РёСЋ СЃ СЂР°СЃС‡С‘С‚РѕРј РЅРµСѓСЃС‚РѕР№РєРё Рё СЃСЃС‹Р»РєР°РјРё РЅР° РЅРѕСЂРјС‹ Р“Рљ Р Р¤.
+            AI подготовит претензию с расчётом неустойки и ссылками на нормы ГК РФ.
           </p>
         </form>
 
@@ -870,8 +870,8 @@ function validateInnFields(formState: Step2FormState): {
   message: string
   errors: Step2InnErrors
 } {
-  const creditorInnError = validateInnValue(formState.creditorInn, 'РРќРќ РєСЂРµРґРёС‚РѕСЂР°')
-  const debtorInnError = validateInnValue(formState.debtorInn, 'РРќРќ РґРѕР»Р¶РЅРёРєР°')
+  const creditorInnError = validateInnValue(formState.creditorInn, 'ИНН кредитора')
+  const debtorInnError = validateInnValue(formState.debtorInn, 'ИНН должника')
   const errors: Step2InnErrors = {
     creditorInn: creditorInnError,
     debtorInn: debtorInnError,
@@ -902,20 +902,20 @@ function validateInnFields(formState: Step2FormState): {
 function validateInnValue(value: string, label: string): string | null {
   const normalized = normalizeInnInput(value)
   if (!normalized) {
-    return `${label}: Р·Р°РїРѕР»РЅРёС‚Рµ РїРѕР»Рµ.`
+    return `${label}: заполните поле.`
   }
   if (normalized.length !== 10 && normalized.length !== 12) {
-    return `${label}: РґРѕР»Р¶РЅРѕ Р±С‹С‚СЊ 10 РёР»Рё 12 С†РёС„СЂ.`
+    return `${label}: должно быть 10 или 12 цифр.`
   }
   return null
 }
 
 function validateUploadCandidate(file: File): string | null {
   if (file.size <= 0) {
-    return `Р¤Р°Р№Р» "${file.name}" РїСѓСЃС‚РѕР№. Р’С‹Р±РµСЂРёС‚Рµ РґСЂСѓРіРѕР№ С„Р°Р№Р».`
+    return `Файл "${file.name}" пустой. Выберите другой файл.`
   }
   if (file.size > MAX_UPLOAD_FILE_SIZE_BYTES) {
-    return `Р¤Р°Р№Р» "${file.name}" СЃР»РёС€РєРѕРј Р±РѕР»СЊС€РѕР№. РњР°РєСЃРёРјСѓРј ${MAX_UPLOAD_FILE_SIZE_MB} РњР‘.`
+    return `Файл "${file.name}" слишком большой. Максимум ${MAX_UPLOAD_FILE_SIZE_MB} МБ.`
   }
 
   const extension = getFileExtension(file.name)
@@ -923,7 +923,7 @@ function validateUploadCandidate(file: File): string | null {
   const hasAllowedExtension = extension ? ALLOWED_UPLOAD_EXTENSIONS_SET.has(extension) : false
   const hasAllowedMimeType = mimeType ? ALLOWED_UPLOAD_MIME_TYPES_SET.has(mimeType) : false
   if (!hasAllowedExtension && !hasAllowedMimeType) {
-    return `Р¤Р°Р№Р» "${file.name}" РёРјРµРµС‚ РЅРµРїРѕРґРґРµСЂР¶РёРІР°РµРјС‹Р№ С„РѕСЂРјР°С‚. Р Р°Р·СЂРµС€РµРЅС‹: PDF, DOC, DOCX, RTF, JPG, JPEG, PNG.`
+    return `Файл "${file.name}" имеет неподдерживаемый формат. Разрешены: PDF, DOC, DOCX, RTF, JPG, JPEG, PNG.`
   }
   return null
 }
@@ -939,19 +939,19 @@ function getFileExtension(fileName: string): string {
 
 function mapUploadError(detail: string | null, fileName: string): string {
   if (!detail) {
-    return `РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ С„Р°Р№Р» "${fileName}".`
+    return `Не удалось загрузить файл "${fileName}".`
   }
   const normalized = detail.toLowerCase()
   if (normalized.includes('unsupported mime type')) {
-    return `Р¤Р°Р№Р» "${fileName}" РёРјРµРµС‚ РЅРµРїРѕРґРґРµСЂР¶РёРІР°РµРјС‹Р№ С„РѕСЂРјР°С‚. Р Р°Р·СЂРµС€РµРЅС‹: PDF, DOC, DOCX, RTF, JPG, JPEG, PNG.`
+    return `Файл "${fileName}" имеет неподдерживаемый формат. Разрешены: PDF, DOC, DOCX, RTF, JPG, JPEG, PNG.`
   }
   if (normalized.includes('file is too large')) {
-    return `Р¤Р°Р№Р» "${fileName}" СЃР»РёС€РєРѕРј Р±РѕР»СЊС€РѕР№. РњР°РєСЃРёРјСѓРј ${MAX_UPLOAD_FILE_SIZE_MB} РњР‘.`
+    return `Файл "${fileName}" слишком большой. Максимум ${MAX_UPLOAD_FILE_SIZE_MB} МБ.`
   }
   if (normalized.includes('file is empty')) {
-    return `Р¤Р°Р№Р» "${fileName}" РїСѓСЃС‚РѕР№. Р’С‹Р±РµСЂРёС‚Рµ РґСЂСѓРіРѕР№ С„Р°Р№Р».`
+    return `Файл "${fileName}" пустой. Выберите другой файл.`
   }
-  return `Р¤Р°Р№Р» "${fileName}": ${detail}.`
+  return `Файл "${fileName}": ${detail}.`
 }
 
 function getRequiredStep2Fields(formState: Step2FormState): string[] {
@@ -995,5 +995,5 @@ function computeCompletionPercent(formState: Step2FormState, missingFields: stri
 }
 
 function formatRub(value: number): string {
-  return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value)} в‚Ѕ`
+  return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value)} ₽`
 }
