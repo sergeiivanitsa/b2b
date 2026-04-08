@@ -325,14 +325,13 @@ async def test_post_claims_files_upload_and_list(async_client, engine):
     upload_resp = await async_client.post(
         f"/claims/{created['claim_id']}/files",
         headers={"X-Claim-Edit-Token": created["edit_token"]},
-        data={"file_role": "contract"},
         files={"file": ("contract.pdf", b"%PDF-1.4 test", "application/pdf")},
     )
     assert upload_resp.status_code == 200
     uploaded = upload_resp.json()
     assert uploaded["filename"] == "contract.pdf"
     assert uploaded["mime_type"] == "application/pdf"
-    assert uploaded["file_role"] == "contract"
+    assert uploaded["file_role"] == "supporting_document"
 
     list_resp = await async_client.get(
         f"/claims/{created['claim_id']}/files",
@@ -355,7 +354,7 @@ async def test_post_claims_files_upload_and_list(async_client, engine):
         assert row is not None
         assert row[1] == "contract.pdf"
         assert row[2] == "application/pdf"
-        assert row[3] == "contract"
+        assert row[3] == "supporting_document"
         assert (Path(settings.claims_upload_dir) / row[0]).is_file()
 
         event_row = await session.execute(
@@ -382,9 +381,106 @@ async def test_post_claims_files_rejects_unsupported_mime(async_client):
     upload_resp = await async_client.post(
         f"/claims/{created['claim_id']}/files",
         headers={"X-Claim-Edit-Token": created["edit_token"]},
-        data={"file_role": "contract"},
         files={"file": ("contract.gif", b"GIF89a", "image/gif")},
     )
 
     assert upload_resp.status_code == 400
     assert upload_resp.json()["detail"] == "unsupported mime type"
+
+
+@pytest.mark.parametrize(
+    ("filename", "mime_type"),
+    [
+        ("contract.doc", "application/msword"),
+        ("contract.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        ("contract.rtf", "application/rtf"),
+        ("scan.jpg", "image/jpeg"),
+        ("scan.png", "image/png"),
+    ],
+)
+async def test_post_claims_files_accepts_supported_formats(async_client, filename, mime_type):
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    upload_resp = await async_client.post(
+        f"/claims/{created['claim_id']}/files",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+        files={"file": (filename, b"payload", mime_type)},
+    )
+
+    assert upload_resp.status_code == 200
+    payload = upload_resp.json()
+    assert payload["filename"] == filename
+    assert payload["mime_type"] in {
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/rtf",
+        "image/jpeg",
+        "image/png",
+    }
+
+
+async def test_delete_claim_file_removes_record_and_storage(async_client, engine):
+    settings = get_settings()
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    upload_resp = await async_client.post(
+        f"/claims/{created['claim_id']}/files",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+        files={"file": ("contract.pdf", b"%PDF-1.4 test", "application/pdf")},
+    )
+    assert upload_resp.status_code == 200
+    uploaded = upload_resp.json()
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        file_row = await session.execute(
+            text("SELECT storage_path FROM claim_files WHERE id = :id"),
+            {"id": uploaded["id"]},
+        )
+        row = file_row.first()
+        assert row is not None
+        storage_path = row[0]
+        assert (Path(settings.claims_upload_dir) / storage_path).is_file()
+
+    delete_resp = await async_client.delete(
+        f"/claims/{created['claim_id']}/files/{uploaded['id']}",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+    )
+    assert delete_resp.status_code == 204
+
+    list_resp = await async_client.get(
+        f"/claims/{created['claim_id']}/files",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+    )
+    assert list_resp.status_code == 200
+    assert list_resp.json() == []
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        file_row = await session.execute(
+            text("SELECT id FROM claim_files WHERE id = :id"),
+            {"id": uploaded["id"]},
+        )
+        assert file_row.first() is None
+
+        event_row = await session.execute(
+            text(
+                "SELECT event_type, payload_json "
+                "FROM claim_events WHERE claim_id = :claim_id ORDER BY id DESC LIMIT 1"
+            ),
+            {"claim_id": created["claim_id"]},
+        )
+        event = event_row.first()
+        assert event is not None
+        assert event[0] == "claim.file_deleted"
+        assert event[1]["file_id"] == uploaded["id"]
+
+    assert not (Path(settings.claims_upload_dir) / storage_path).exists()

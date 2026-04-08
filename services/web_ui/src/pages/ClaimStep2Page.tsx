@@ -6,6 +6,7 @@ import { restoreClaimFromSession } from '../claims/claimRestore'
 import { ClaimsBrand } from '../claims/components/ClaimsBrand'
 import { ClaimsProgressBar } from '../claims/components/ClaimsProgressBar'
 import {
+  deleteClaimFile,
   getApiHttpErrorDetail,
   listClaimFiles,
   patchClaim,
@@ -67,15 +68,6 @@ const DOCUMENT_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'specification', label: 'Спецификация' },
 ]
 
-const FILE_ROLE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: 'contract', label: 'Договор' },
-  { value: 'waybill', label: 'Накладные / УПД' },
-  { value: 'act', label: 'Акты' },
-  { value: 'invoice', label: 'Счета' },
-  { value: 'correspondence', label: 'Переписка' },
-  { value: 'other', label: 'Иное' },
-]
-
 let nextPaymentRowId = 1
 
 const STEP2_REQUIRED_BASE_FIELDS = [
@@ -88,6 +80,31 @@ const STEP2_REQUIRED_BASE_FIELDS = [
   'payment_due_date',
 ]
 
+const MAX_UPLOAD_FILE_SIZE_BYTES = 10 * 1024 * 1024
+const MAX_UPLOAD_FILE_SIZE_MB = Math.round(MAX_UPLOAD_FILE_SIZE_BYTES / (1024 * 1024))
+const ALLOWED_UPLOAD_EXTENSIONS = ['pdf', 'doc', 'docx', 'rtf', 'jpg', 'jpeg', 'png'] as const
+const ALLOWED_UPLOAD_MIME_TYPES = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/rtf',
+  'text/rtf',
+  'image/jpeg',
+  'image/png',
+] as const
+const ALLOWED_UPLOAD_EXTENSIONS_SET: ReadonlySet<string> = new Set(ALLOWED_UPLOAD_EXTENSIONS)
+const ALLOWED_UPLOAD_MIME_TYPES_SET: ReadonlySet<string> = new Set(ALLOWED_UPLOAD_MIME_TYPES)
+const FILE_INPUT_ACCEPT = [
+  '.pdf',
+  '.doc',
+  '.docx',
+  '.rtf',
+  '.jpg',
+  '.jpeg',
+  '.png',
+  ...ALLOWED_UPLOAD_MIME_TYPES,
+].join(',')
+
 export function ClaimStep2Page() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -98,11 +115,11 @@ export function ClaimStep2Page() {
   const [formState, setFormState] = useState<Step2FormState>(() => buildInitialFormState(null))
   const [missingFields, setMissingFields] = useState<string[]>(locationState.missingFields ?? [])
   const [files, setFiles] = useState<ClaimFileSnapshot[]>([])
-  const [fileRole, setFileRole] = useState('contract')
-  const [fileToUpload, setFileToUpload] = useState<File | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
+  const [uploadProgressText, setUploadProgressText] = useState<string | null>(null)
+  const [deletingFileId, setDeletingFileId] = useState<number | null>(null)
   const [notice, setNotice] = useState<string | null>(locationState.notice ?? null)
   const [error, setError] = useState<string | null>(null)
   const [innErrors, setInnErrors] = useState<Step2InnErrors>({
@@ -188,29 +205,25 @@ export function ClaimStep2Page() {
     }
   }
 
-  async function onUploadFile() {
+  async function onDeleteFile(fileId: number) {
     if (!claimId || !editToken) {
-      setError('Сессия не найдена. Начните заново с шага 1.')
-      return
-    }
-    if (!fileToUpload) {
-      setError('Выберите файл для загрузки.')
+      setError('������ �� �������. ������� ������ � ���� 1.')
       return
     }
 
-    setIsUploading(true)
+    setDeletingFileId(fileId)
+    setNotice(null)
     setError(null)
     try {
-      await uploadClaimFile(claimId, editToken, fileToUpload, fileRole)
+      await deleteClaimFile(claimId, editToken, fileId)
       const nextFiles = await listClaimFiles(claimId, editToken)
       setFiles(nextFiles)
-      setFileToUpload(null)
-      setNotice('Файл успешно добавлен к заявке.')
-    } catch (uploadError) {
-      const detail = getApiHttpErrorDetail(uploadError)
-      setError(detail ?? 'Не удалось загрузить файл.')
+      setNotice('���� �����.')
+    } catch (deleteError) {
+      const detail = getApiHttpErrorDetail(deleteError)
+      setError(detail ?? '�� ������� ������� ����.')
     } finally {
-      setIsUploading(false)
+      setDeletingFileId(null)
     }
   }
 
@@ -257,9 +270,62 @@ export function ClaimStep2Page() {
     }))
   }
 
-  function onFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] ?? null
-    setFileToUpload(file)
+  async function onFileChange(event: ChangeEvent<HTMLInputElement>) {
+    if (!claimId || !editToken) {
+      setError('������ �� �������. ������� ������ � ���� 1.')
+      event.target.value = ''
+      return
+    }
+
+    const selectedFiles = Array.from(event.target.files ?? [])
+    event.target.value = ''
+    if (selectedFiles.length === 0) {
+      return
+    }
+
+    setIsUploading(true)
+    setUploadProgressText(null)
+    setNotice(null)
+    setError(null)
+
+    const uploadErrors: string[] = []
+    let uploadedCount = 0
+
+    try {
+      for (const [index, file] of selectedFiles.entries()) {
+        const clientValidationError = validateUploadCandidate(file)
+        if (clientValidationError) {
+          uploadErrors.push(clientValidationError)
+          continue
+        }
+
+        setUploadProgressText(`��������� ���� ${index + 1} �� ${selectedFiles.length}: ${file.name}`)
+        try {
+          await uploadClaimFile(claimId, editToken, file)
+          uploadedCount += 1
+        } catch (uploadError) {
+          const detail = getApiHttpErrorDetail(uploadError)
+          uploadErrors.push(mapUploadError(detail, file.name))
+        }
+      }
+
+      if (uploadedCount > 0) {
+        const nextFiles = await listClaimFiles(claimId, editToken)
+        setFiles(nextFiles)
+        setNotice(
+          uploadedCount === 1
+            ? '���� ������� �������� � ������.'
+            : `������� ��������� ������: ${uploadedCount}.`,
+        )
+      }
+
+      if (uploadErrors.length > 0) {
+        setError(uploadErrors.join(' '))
+      }
+    } finally {
+      setIsUploading(false)
+      setUploadProgressText(null)
+    }
   }
 
   function onInnChange(field: 'creditorInn' | 'debtorInn', value: string) {
@@ -601,35 +667,51 @@ export function ClaimStep2Page() {
             </section>
 
             <section className="claims-file-upload">
-              <h3>Загрузка файлов</h3>
+              <h3>��������� ��� ��������� �� ����� ���������</h3>
               <div className="claims-file-upload__form">
-                <select
-                  value={fileRole}
-                  onChange={(event) => setFileRole(event.target.value)}
-                  aria-label="Тип файла"
+                <label
+                  className={`claims-file-upload__pick ${isUploading ? 'is-disabled' : ''}`}
                 >
-                  {FILE_ROLE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <input type="file" onChange={onFileChange} />
-                <button type="button" onClick={onUploadFile} disabled={isUploading}>
-                  {isUploading ? 'Загрузка...' : 'Добавить файл'}
-                </button>
+                  ������� ����
+                  <input
+                    type="file"
+                    accept={FILE_INPUT_ACCEPT}
+                    multiple
+                    onChange={onFileChange}
+                    disabled={isUploading}
+                    className="claims-file-upload__input"
+                  />
+                </label>
+                <p className="claims-file-upload__hint">
+                  ���������� �������: PDF, DOC, DOCX, RTF, JPG, JPEG, PNG. �� {MAX_UPLOAD_FILE_SIZE_MB} �� �� ����.
+                </p>
+                {isUploading ? (
+                  <p className="claims-file-upload__status">
+                    {uploadProgressText ?? '�������� ������...'}
+                  </p>
+                ) : null}
               </div>
               {files.length > 0 ? (
                 <ul className="claims-file-upload__list">
                   {files.map((file) => (
                     <li key={file.id}>
-                      <span>{file.filename}</span>
-                      <small>{file.file_role}</small>
+                      <div className="claims-file-upload__meta">
+                        <span>{file.filename}</span>
+                        <small>{file.mime_type}</small>
+                      </div>
+                      <button
+                        type="button"
+                        className="claims-file-upload__remove"
+                        onClick={() => void onDeleteFile(file.id)}
+                        disabled={deletingFileId === file.id || isUploading}
+                      >
+                        {deletingFileId === file.id ? '�������...' : '�������'}
+                      </button>
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="claims-file-upload__empty">Файлы пока не загружены.</p>
+                <p className="claims-file-upload__empty">����� ���� �� ���������.</p>
               )}
             </section>
           </section>
@@ -826,6 +908,50 @@ function validateInnValue(value: string, label: string): string | null {
     return `${label}: должно быть 10 или 12 цифр.`
   }
   return null
+}
+
+function validateUploadCandidate(file: File): string | null {
+  if (file.size <= 0) {
+    return `Файл "${file.name}" пустой. Выберите другой файл.`
+  }
+  if (file.size > MAX_UPLOAD_FILE_SIZE_BYTES) {
+    return `Файл "${file.name}" слишком большой. Максимум ${MAX_UPLOAD_FILE_SIZE_MB} МБ.`
+  }
+
+  const extension = getFileExtension(file.name)
+  const mimeType = file.type.trim().toLowerCase()
+  const hasAllowedExtension = extension ? ALLOWED_UPLOAD_EXTENSIONS_SET.has(extension) : false
+  const hasAllowedMimeType = mimeType ? ALLOWED_UPLOAD_MIME_TYPES_SET.has(mimeType) : false
+  if (!hasAllowedExtension && !hasAllowedMimeType) {
+    return `Файл "${file.name}" имеет неподдерживаемый формат. Разрешены: PDF, DOC, DOCX, RTF, JPG, JPEG, PNG.`
+  }
+  return null
+}
+
+function getFileExtension(fileName: string): string {
+  const trimmedName = fileName.trim()
+  if (!trimmedName || !trimmedName.includes('.')) {
+    return ''
+  }
+  const parts = trimmedName.split('.')
+  return (parts[parts.length - 1] || '').trim().toLowerCase()
+}
+
+function mapUploadError(detail: string | null, fileName: string): string {
+  if (!detail) {
+    return `Не удалось загрузить файл "${fileName}".`
+  }
+  const normalized = detail.toLowerCase()
+  if (normalized.includes('unsupported mime type')) {
+    return `Файл "${fileName}" имеет неподдерживаемый формат. Разрешены: PDF, DOC, DOCX, RTF, JPG, JPEG, PNG.`
+  }
+  if (normalized.includes('file is too large')) {
+    return `Файл "${fileName}" слишком большой. Максимум ${MAX_UPLOAD_FILE_SIZE_MB} МБ.`
+  }
+  if (normalized.includes('file is empty')) {
+    return `Файл "${fileName}" пустой. Выберите другой файл.`
+  }
+  return `Файл "${fileName}": ${detail}.`
 }
 
 function getRequiredStep2Fields(formState: Step2FormState): string[] {

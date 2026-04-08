@@ -1,7 +1,7 @@
 import re
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,7 +32,9 @@ from product_api.claims.repository import (
     build_public_claim_file_snapshot,
     create_claim,
     create_claim_file,
+    get_claim_file,
     list_claim_files,
+    remove_claim_file,
 )
 from product_api.claims.security import hash_claim_edit_token, require_claim_access
 
@@ -456,3 +458,32 @@ async def get_public_claim_files(
 ):
     files = await list_claim_files(session, claim.id)
     return [build_public_claim_file_snapshot(item) for item in files]
+
+
+@router.delete("/claims/{claim_id}/files/{file_id}", status_code=204)
+async def delete_public_claim_file(
+    file_id: int,
+    claim: Claim = Depends(require_claim_access),
+    session: AsyncSession = Depends(get_session),
+):
+    if file_id <= 0:
+        raise HTTPException(status_code=400, detail="invalid file_id")
+
+    claim_file = await get_claim_file(session, claim.id, file_id)
+    if claim_file is None:
+        raise HTTPException(status_code=404, detail="file not found")
+
+    storage_path = claim_file.storage_path
+    await remove_claim_file(session, claim_file)
+    await append_claim_event(
+        session,
+        claim_id=claim.id,
+        event_type="claim.file_deleted",
+        payload_json={
+            "file_id": file_id,
+        },
+    )
+    await session.commit()
+
+    delete_claim_upload(settings, storage_path)
+    return Response(status_code=204)

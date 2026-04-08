@@ -233,6 +233,21 @@ async def list_claim_files(session: AsyncSession, claim_id: int) -> list[ClaimFi
     return list(result.scalars().all())
 
 
+async def get_claim_file(session: AsyncSession, claim_id: int, file_id: int) -> ClaimFile | None:
+    result = await session.execute(
+        select(ClaimFile).where(
+            ClaimFile.claim_id == claim_id,
+            ClaimFile.id == file_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def remove_claim_file(session: AsyncSession, claim_file: ClaimFile) -> None:
+    await session.delete(claim_file)
+    await session.flush()
+
+
 async def apply_claim_generation_preview(
     session: AsyncSession,
     claim: Claim,
