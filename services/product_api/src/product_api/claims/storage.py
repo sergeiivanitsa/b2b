@@ -10,6 +10,15 @@ from product_api.settings import Settings
 UPLOAD_CHUNK_SIZE = 1024 * 1024
 _FILENAME_ALLOWED_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 _EXTENSION_ALLOWED_PATTERN = re.compile(r"^\.[A-Za-z0-9]{1,10}$")
+_CANONICAL_MIME_BY_EXTENSION = {
+    ".pdf": "application/pdf",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".rtf": "application/rtf",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+}
 
 
 @dataclass(slots=True)
@@ -42,12 +51,20 @@ async def save_claim_upload(
     upload_file: UploadFile,
 ) -> StoredClaimUpload:
     filename = sanitize_original_filename(upload_file.filename)
+    extension = _safe_extension(filename)
+    canonical_mime_type = _CANONICAL_MIME_BY_EXTENSION.get(extension)
+    if not canonical_mime_type:
+        raise ValueError("unsupported mime type")
+
     mime_type = normalize_content_type(upload_file.content_type)
-    if mime_type not in settings.claims_allowed_upload_mime_types:
+    if canonical_mime_type not in settings.claims_allowed_upload_mime_types:
+        raise ValueError("unsupported mime type")
+    if not mime_type or mime_type == "application/octet-stream":
+        mime_type = canonical_mime_type
+    elif mime_type not in settings.claims_allowed_upload_mime_types:
         raise ValueError("unsupported mime type")
 
     base_dir = _resolve_base_dir(settings)
-    extension = _safe_extension(filename)
     storage_rel_path = Path("claims") / str(claim_id) / f"{uuid4().hex}{extension}"
     storage_abs_path = (base_dir / storage_rel_path).resolve()
     if not _is_within_dir(storage_abs_path, base_dir):

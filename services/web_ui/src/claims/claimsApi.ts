@@ -155,19 +155,13 @@ export async function uploadClaimFile(
   claimId: number,
   editToken: string,
   file: File,
-  fileRole = 'supporting_document',
 ): Promise<ClaimFileSnapshot> {
   if (!file) {
     throw new Error('file is required')
   }
-  const normalizedFileRole = fileRole.trim()
-  if (!normalizedFileRole) {
-    throw new Error('fileRole is required')
-  }
 
   const formData = new FormData()
   formData.set('file', file)
-  formData.set('file_role', normalizedFileRole)
 
   return apiFetchJson<ClaimFileSnapshot>(`/claims/${normalizeClaimId(claimId)}/files`, {
     method: 'POST',
@@ -181,6 +175,21 @@ export async function listClaimFiles(
   editToken: string,
 ): Promise<ClaimFileSnapshot[]> {
   return apiFetchJson<ClaimFileSnapshot[]>(`/claims/${normalizeClaimId(claimId)}/files`, {
+    headers: withClaimTokenHeader(editToken),
+  })
+}
+
+export async function deleteClaimFile(
+  claimId: number,
+  editToken: string,
+  fileId: number,
+): Promise<void> {
+  if (!Number.isInteger(fileId) || fileId <= 0) {
+    throw new Error('fileId must be a positive integer')
+  }
+
+  await apiFetchJson<void>(`/claims/${normalizeClaimId(claimId)}/files/${fileId}`, {
+    method: 'DELETE',
     headers: withClaimTokenHeader(editToken),
   })
 }

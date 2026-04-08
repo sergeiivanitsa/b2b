@@ -28,11 +28,12 @@ class Settings(BaseSettings):
     claims_allowed_upload_mime_types: list[str] = Field(
         default=[
             "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/rtf",
+            "text/rtf",
             "image/jpeg",
             "image/png",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "application/msword",
-            "text/plain",
         ],
         validation_alias="CLAIMS_ALLOWED_UPLOAD_MIME_TYPES",
     )

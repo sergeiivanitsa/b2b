@@ -78,6 +78,27 @@ async def test_save_claim_upload_rejects_too_large_file_and_cleans_up(tmp_path: 
         assert list(claim_dir.iterdir()) == []
 
 
+@pytest.mark.asyncio
+async def test_save_claim_upload_accepts_docx_with_octet_stream_content_type(tmp_path: Path):
+    settings = get_settings().model_copy(
+        update={
+            "claims_upload_dir": str(tmp_path),
+            "claims_max_file_size_bytes": 64,
+            "claims_allowed_upload_mime_types": [
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ],
+        }
+    )
+    upload = _make_upload("contract.docx", "application/octet-stream", b"PK\x03\x04")
+
+    stored = await save_claim_upload(settings, claim_id=9, upload_file=upload)
+
+    assert stored.filename == "contract.docx"
+    assert stored.mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    assert stored.storage_path.endswith(".docx")
+    assert (tmp_path / stored.storage_path).is_file()
+
+
 def test_delete_claim_upload_does_not_traverse_outside_base(tmp_path: Path):
     settings = _make_settings(tmp_path)
     outside = tmp_path.parent / "outside.txt"

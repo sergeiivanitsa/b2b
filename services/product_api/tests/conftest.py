@@ -30,7 +30,7 @@ os.environ.setdefault(
 os.environ.setdefault("CLAIMS_MAX_FILE_SIZE_BYTES", "10485760")
 os.environ.setdefault(
     "CLAIMS_ALLOWED_UPLOAD_MIME_TYPES",
-    '["application/pdf","image/jpeg","image/png","text/plain"]',
+    '["application/pdf","application/msword","application/vnd.openxmlformats-officedocument.wordprocessingml.document","application/rtf","text/rtf","image/jpeg","image/png"]',
 )
 os.environ.setdefault(
     "CLAIMS_ADMIN_EMAILS",

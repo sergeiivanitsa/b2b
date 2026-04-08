@@ -3,10 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiHttpError } from '../lib/api'
 import {
   createClaim,
+  deleteClaimFile,
   generateClaimPreview,
   getApiHttpErrorDetail,
   getClaim,
   getInsufficientDataDetail,
+  uploadClaimFile,
 } from './claimsApi'
 
 describe('claimsApi', () => {
@@ -196,5 +198,55 @@ describe('claimsApi', () => {
 
     const detail = getApiHttpErrorDetail(error)
     expect(detail).toBe('body.normalized_data.creditor_inn: Extra inputs are not permitted')
+  })
+
+  it('POST /claims/{id}/files sends multipart body without file_role', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 7,
+          filename: 'contract.pdf',
+          mime_type: 'application/pdf',
+          file_role: 'supporting_document',
+          uploaded_at: null,
+        }),
+        {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+          },
+        },
+      ),
+    )
+
+    const file = new File(['%PDF-1.4'], 'contract.pdf', { type: 'application/pdf' })
+    const payload = await uploadClaimFile(12, 'edit-token', file)
+
+    expect(payload.id).toBe(7)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const [path, options] = fetchSpy.mock.calls[0]
+    expect(path).toBe('/api/claims/12/files')
+    expect(options?.method).toBe('POST')
+    expect(options?.body).toBeInstanceOf(FormData)
+    const formData = options?.body as FormData
+    const uploadedFile = formData.get('file')
+    expect(uploadedFile).toBeInstanceOf(File)
+    expect((uploadedFile as File).name).toBe('contract.pdf')
+    expect(formData.has('file_role')).toBe(false)
+  })
+
+  it('DELETE /claims/{id}/files/{fileId} sends claim edit token header', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, { status: 204 }),
+    )
+
+    await deleteClaimFile(12, 'edit-token', 42)
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const [path, options] = fetchSpy.mock.calls[0]
+    expect(path).toBe('/api/claims/12/files/42')
+    expect(options?.method).toBe('DELETE')
+    const headers = new Headers(options?.headers)
+    expect(headers.get('X-Claim-Edit-Token')).toBe('edit-token')
   })
 })

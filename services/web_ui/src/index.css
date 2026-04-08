@@ -1313,8 +1313,6 @@ body.is-chat-page #root {
 
 .claims-form-grid input,
 .claims-fields-stack input,
-.claims-file-upload__form select,
-.claims-file-upload__form input[type="file"],
 .claims-step3-contact__form input {
   width: 100%;
   border: 1px solid #d6d8db;
@@ -1442,18 +1440,59 @@ body.is-chat-page #root {
 
 .claims-file-upload__form {
   display: grid;
-  grid-template-columns: 220px 1fr auto;
-  gap: 8px;
-  align-items: center;
+  gap: 10px;
 }
 
-.claims-file-upload__form button {
+.claims-file-upload__pick {
+  width: fit-content;
   border: 1px solid #009e28;
   border-radius: 8px;
   background: #fff;
   color: #009e28;
-  padding: 10px 12px;
+  padding: 10px 14px;
   cursor: pointer;
+  font-weight: 600;
+}
+
+.claims-file-upload__pick:hover {
+  background: #f3fff5;
+}
+
+.claims-file-upload__pick.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.claims-file-upload__input {
+  display: none;
+}
+
+.claims-file-upload__hint {
+  margin: 0;
+  color: #69717b;
+  font-size: 0.95rem;
+}
+
+.claims-file-upload__status {
+  margin: 0;
+  color: #009e28;
+  font-size: 0.95rem;
+}
+
+.claims-file-upload__remove {
+  border: 1px solid #009e28;
+  border-radius: 8px;
+  background: #fff;
+  color: #00791f;
+  padding: 8px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.claims-file-upload__remove:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .claims-file-upload__list {
@@ -1470,8 +1509,23 @@ body.is-chat-page #root {
   background: #fafafa;
   padding: 8px 10px;
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.claims-file-upload__meta {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.claims-file-upload__meta span {
+  overflow-wrap: anywhere;
+}
+
+.claims-file-upload__meta small {
+  color: #69717b;
 }
 
 .claims-file-upload__empty {

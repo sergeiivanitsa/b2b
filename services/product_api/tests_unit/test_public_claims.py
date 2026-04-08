@@ -378,7 +378,6 @@ async def test_upload_public_claim_file_ok(async_client, mock_session, monkeypat
     resp = await async_client.post(
         "/claims/92/files",
         headers={"X-Claim-Edit-Token": "valid-token"},
-        data={"file_role": "contract"},
         files={"file": ("contract.pdf", b"%PDF-1.4", "application/pdf")},
     )
 
@@ -387,7 +386,7 @@ async def test_upload_public_claim_file_ok(async_client, mock_session, monkeypat
     assert payload["id"] == 501
     assert payload["filename"] == "contract.pdf"
     assert payload["mime_type"] == "application/pdf"
-    assert payload["file_role"] == "contract"
+    assert payload["file_role"] == "supporting_document"
     assert len(created_files) == 1
     assert mock_session.flush.await_count == 1
     assert mock_session.commit.await_count == 1
@@ -417,7 +416,6 @@ async def test_upload_public_claim_file_validation_error(async_client, mock_sess
     resp = await async_client.post(
         "/claims/93/files",
         headers={"X-Claim-Edit-Token": "valid-token"},
-        data={"file_role": "contract"},
         files={"file": ("contract.gif", b"GIF89a", "image/gif")},
     )
 
@@ -477,6 +475,68 @@ async def test_get_public_claim_files_ok(async_client, mock_session, monkeypatch
     assert payload[0]["id"] == 1
     assert payload[0]["filename"] == "contract.pdf"
     assert payload[0]["file_role"] == "contract"
+
+
+async def test_delete_public_claim_file_ok(async_client, mock_session, monkeypatch):
+    claim = Claim(
+        id=95,
+        status="draft",
+        generation_state="ready",
+        price_rub=990,
+        input_text="OOO Vector did not pay for delivery",
+        edit_token_hash=hash_claim_edit_token("valid-token"),
+    )
+    claim_file = ClaimFile(
+        id=7,
+        claim_id=95,
+        filename="contract.pdf",
+        storage_path="claims/95/a.pdf",
+        mime_type="application/pdf",
+        file_role="supporting_document",
+        uploaded_at=datetime(2026, 2, 20, 12, 0, tzinfo=timezone.utc),
+    )
+    mock_session.execute.return_value = DummyResult(claim)
+
+    removed_files: list[ClaimFile] = []
+    deleted_paths: list[str] = []
+    created_events: list[ClaimEvent] = []
+
+    def add_side_effect(instance):
+        if isinstance(instance, ClaimEvent):
+            created_events.append(instance)
+
+    mock_session.add.side_effect = add_side_effect
+
+    async def fake_get_claim_file(_session, claim_id, file_id):
+        assert claim_id == 95
+        assert file_id == 7
+        return claim_file
+
+    async def fake_remove_claim_file(_session, target_file):
+        removed_files.append(target_file)
+
+    def fake_delete_claim_upload(_settings, storage_path):
+        deleted_paths.append(storage_path)
+
+    from product_api.routers import public_claims as public_claims_router
+
+    monkeypatch.setattr(public_claims_router, "get_claim_file", fake_get_claim_file)
+    monkeypatch.setattr(public_claims_router, "remove_claim_file", fake_remove_claim_file)
+    monkeypatch.setattr(public_claims_router, "delete_claim_upload", fake_delete_claim_upload)
+
+    resp = await async_client.delete(
+        "/claims/95/files/7",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+    )
+
+    assert resp.status_code == 204
+    assert removed_files == [claim_file]
+    assert deleted_paths == ["claims/95/a.pdf"]
+    assert mock_session.flush.await_count == 0
+    assert mock_session.commit.await_count == 1
+    assert len(created_events) == 1
+    assert created_events[0].event_type == "claim.file_deleted"
+    assert created_events[0].payload_json["file_id"] == 7
 
 
 async def test_pay_public_claim_ok(async_client, mock_session):
