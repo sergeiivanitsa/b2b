@@ -3,6 +3,7 @@ from datetime import date
 import pytest
 
 from product_api.claims.normalization import (
+    build_empty_normalized_data,
     build_step2_contract,
     merge_normalized_data_patch,
     normalize_case_type,
@@ -137,3 +138,46 @@ def test_merge_normalized_data_patch_rejects_invalid_inn():
             patch_values={"creditor_inn": "12345"},
             patch_fields={"creditor_inn"},
         )
+
+
+def test_merge_normalized_data_patch_accepts_sample_payload_with_dotted_dates_and_valid_inn():
+    merged, changed_fields = merge_normalized_data_patch(
+        build_empty_normalized_data(),
+        patch_values={
+            "creditor_name": "ООО «Ромашка»",
+            "debtor_name": "ООО «Вектор»",
+            "creditor_inn": "2721245963",
+            "debtor_inn": "1834049911",
+            "contract_signed": "да",
+            "contract_number": "17",
+            "contract_date": "12.01.2026",
+            "payment_due_date": "12.03.2026",
+            "debt_amount": "380000",
+            "partial_payments_present": "нет",
+            "documents_mentioned": [],
+        },
+        patch_fields={
+            "creditor_name",
+            "debtor_name",
+            "creditor_inn",
+            "debtor_inn",
+            "contract_signed",
+            "contract_number",
+            "contract_date",
+            "payment_due_date",
+            "debt_amount",
+            "partial_payments_present",
+            "documents_mentioned",
+        },
+    )
+
+    assert merged["creditor_name"] == "ООО «Ромашка»"
+    assert merged["debtor_name"] == "ООО «Вектор»"
+    assert merged["creditor_inn"] == "2721245963"
+    assert merged["debtor_inn"] == "1834049911"
+    assert merged["contract_date"] == "2026-01-12"
+    assert merged["payment_due_date"] == "2026-03-12"
+    assert merged["debt_amount"] == 380000
+    assert merged["missing_fields"] == []
+    assert "creditor_name" in changed_fields
+    assert "payment_due_date" in changed_fields

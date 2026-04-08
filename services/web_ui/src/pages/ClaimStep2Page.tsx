@@ -312,7 +312,7 @@ export function ClaimStep2Page() {
                   onChange={(event) =>
                     setFormState((current) => ({ ...current, creditorName: event.target.value }))
                   }
-                  className={missingFieldSet.has('creditor_name') ? 'is-missing' : ''}
+                  className={isFieldMissing(missingFieldSet, 'creditor_name', formState.creditorName) ? 'is-missing' : ''}
                 />
               </div>
               <div>
@@ -324,7 +324,44 @@ export function ClaimStep2Page() {
                   onChange={(event) =>
                     setFormState((current) => ({ ...current, debtorName: event.target.value }))
                   }
-                  className={missingFieldSet.has('debtor_name') ? 'is-missing' : ''}
+                  className={isFieldMissing(missingFieldSet, 'debtor_name', formState.debtorName) ? 'is-missing' : ''}
+                />
+              </div>
+            </div>
+
+            <div className="claims-form-grid">
+              <div>
+                <label htmlFor="creditor-inn">ИНН кредитора</label>
+                <input
+                  id="creditor-inn"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={formState.creditorInn}
+                  onChange={(event) => onInnChange('creditorInn', event.target.value)}
+                  className={
+                    isFieldMissing(missingFieldSet, 'creditor_inn', formState.creditorInn) || innErrors.creditorInn
+                      ? 'is-missing'
+                      : ''
+                  }
+                  placeholder="10 или 12 цифр"
+                />
+              </div>
+              <div>
+                <label htmlFor="debtor-inn">ИНН должника</label>
+                <input
+                  id="debtor-inn"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={formState.debtorInn}
+                  onChange={(event) => onInnChange('debtorInn', event.target.value)}
+                  className={
+                    isFieldMissing(missingFieldSet, 'debtor_inn', formState.debtorInn) || innErrors.debtorInn
+                      ? 'is-missing'
+                      : ''
+                  }
+                  placeholder="10 или 12 цифр"
                 />
               </div>
             </div>
@@ -438,7 +475,7 @@ export function ClaimStep2Page() {
                   onChange={(event) =>
                     setFormState((current) => ({ ...current, debtAmount: event.target.value }))
                   }
-                  className={missingFieldSet.has('debt_amount') ? 'is-missing' : ''}
+                  className={isFieldMissing(missingFieldSet, 'debt_amount', formState.debtAmount) ? 'is-missing' : ''}
                   placeholder="380 000"
                 />
               </div>
@@ -451,7 +488,7 @@ export function ClaimStep2Page() {
                   onChange={(event) =>
                     setFormState((current) => ({ ...current, paymentDueDate: event.target.value }))
                   }
-                  className={missingFieldSet.has('payment_due_date') ? 'is-missing' : ''}
+                  className={isFieldMissing(missingFieldSet, 'payment_due_date', formState.paymentDueDate) ? 'is-missing' : ''}
                 />
                 {derived.overdueDays !== null ? (
                   <p className="claims-step2-overdue">Просрочка: {derived.overdueDays} дней</p>
@@ -560,7 +597,7 @@ export function ClaimStep2Page() {
                       onChange={(event) =>
                         setFormState((current) => ({ ...current, penaltyRateText: event.target.value }))
                       }
-                      className={missingFieldSet.has('penalty_rate_text') ? 'is-missing' : ''}
+                      className={isFieldMissing(missingFieldSet, 'penalty_rate_text', formState.penaltyRateText) ? 'is-missing' : ''}
                       placeholder="0,1 % в день"
                     />
                   </>
@@ -759,6 +796,14 @@ function parseAmount(value: string): number | null {
 function normalizeOptionalField(value: string): string | null {
   const normalized = value.trim()
   return normalized || null
+}
+
+function isFieldMissing(
+  missingFieldSet: ReadonlySet<string>,
+  fieldName: string,
+  value: string,
+): boolean {
+  return missingFieldSet.has(fieldName) && normalizeOptionalField(value) === null
 }
 
 function normalizeInnInput(value: string): string {
