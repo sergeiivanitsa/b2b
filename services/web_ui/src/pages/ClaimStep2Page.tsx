@@ -366,38 +366,6 @@ export function ClaimStep2Page() {
               </div>
             </div>
 
-            <div className="claims-form-grid">
-              <div>
-                <label htmlFor="creditor-inn">ИНН кредитора</label>
-                <input
-                  id="creditor-inn"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  value={formState.creditorInn}
-                  onChange={(event) => onInnChange('creditorInn', event.target.value)}
-                  className={
-                    missingFieldSet.has('creditor_inn') || innErrors.creditorInn ? 'is-missing' : ''
-                  }
-                  placeholder="10 или 12 цифр"
-                />
-              </div>
-              <div>
-                <label htmlFor="debtor-inn">ИНН должника</label>
-                <input
-                  id="debtor-inn"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  value={formState.debtorInn}
-                  onChange={(event) => onInnChange('debtorInn', event.target.value)}
-                  className={
-                    missingFieldSet.has('debtor_inn') || innErrors.debtorInn ? 'is-missing' : ''
-                  }
-                  placeholder="10 или 12 цифр"
-                />
-              </div>
-            </div>
 
             <div className="claims-form-grid claims-form-grid--2">
               <fieldset>

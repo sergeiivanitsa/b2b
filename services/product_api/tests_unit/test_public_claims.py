@@ -309,6 +309,36 @@ async def test_update_public_claim_patch_invalid_case_type_returns_400(async_cli
     assert mock_session.commit.await_count == 0
 
 
+async def test_update_public_claim_patch_accepts_inn_fields(async_client, mock_session):
+    claim = Claim(
+        id=191,
+        status="draft",
+        generation_state="insufficient_data",
+        price_rub=990,
+        input_text="OOO Vector did not pay for delivery",
+        edit_token_hash=hash_claim_edit_token("valid-token"),
+    )
+    mock_session.execute.return_value = DummyResult(claim)
+
+    resp = await async_client.patch(
+        "/claims/191",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+        json={
+            "normalized_data": {
+                "creditor_inn": "2721245963",
+                "debtor_inn": "1834049911",
+            },
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["normalized_data"]["creditor_inn"] == "2721245963"
+    assert payload["normalized_data"]["debtor_inn"] == "1834049911"
+    assert mock_session.flush.await_count == 1
+    assert mock_session.commit.await_count == 1
+
+
 async def test_upload_public_claim_file_ok(async_client, mock_session, monkeypatch):
     claim = Claim(
         id=92,
