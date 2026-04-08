@@ -206,6 +206,11 @@ export function ClaimStep2Page() {
   }
 
   async function onDeleteFile(fileId: number) {
+<<<<<<< HEAD
+  if (!claimId || !editToken) {
+    setError('Сессия не найдена. Начните заново с шага 1.')
+    return
+=======
     if (!claimId || !editToken) {
       setError('Сессия не найдена. Начните заново с шага 1.')
       return
@@ -225,7 +230,24 @@ export function ClaimStep2Page() {
     } finally {
       setDeletingFileId(null)
     }
+>>>>>>> origin/main
   }
+
+  setDeletingFileId(fileId)
+  setNotice(null)
+  setError(null)
+  try {
+    await deleteClaimFile(claimId, editToken, fileId)
+    const nextFiles = await listClaimFiles(claimId, editToken)
+    setFiles(nextFiles)
+    setNotice('Файл удалён.')
+  } catch (deleteError) {
+    const detail = getApiHttpErrorDetail(deleteError)
+    setError(detail ?? 'Не удалось удалить файл.')
+  } finally {
+    setDeletingFileId(null)
+  }
+}
 
   function toggleDocument(documentCode: string) {
     setFormState((current) => {
@@ -271,11 +293,19 @@ export function ClaimStep2Page() {
   }
 
   async function onFileChange(event: ChangeEvent<HTMLInputElement>) {
+<<<<<<< HEAD
+  if (!claimId || !editToken) {
+    setError('Сессия не найдена. Начните заново с шага 1.')
+    event.target.value = ''
+    return
+  }
+=======
     if (!claimId || !editToken) {
       setError('Сессия не найдена. Начните заново с шага 1.')
       event.target.value = ''
       return
     }
+>>>>>>> origin/main
 
     const selectedFiles = Array.from(event.target.files ?? [])
     event.target.value = ''
@@ -711,7 +741,11 @@ export function ClaimStep2Page() {
                   ))}
                 </ul>
               ) : (
+<<<<<<< HEAD
+                <p className="claims-file-upload__empty">Файлы не загружены.</p>
+=======
                 <p className="claims-file-upload__empty">Файлы пока не загружены.</p>
+>>>>>>> origin/main
               )}
             </section>
           </section>
