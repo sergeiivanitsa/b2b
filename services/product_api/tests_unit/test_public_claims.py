@@ -407,7 +407,7 @@ async def test_upload_public_claim_file_validation_error(async_client, mock_sess
     mock_session.execute.return_value = DummyResult(claim)
 
     async def fake_save_claim_upload(_settings, *, claim_id, upload_file):
-        raise ValueError("unsupported mime type")
+        raise ValueError("unsupported extension")
 
     from product_api.routers import public_claims as public_claims_router
 
@@ -420,7 +420,37 @@ async def test_upload_public_claim_file_validation_error(async_client, mock_sess
     )
 
     assert resp.status_code == 400
-    assert resp.json()["detail"] == "unsupported mime type"
+    assert resp.json()["detail"] == "unsupported extension"
+    assert mock_session.flush.await_count == 0
+    assert mock_session.commit.await_count == 0
+
+
+async def test_upload_public_claim_file_too_large_returns_413(async_client, mock_session, monkeypatch):
+    claim = Claim(
+        id=193,
+        status="draft",
+        generation_state="ready",
+        price_rub=990,
+        input_text="OOO Vector did not pay for delivery",
+        edit_token_hash=hash_claim_edit_token("valid-token"),
+    )
+    mock_session.execute.return_value = DummyResult(claim)
+
+    async def fake_save_claim_upload(_settings, *, claim_id, upload_file):
+        raise ValueError("file is too large")
+
+    from product_api.routers import public_claims as public_claims_router
+
+    monkeypatch.setattr(public_claims_router, "save_claim_upload", fake_save_claim_upload)
+
+    resp = await async_client.post(
+        "/claims/193/files",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+        files={"file": ("contract.pdf", b"payload", "application/pdf")},
+    )
+
+    assert resp.status_code == 413
+    assert resp.json()["detail"] == "file is too large"
     assert mock_session.flush.await_count == 0
     assert mock_session.commit.await_count == 0
 

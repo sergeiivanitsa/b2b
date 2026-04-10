@@ -8,6 +8,7 @@ import { ClaimsProgressBar } from '../claims/components/ClaimsProgressBar'
 import {
   deleteClaimFile,
   getApiHttpErrorDetail,
+  getApiHttpErrorStatus,
   listClaimFiles,
   patchClaim,
   type ClaimCaseType,
@@ -83,17 +84,11 @@ const STEP2_REQUIRED_BASE_FIELDS = [
 const MAX_UPLOAD_FILE_SIZE_BYTES = 10 * 1024 * 1024
 const MAX_UPLOAD_FILE_SIZE_MB = Math.round(MAX_UPLOAD_FILE_SIZE_BYTES / (1024 * 1024))
 const ALLOWED_UPLOAD_EXTENSIONS = ['pdf', 'doc', 'docx', 'rtf', 'jpg', 'jpeg', 'png'] as const
-const ALLOWED_UPLOAD_MIME_TYPES = [
-  'application/pdf',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/rtf',
-  'text/rtf',
-  'image/jpeg',
-  'image/png',
-] as const
 const ALLOWED_UPLOAD_EXTENSIONS_SET: ReadonlySet<string> = new Set(ALLOWED_UPLOAD_EXTENSIONS)
-const ALLOWED_UPLOAD_MIME_TYPES_SET: ReadonlySet<string> = new Set(ALLOWED_UPLOAD_MIME_TYPES)
+const TOO_LARGE_UPLOAD_ERROR_MESSAGE =
+  '\u0424\u0430\u0439\u043b \u0441\u043b\u0438\u0448\u043a\u043e\u043c \u0431\u043e\u043b\u044c\u0448\u043e\u0439. \u041c\u0430\u043a\u0441\u0438\u043c\u0430\u043b\u044c\u043d\u044b\u0439 \u0440\u0430\u0437\u043c\u0435\u0440 \u2014 10 \u041c\u0411.'
+const EMPTY_UPLOAD_ERROR_MESSAGE =
+  '\u0424\u0430\u0439\u043b \u043f\u0443\u0441\u0442\u043e\u0439. \u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u043d\u0435\u043f\u0443\u0441\u0442\u043e\u0439 \u0444\u0430\u0439\u043b.'
 const FILE_INPUT_ACCEPT = [
   '.pdf',
   '.doc',
@@ -102,7 +97,6 @@ const FILE_INPUT_ACCEPT = [
   '.jpg',
   '.jpeg',
   '.png',
-  ...ALLOWED_UPLOAD_MIME_TYPES,
 ].join(',')
 
 export function ClaimStep2Page() {
@@ -305,7 +299,8 @@ export function ClaimStep2Page() {
           uploadedCount += 1
         } catch (uploadError) {
           const detail = getApiHttpErrorDetail(uploadError)
-          uploadErrors.push(mapUploadError(detail, file.name))
+          const status = getApiHttpErrorStatus(uploadError)
+          uploadErrors.push(mapUploadError(detail, file.name, status))
         }
       }
 
@@ -919,10 +914,8 @@ function validateUploadCandidate(file: File): string | null {
   }
 
   const extension = getFileExtension(file.name)
-  const mimeType = file.type.trim().toLowerCase()
   const hasAllowedExtension = extension ? ALLOWED_UPLOAD_EXTENSIONS_SET.has(extension) : false
-  const hasAllowedMimeType = mimeType ? ALLOWED_UPLOAD_MIME_TYPES_SET.has(mimeType) : false
-  if (!hasAllowedExtension && !hasAllowedMimeType) {
+  if (!hasAllowedExtension) {
     return `Файл "${file.name}" имеет неподдерживаемый формат. Разрешены: PDF, DOC, DOCX, RTF, JPG, JPEG, PNG.`
   }
   return null
@@ -937,19 +930,31 @@ function getFileExtension(fileName: string): string {
   return (parts[parts.length - 1] || '').trim().toLowerCase()
 }
 
-function mapUploadError(detail: string | null, fileName: string): string {
+function mapUploadError(detail: string | null, fileName: string, status: number | null): string {
+  if (status === 413) {
+    return TOO_LARGE_UPLOAD_ERROR_MESSAGE
+  }
   if (!detail) {
     return `Не удалось загрузить файл "${fileName}".`
   }
   const normalized = detail.toLowerCase()
-  if (normalized.includes('unsupported mime type')) {
+  if (
+    normalized.includes('unsupported mime type') ||
+    normalized.includes('unsupported extension')
+  ) {
+    if (normalized.includes('unsupported mime type')) {
+      const extension = getFileExtension(fileName)
+      if (extension && ALLOWED_UPLOAD_EXTENSIONS_SET.has(extension)) {
+        return `Не удалось загрузить файл "${fileName}".`
+      }
+    }
     return `Файл "${fileName}" имеет неподдерживаемый формат. Разрешены: PDF, DOC, DOCX, RTF, JPG, JPEG, PNG.`
   }
   if (normalized.includes('file is too large')) {
-    return `Файл "${fileName}" слишком большой. Максимум ${MAX_UPLOAD_FILE_SIZE_MB} МБ.`
+    return TOO_LARGE_UPLOAD_ERROR_MESSAGE
   }
   if (normalized.includes('file is empty')) {
-    return `Файл "${fileName}" пустой. Выберите другой файл.`
+    return EMPTY_UPLOAD_ERROR_MESSAGE
   }
   return `Файл "${fileName}": ${detail}.`
 }

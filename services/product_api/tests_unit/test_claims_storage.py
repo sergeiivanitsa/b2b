@@ -25,7 +25,7 @@ def _make_settings(tmp_path: Path):
         update={
             "claims_upload_dir": str(tmp_path),
             "claims_max_file_size_bytes": 64,
-            "claims_allowed_upload_mime_types": ["application/pdf", "image/png"],
+            "claims_allowed_upload_extensions": [".pdf", ".png"],
         }
     )
 
@@ -51,11 +51,11 @@ async def test_save_claim_upload_success(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_save_claim_upload_rejects_unsupported_mime(tmp_path: Path):
+async def test_save_claim_upload_rejects_unsupported_extension(tmp_path: Path):
     settings = _make_settings(tmp_path)
     upload = _make_upload("contract.gif", "image/gif", b"GIF89a")
 
-    with pytest.raises(ValueError, match="unsupported mime type"):
+    with pytest.raises(ValueError, match="unsupported extension"):
         await save_claim_upload(settings, claim_id=7, upload_file=upload)
 
 
@@ -65,7 +65,7 @@ async def test_save_claim_upload_rejects_too_large_file_and_cleans_up(tmp_path: 
         update={
             "claims_upload_dir": str(tmp_path),
             "claims_max_file_size_bytes": 4,
-            "claims_allowed_upload_mime_types": ["application/pdf"],
+            "claims_allowed_upload_extensions": [".pdf"],
         }
     )
     upload = _make_upload("contract.pdf", "application/pdf", b"12345")
@@ -84,9 +84,7 @@ async def test_save_claim_upload_accepts_docx_with_octet_stream_content_type(tmp
         update={
             "claims_upload_dir": str(tmp_path),
             "claims_max_file_size_bytes": 64,
-            "claims_allowed_upload_mime_types": [
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            ],
+            "claims_allowed_upload_extensions": [".docx"],
         }
     )
     upload = _make_upload("contract.docx", "application/octet-stream", b"PK\x03\x04")
@@ -96,6 +94,25 @@ async def test_save_claim_upload_accepts_docx_with_octet_stream_content_type(tmp
     assert stored.filename == "contract.docx"
     assert stored.mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     assert stored.storage_path.endswith(".docx")
+    assert (tmp_path / stored.storage_path).is_file()
+
+
+@pytest.mark.asyncio
+async def test_save_claim_upload_accepts_allowed_extension_with_nonstandard_mime(tmp_path: Path):
+    settings = get_settings().model_copy(
+        update={
+            "claims_upload_dir": str(tmp_path),
+            "claims_max_file_size_bytes": 64,
+            "claims_allowed_upload_extensions": [".pdf"],
+        }
+    )
+    upload = _make_upload("contract.pdf", "application/x-custom-pdf", b"%PDF-1.4")
+
+    stored = await save_claim_upload(settings, claim_id=10, upload_file=upload)
+
+    assert stored.filename == "contract.pdf"
+    assert stored.mime_type == "application/x-custom-pdf"
+    assert stored.storage_path.endswith(".pdf")
     assert (tmp_path / stored.storage_path).is_file()
 
 
