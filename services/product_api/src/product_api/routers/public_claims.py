@@ -442,7 +442,9 @@ async def upload_public_claim_file(
     except ValueError as exc:
         if stored_upload is not None:
             delete_claim_upload(settings, stored_upload.storage_path)
-        raise HTTPException(status_code=400, detail=str(exc))
+        detail = str(exc)
+        status_code = 413 if detail == "file is too large" else 400
+        raise HTTPException(status_code=status_code, detail=detail)
     except Exception:
         if stored_upload is not None:
             delete_claim_upload(settings, stored_upload.storage_path)

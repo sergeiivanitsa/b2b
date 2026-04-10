@@ -25,6 +25,18 @@ class Settings(BaseSettings):
         default=10 * 1024 * 1024,
         validation_alias="CLAIMS_MAX_FILE_SIZE_BYTES",
     )
+    claims_allowed_upload_extensions: list[str] = Field(
+        default=[
+            ".pdf",
+            ".doc",
+            ".docx",
+            ".rtf",
+            ".jpg",
+            ".jpeg",
+            ".png",
+        ],
+        validation_alias="CLAIMS_ALLOWED_UPLOAD_EXTENSIONS",
+    )
     claims_allowed_upload_mime_types: list[str] = Field(
         default=[
             "application/pdf",
@@ -104,6 +116,36 @@ class Settings(BaseSettings):
         if value <= 0:
             raise ValueError("CLAIMS_MAX_FILE_SIZE_BYTES must be > 0")
         return value
+
+    @field_validator("claims_allowed_upload_extensions", mode="before")
+    @classmethod
+    def _parse_claims_allowed_upload_extensions(cls, value: str | list[str]) -> list[str]:
+        if isinstance(value, str):
+            parts = [item.strip().lower() for item in value.split(",")]
+            return [item for item in parts if item]
+        return value
+
+    @field_validator("claims_allowed_upload_extensions")
+    @classmethod
+    def _validate_claims_allowed_upload_extensions(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError("CLAIMS_ALLOWED_UPLOAD_EXTENSIONS must contain strings only")
+            candidate = item.strip().lower()
+            if not candidate:
+                continue
+            if not candidate.startswith("."):
+                candidate = f".{candidate}"
+            if not candidate[1:].isalnum():
+                raise ValueError(
+                    "CLAIMS_ALLOWED_UPLOAD_EXTENSIONS must contain alphanumeric extensions only"
+                )
+            if candidate not in normalized:
+                normalized.append(candidate)
+        if not normalized:
+            raise ValueError("CLAIMS_ALLOWED_UPLOAD_EXTENSIONS must not be empty")
+        return normalized
 
     @field_validator("claims_allowed_upload_mime_types", mode="before")
     @classmethod

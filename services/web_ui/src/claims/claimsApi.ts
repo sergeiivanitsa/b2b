@@ -307,6 +307,13 @@ export function getApiHttpErrorDetail(error: unknown): string | null {
   return null
 }
 
+export function getApiHttpErrorStatus(error: unknown): number | null {
+  if (!(error instanceof ApiHttpError)) {
+    return null
+  }
+  return error.status
+}
+
 function normalizeClaimId(value: number): number {
   if (!Number.isInteger(value) || value <= 0) {
     throw new Error('claimId must be a positive integer')

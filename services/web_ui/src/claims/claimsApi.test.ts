@@ -4,6 +4,7 @@ import { ApiHttpError } from '../lib/api'
 import {
   createClaim,
   deleteClaimFile,
+  getApiHttpErrorStatus,
   generateClaimPreview,
   getApiHttpErrorDetail,
   getClaim,
@@ -198,6 +199,12 @@ describe('claimsApi', () => {
 
     const detail = getApiHttpErrorDetail(error)
     expect(detail).toBe('body.normalized_data.creditor_inn: Extra inputs are not permitted')
+  })
+
+  it('extracts status code from ApiHttpError', () => {
+    const error = new ApiHttpError(413, { detail: 'file is too large' })
+    expect(getApiHttpErrorStatus(error)).toBe(413)
+    expect(getApiHttpErrorStatus(new Error('oops'))).toBeNull()
   })
 
   it('POST /claims/{id}/files sends multipart body without file_role', async () => {

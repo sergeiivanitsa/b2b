@@ -3,7 +3,13 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { restoreClaimFromSession } from '../claims/claimRestore'
-import { deleteClaimFile, listClaimFiles, uploadClaimFile } from '../claims/claimsApi'
+import {
+  deleteClaimFile,
+  getApiHttpErrorDetail,
+  getApiHttpErrorStatus,
+  listClaimFiles,
+  uploadClaimFile,
+} from '../claims/claimsApi'
 import { ClaimStep2Page } from './ClaimStep2Page'
 
 vi.mock('../claims/claimRestore', () => ({
@@ -16,10 +22,13 @@ vi.mock('../claims/claimsApi', () => ({
   patchClaim: vi.fn(),
   uploadClaimFile: vi.fn(),
   getApiHttpErrorDetail: vi.fn(() => null),
+  getApiHttpErrorStatus: vi.fn(() => null),
 }))
 
 const mockedRestoreClaimFromSession = vi.mocked(restoreClaimFromSession)
 const mockedDeleteClaimFile = vi.mocked(deleteClaimFile)
+const mockedGetApiHttpErrorDetail = vi.mocked(getApiHttpErrorDetail)
+const mockedGetApiHttpErrorStatus = vi.mocked(getApiHttpErrorStatus)
 const mockedListClaimFiles = vi.mocked(listClaimFiles)
 const mockedUploadClaimFile = vi.mocked(uploadClaimFile)
 
@@ -147,5 +156,69 @@ describe('ClaimStep2Page', () => {
     await waitFor(() => {
       expect(mockedDeleteClaimFile).toHaveBeenCalledWith(12, 'token-1', 501)
     })
+  })
+
+  it('shows dedicated message for 413 upload error', async () => {
+    mockedUploadClaimFile.mockRejectedValueOnce(new Error('payload too large'))
+    mockedGetApiHttpErrorStatus.mockReturnValueOnce(413)
+
+    const { container, findByText } = render(
+      <MemoryRouter>
+        <ClaimStep2Page />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(mockedListClaimFiles).toHaveBeenCalledWith(12, 'token-1')
+    })
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+    const file = new File(['%PDF-1.4'], 'contract.pdf', { type: 'application/pdf' })
+    fireEvent.change(fileInput, { target: { files: [file] } })
+
+    expect(await findByText('Файл слишком большой. Максимальный размер — 10 МБ.')).toBeTruthy()
+  })
+
+  it('shows dedicated message for empty file upload error', async () => {
+    mockedUploadClaimFile.mockRejectedValueOnce(new Error('empty file'))
+    mockedGetApiHttpErrorDetail.mockReturnValueOnce('file is empty')
+
+    const { container, findByText } = render(
+      <MemoryRouter>
+        <ClaimStep2Page />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(mockedListClaimFiles).toHaveBeenCalledWith(12, 'token-1')
+    })
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+    const file = new File(['%PDF-1.4'], 'contract.pdf', { type: 'application/pdf' })
+    fireEvent.change(fileInput, { target: { files: [file] } })
+
+    expect(await findByText('Файл пустой. Выберите непустой файл.')).toBeTruthy()
+  })
+
+  it('does not show unsupported format for allowed extension on mime error', async () => {
+    mockedUploadClaimFile.mockRejectedValueOnce(new Error('unsupported mime'))
+    mockedGetApiHttpErrorDetail.mockReturnValueOnce('unsupported mime type')
+
+    const { container, findByText, queryByText } = render(
+      <MemoryRouter>
+        <ClaimStep2Page />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(mockedListClaimFiles).toHaveBeenCalledWith(12, 'token-1')
+    })
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+    const file = new File(['%PDF-1.4'], 'contract.pdf', { type: 'application/pdf' })
+    fireEvent.change(fileInput, { target: { files: [file] } })
+
+    expect(await findByText(/contract\.pdf/)).toBeTruthy()
+    expect(queryByText(/неподдерживаемый формат/i)).toBeNull()
   })
 })

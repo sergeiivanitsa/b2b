@@ -370,7 +370,7 @@ async def test_post_claims_files_upload_and_list(async_client, engine):
         assert event[1]["file_id"] == uploaded["id"]
 
 
-async def test_post_claims_files_rejects_unsupported_mime(async_client):
+async def test_post_claims_files_rejects_unsupported_extension(async_client):
     create_resp = await async_client.post(
         "/claims",
         json={"input_text": "OOO Vector did not pay for delivery"},
@@ -385,7 +385,7 @@ async def test_post_claims_files_rejects_unsupported_mime(async_client):
     )
 
     assert upload_resp.status_code == 400
-    assert upload_resp.json()["detail"] == "unsupported mime type"
+    assert upload_resp.json()["detail"] == "unsupported extension"
 
 
 @pytest.mark.parametrize(
@@ -422,6 +422,26 @@ async def test_post_claims_files_accepts_supported_formats(async_client, filenam
         "image/jpeg",
         "image/png",
     }
+
+
+async def test_post_claims_files_accepts_supported_extension_with_nonstandard_mime(async_client):
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    upload_resp = await async_client.post(
+        f"/claims/{created['claim_id']}/files",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+        files={"file": ("contract.pdf", b"%PDF-1.4", "application/x-custom-pdf")},
+    )
+
+    assert upload_resp.status_code == 200
+    payload = upload_resp.json()
+    assert payload["filename"] == "contract.pdf"
+    assert payload["mime_type"] == "application/x-custom-pdf"
 
 
 async def test_delete_claim_file_removes_record_and_storage(async_client, engine):
