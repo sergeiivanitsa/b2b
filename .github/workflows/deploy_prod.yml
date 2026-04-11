@@ -61,7 +61,9 @@ jobs:
           # Apply DB migrations before starting API (prevents "column does not exist" crashes)
           docker compose -f docker-compose.product.yml --env-file .env.product run --rm --no-deps --build product_api sh -lc "cd /app/services/product_api && alembic -c alembic.ini upgrade head"
 
-          docker compose -f docker-compose.product.yml --env-file .env.product up -d --build
+          docker compose -f docker-compose.product.yml --env-file .env.product build product_api
+          docker compose -f docker-compose.product.yml --env-file .env.product up -d --force-recreate --no-deps product_api
+          docker inspect -f 'NAME={{.Name}} CREATED={{.Created}} STARTED={{.State.StartedAt}} IMAGE={{.Image}}' b2b-product_api-1
           # health retry ~60s (12*5s)
           ok=0
           for i in $(seq 1 12); do
