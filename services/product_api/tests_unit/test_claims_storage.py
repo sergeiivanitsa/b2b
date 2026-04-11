@@ -31,7 +31,8 @@ def _make_settings(tmp_path: Path):
 
 
 def test_sanitize_original_filename_removes_path_and_unsafe_chars():
-    assert sanitize_original_filename("../../foo/bar contract?.pdf") == "bar_contract_.pdf"
+    assert sanitize_original_filename("../../foo/bar contract?.pdf") == "bar contract_.pdf"
+    assert sanitize_original_filename("договор.pdf") == "договор.pdf"
     assert sanitize_original_filename("") == "file"
 
 
@@ -112,6 +113,24 @@ async def test_save_claim_upload_accepts_allowed_extension_with_nonstandard_mime
 
     assert stored.filename == "contract.pdf"
     assert stored.mime_type == "application/x-custom-pdf"
+    assert stored.storage_path.endswith(".pdf")
+    assert (tmp_path / stored.storage_path).is_file()
+
+
+@pytest.mark.asyncio
+async def test_save_claim_upload_accepts_cyrillic_filename_and_preserves_name(tmp_path: Path):
+    settings = get_settings().model_copy(
+        update={
+            "claims_upload_dir": str(tmp_path),
+            "claims_max_file_size_bytes": 64,
+            "claims_allowed_upload_extensions": [".pdf"],
+        }
+    )
+    upload = _make_upload("договор.pdf", "application/pdf", b"%PDF-1.4")
+
+    stored = await save_claim_upload(settings, claim_id=11, upload_file=upload)
+
+    assert stored.filename == "договор.pdf"
     assert stored.storage_path.endswith(".pdf")
     assert (tmp_path / stored.storage_path).is_file()
 
