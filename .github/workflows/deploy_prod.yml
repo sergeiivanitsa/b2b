@@ -1,11 +1,9 @@
 name: Deploy prod
 
 on:
-  workflow_run:
-    workflows:
-      - Product API unit tests
-    types:
-      - completed
+  push:
+    branches:
+      - main
 
 concurrency:
   group: prod-deploy
@@ -13,11 +11,6 @@ concurrency:
 
 jobs:
   deploy:
-    if: >-
-      ${{
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.head_branch == 'main'
-      }}
     runs-on: ubuntu-latest
     steps:
       - name: Start SSH agent
@@ -34,7 +27,7 @@ jobs:
       - name: Checkout deploy commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
