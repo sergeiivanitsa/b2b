@@ -444,6 +444,26 @@ async def test_post_claims_files_accepts_supported_extension_with_nonstandard_mi
     assert payload["mime_type"] == "application/x-custom-pdf"
 
 
+async def test_post_claims_files_accepts_cyrillic_filename(async_client):
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    upload_resp = await async_client.post(
+        f"/claims/{created['claim_id']}/files",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+        files={"file": ("договор.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+
+    assert upload_resp.status_code == 200
+    payload = upload_resp.json()
+    assert payload["filename"] == "договор.pdf"
+    assert payload["mime_type"] == "application/pdf"
+
+
 async def test_delete_claim_file_removes_record_and_storage(async_client, engine):
     settings = get_settings()
     create_resp = await async_client.post(

@@ -8,8 +8,9 @@ from fastapi import UploadFile
 from product_api.settings import Settings
 
 UPLOAD_CHUNK_SIZE = 1024 * 1024
-_FILENAME_ALLOWED_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
+_MAX_DISPLAY_FILENAME_LEN = 120
 _EXTENSION_ALLOWED_PATTERN = re.compile(r"^\.[A-Za-z0-9]{1,10}$")
+_DANGEROUS_FILENAME_CHARS = {'<', '>', ':', '"', '|', '?', '*'}
 _DEFAULT_MIME_BY_EXTENSION = {
     ".pdf": "application/pdf",
     ".doc": "application/msword",
@@ -30,12 +31,26 @@ class StoredClaimUpload:
 
 
 def sanitize_original_filename(raw_filename: str | None) -> str:
-    normalized = (raw_filename or "").strip().replace("\\", "/")
-    basename = normalized.split("/")[-1] if normalized else ""
-    safe = _FILENAME_ALLOWED_PATTERN.sub("_", basename).strip("._")
-    if not safe:
-        return "file"
-    return safe[:120]
+    return sanitize_display_filename(raw_filename, fallback_extension="")
+
+
+def sanitize_display_filename(raw_filename: str | None, *, fallback_extension: str) -> str:
+    basename = _extract_upload_basename(raw_filename)
+    cleaned: list[str] = []
+    for char in basename:
+        if char in {"/", "\\"}:
+            continue
+        if ord(char) < 32 or ord(char) == 127:
+            continue
+        if char in _DANGEROUS_FILENAME_CHARS:
+            cleaned.append("_")
+            continue
+        cleaned.append(char)
+
+    safe = "".join(cleaned).strip().strip(".")
+    if not safe or safe in {".", ".."}:
+        return f"file{fallback_extension}" if fallback_extension else "file"
+    return _truncate_display_filename(safe, fallback_extension)
 
 
 def normalize_content_type(content_type: str | None) -> str:
@@ -50,11 +65,12 @@ async def save_claim_upload(
     claim_id: int,
     upload_file: UploadFile,
 ) -> StoredClaimUpload:
-    filename = sanitize_original_filename(upload_file.filename)
-    extension = _safe_extension(filename)
+    original_basename = _extract_upload_basename(upload_file.filename)
+    extension = _safe_extension(original_basename)
     allowed_extensions = set(settings.claims_allowed_upload_extensions)
     if not extension or extension not in allowed_extensions:
         raise ValueError("unsupported extension")
+    filename = sanitize_display_filename(upload_file.filename, fallback_extension=extension)
 
     mime_type = normalize_content_type(upload_file.content_type)
     default_mime_type = _DEFAULT_MIME_BY_EXTENSION.get(extension, "application/octet-stream")
@@ -116,6 +132,25 @@ def _safe_extension(filename: str) -> str:
     if _EXTENSION_ALLOWED_PATTERN.fullmatch(suffix):
         return suffix
     return ""
+
+
+def _extract_upload_basename(raw_filename: str | None) -> str:
+    normalized = (raw_filename or "").replace("\\", "/")
+    if not normalized:
+        return ""
+    return normalized.split("/")[-1].strip()
+
+
+def _truncate_display_filename(filename: str, extension: str) -> str:
+    if len(filename) <= _MAX_DISPLAY_FILENAME_LEN:
+        return filename
+    if extension and filename.lower().endswith(extension):
+        max_stem_len = _MAX_DISPLAY_FILENAME_LEN - len(extension)
+        stem = filename[:max_stem_len].rstrip(" .")
+        if stem:
+            return f"{stem}{extension}"
+        return f"file{extension}"
+    return filename[:_MAX_DISPLAY_FILENAME_LEN].rstrip(" .")
 
 
 def _is_within_dir(candidate: Path, root: Path) -> bool:
