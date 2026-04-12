@@ -3,8 +3,10 @@ import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { restoreClaimFromSession } from '../claims/claimRestore'
+import { STEP3_DOCUMENTS } from '../claims/constants/step3Documents'
 import { ClaimsBrand } from '../claims/components/ClaimsBrand'
 import { ClaimsProgressBar } from '../claims/components/ClaimsProgressBar'
+import { useStep3DocQueueStatus } from '../claims/hooks/useStep3DocQueueStatus'
 import {
   generateClaimPreview,
   getApiHttpErrorDetail,
@@ -20,30 +22,6 @@ const LEFT_CHECKLIST = [
   'подготовил структуру претензии',
 ]
 
-const RIGHT_CHECKLIST = [
-  {
-    label:
-      'проверенная опытным юристом и сформированная с соблюдением претензионного порядка досудебная претензия в PDF',
-    done: true,
-  },
-  {
-    label: 'редактируемая версия досудебной претензии в формате DOCX',
-    done: true,
-  },
-  {
-    label: 'сопроводительное письмо',
-    done: false,
-  },
-  {
-    label: 'таблица расчета неустойки',
-    done: false,
-  },
-  {
-    label: 'инструкция по дальнейшей работе с претензией',
-    done: false,
-  },
-]
-
 export function ClaimStep3Page() {
   const navigate = useNavigate()
 
@@ -54,6 +32,19 @@ export function ClaimStep3Page() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState(92)
+  const step3DocumentIds = useMemo(
+    () => STEP3_DOCUMENTS.map((item) => item.id),
+    [],
+  )
+  const docQueueRunKey = useMemo(
+    () => (claimId && editToken ? `${claimId}:${editToken}` : 'claim-step3'),
+    [claimId, editToken],
+  )
+  const { statusById } = useStep3DocQueueStatus({
+    itemIds: step3DocumentIds,
+    runKey: docQueueRunKey,
+    enabled: !isLoading,
+  })
 
   useEffect(() => {
     let isCanceled = false
@@ -185,11 +176,23 @@ export function ClaimStep3Page() {
           <article>
             <h2>Формируем пакет документов:</h2>
             <ul className="claims-doc-queue">
-              {RIGHT_CHECKLIST.map((item) => (
-                <li key={item.label} className={item.done ? 'is-done' : 'is-pending'}>
-                  {item.label}
-                </li>
-              ))}
+              {STEP3_DOCUMENTS.map((item) => {
+                const status = statusById[item.id] ?? 'loading'
+                return (
+                  <li
+                    key={item.id}
+                    className="claims-doc-queue__item"
+                    data-doc-id={item.id}
+                    data-status={status}
+                    aria-busy={status === 'loading'}
+                  >
+                    <span className="claims-doc-queue__status" aria-hidden="true">
+                      {status === 'done' ? '☑' : '◌'}
+                    </span>
+                    <span className="claims-doc-queue__label">{item.label}</span>
+                  </li>
+                )
+              })}
             </ul>
           </article>
         </section>

@@ -1579,16 +1579,53 @@ body.is-chat-page #root {
   margin-right: 9px;
 }
 
-.claims-doc-queue li.is-done::before {
-  content: "☑";
-  color: #00a229;
-  margin-right: 9px;
+.claims-doc-queue__item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
 }
 
-.claims-doc-queue li.is-pending::before {
-  content: "◌";
-  color: #b0b5bd;
-  margin-right: 9px;
+.claims-doc-queue__status {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+  line-height: 1;
+}
+
+.claims-doc-queue__label {
+  min-width: 0;
+}
+
+.claims-doc-queue__item[data-status="loading"] .claims-doc-queue__status {
+  color: transparent;
+  border-radius: 50%;
+  border: 2px solid #cfd5db;
+  border-right-color: #b8c0c8;
+  border-top-color: #b8c0c8;
+  animation: claims-doc-queue-spinner 1.2s linear infinite;
+}
+
+.claims-doc-queue__item[data-status="done"] .claims-doc-queue__status {
+  color: #00a229;
+  font-weight: 700;
+}
+
+@keyframes claims-doc-queue-spinner {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .claims-doc-queue__item[data-status="loading"] .claims-doc-queue__status {
+    animation: none;
+  }
 }
 
 .claims-step3-contact {
