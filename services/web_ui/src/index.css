@@ -1217,7 +1217,7 @@ body.is-chat-page #root {
     grid-column: 2;
     grid-row: 2 / span 2;
     align-self: start;
-    padding-top: 10px;
+    padding-top: 0px;
   }
 }
 
