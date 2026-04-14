@@ -99,21 +99,25 @@ export function ClaimStep1Page() {
               <ul>
                 <li>задаст важные уточняющие вопросы</li>
                 <li>подготовит документ с учётом норм ГК РФ</li>
-                <li>финальную версию проверит опытный юрист по претензионной работе</li>
+                <li>
+                  финальную версию проверит опытный юрист
+                  <br />
+                  по претензионной работе
+                </li>
               </ul>
             </section>
           </div>
 
           <div className="claims-hero__right">
             <form className="claims-step1-form" onSubmit={onSubmit}>
-              <label htmlFor="claim-input-text">Коротко опишите ситуацию:</label>
               <textarea
                 id="claim-input-text"
                 value={inputText}
                 onChange={(event) => setInputText(event.target.value)}
-                placeholder="кто должен, по какому договору, сумму долга и когда истёк срок оплаты?"
+                placeholder="Коротко опишите ситуацию: кто должен, по какому договору, сумму долга и когда истёк срок оплаты?"
                 maxLength={4000}
                 required
+                aria-label="Коротко опишите ситуацию"
               />
               <p className="claims-step1-form__example">{STEP_1_EXAMPLE}</p>
               <button type="submit" disabled={isSubmitting}>
