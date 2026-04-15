@@ -64,6 +64,20 @@ class Step2Out(BaseModel):
     derived: Step2DerivedOut
 
 
+class PreviewHeaderPartyOut(BaseModel):
+    kind: str
+    company_name: str | None
+    position_raw: str | None
+    person_name: str | None
+    line1: str
+    line2: str | None
+
+
+class PreviewHeaderOut(BaseModel):
+    from_party: PreviewHeaderPartyOut
+    to_party: PreviewHeaderPartyOut
+
+
 class ClaimPreviewOut(BaseModel):
     claim_id: int
     generation_state: str
@@ -73,3 +87,4 @@ class ClaimPreviewOut(BaseModel):
     blocked_blocks: list[str]
     generated_preview_text: str
     missing_fields: list[str]
+    preview_header: PreviewHeaderOut

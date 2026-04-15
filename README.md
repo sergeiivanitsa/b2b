@@ -223,10 +223,21 @@ Required claims settings in `services/product_api/.env`:
 - `CLAIMS_MAX_FILE_SIZE_BYTES`
 - `CLAIMS_ALLOWED_UPLOAD_MIME_TYPES`
 - `CLAIMS_ADMIN_EMAILS`
+- `DATANEWTON_ENABLED`
+- `DATANEWTON_BASE_URL`
+- `DATANEWTON_API_KEY`
+- `DATANEWTON_TIMEOUT_SECONDS`
+- `DATANEWTON_RETRY_COUNT`
+- `DATANEWTON_CACHE_TTL_SECONDS`
 
 Default local values are documented in:
 - `services/product_api/.env.example`
 - `docker-compose.yml`
+
+Preview header enrichment notes:
+- Step 4 header is returned from backend as `preview_header` (public claim snapshot + preview snapshot).
+- Enrichment is triggered on Step 2 patch when `creditor_inn`, `debtor_inn`, `creditor_name`, or `debtor_name` changes (including INN removal).
+- If DataNewton is disabled/unavailable, backend still builds non-null header via deterministic formatter + fallback.
 
 ## Upload persistence and deploy notes
 - Docker local dev uses named volume:

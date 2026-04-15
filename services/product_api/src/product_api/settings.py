@@ -69,6 +69,21 @@ class Settings(BaseSettings):
     invite_ttl_seconds: int = Field(default=604800, validation_alias="INVITE_TTL_SECONDS")
     chat_context_limit: int = Field(default=20, validation_alias="CHAT_CONTEXT_LIMIT")
     gateway_timeout_seconds: int = Field(default=30, validation_alias="GATEWAY_TIMEOUT_SECONDS")
+    datanewton_enabled: bool = Field(default=False, validation_alias="DATANEWTON_ENABLED")
+    datanewton_base_url: str = Field(
+        default="https://api.datanewton.ru",
+        validation_alias="DATANEWTON_BASE_URL",
+    )
+    datanewton_api_key: str | None = Field(default=None, validation_alias="DATANEWTON_API_KEY")
+    datanewton_timeout_seconds: int = Field(
+        default=10,
+        validation_alias="DATANEWTON_TIMEOUT_SECONDS",
+    )
+    datanewton_retry_count: int = Field(default=1, validation_alias="DATANEWTON_RETRY_COUNT")
+    datanewton_cache_ttl_seconds: int = Field(
+        default=300,
+        validation_alias="DATANEWTON_CACHE_TTL_SECONDS",
+    )
     max_message_chars: int = Field(default=4000, validation_alias="MAX_MESSAGE_CHARS")
     rate_limit_company_rpm: int = Field(default=60, validation_alias="RATE_LIMIT_COMPANY_RPM")
     rate_limit_user_rpm: int = Field(default=30, validation_alias="RATE_LIMIT_USER_RPM")
@@ -195,6 +210,37 @@ class Settings(BaseSettings):
             if candidate not in normalized:
                 normalized.append(candidate)
         return normalized
+
+    @field_validator("datanewton_base_url")
+    @classmethod
+    def _validate_datanewton_base_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        if not normalized:
+            raise ValueError("DATANEWTON_BASE_URL must not be empty")
+        if not (normalized.startswith("http://") or normalized.startswith("https://")):
+            raise ValueError("DATANEWTON_BASE_URL must start with http:// or https://")
+        return normalized
+
+    @field_validator("datanewton_timeout_seconds")
+    @classmethod
+    def _validate_datanewton_timeout_seconds(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("DATANEWTON_TIMEOUT_SECONDS must be > 0")
+        return value
+
+    @field_validator("datanewton_retry_count")
+    @classmethod
+    def _validate_datanewton_retry_count(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("DATANEWTON_RETRY_COUNT must be >= 0")
+        return value
+
+    @field_validator("datanewton_cache_ttl_seconds")
+    @classmethod
+    def _validate_datanewton_cache_ttl_seconds(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("DATANEWTON_CACHE_TTL_SECONDS must be >= 0")
+        return value
 
 
 @lru_cache

@@ -277,6 +277,7 @@ class Claim(Base):
     case_type: Mapped[str | None] = mapped_column(String(32))
     input_text: Mapped[str] = mapped_column(Text, nullable=False)
     normalized_data_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    preview_header_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     generation_notes_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     allowed_blocks_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     blocked_blocks_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)

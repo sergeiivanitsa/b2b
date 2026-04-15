@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 
 from product_api.claims.security import hash_claim_edit_token
 from product_api.models import Claim, ClaimEvent
@@ -65,7 +65,7 @@ async def test_generate_preview_success(async_client, mock_session, monkeypatch)
         _settings, *, claim_id, input_text, case_type, normalized_data, decision
     ):
         return {
-            "generated_preview_text": "Черновик претензии",
+            "generated_preview_text": "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё",
             "used_fallback": False,
             "error_code": None,
         }
@@ -89,8 +89,10 @@ async def test_generate_preview_success(async_client, mock_session, monkeypatch)
     assert payload["claim_id"] == 301
     assert payload["generation_state"] == "ready"
     assert payload["manual_review_required"] is False
-    assert payload["generated_preview_text"] == "Черновик претензии"
-    assert claim.generated_preview_text == "Черновик претензии"
+    assert payload["generated_preview_text"] == "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё"
+    assert payload["preview_header"]["from_party"]["line1"] == "Руководителя OOO Alpha"
+    assert payload["preview_header"]["to_party"]["line1"] == "Руководителю OOO Vector"
+    assert claim.generated_preview_text == "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё"
     assert mock_session.flush.await_count == 1
     assert mock_session.commit.await_count == 1
     assert len(created_events) == 1
@@ -144,7 +146,7 @@ async def test_get_preview_success(async_client, mock_session):
     claim.risk_flags_json = ["no_supporting_documents"]
     claim.allowed_blocks_json = ["header", "facts"]
     claim.blocked_blocks_json = ["attachments"]
-    claim.generated_preview_text = "Черновик претензии"
+    claim.generated_preview_text = "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё"
     mock_session.execute.return_value = DummyResult(claim)
 
     resp = await async_client.get(
@@ -157,7 +159,9 @@ async def test_get_preview_success(async_client, mock_session):
     assert payload["claim_id"] == 303
     assert payload["manual_review_required"] is True
     assert payload["risk_flags"] == ["no_supporting_documents"]
-    assert payload["generated_preview_text"] == "Черновик претензии"
+    assert payload["generated_preview_text"] == "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё"
+    assert payload["preview_header"]["from_party"]["line1"] == "Руководителя OOO Alpha"
+    assert payload["preview_header"]["to_party"]["line1"] == "Руководителю OOO Vector"
 
 
 async def test_get_preview_insufficient_data_returns_409(async_client, mock_session):
