@@ -12,8 +12,15 @@ from product_api.claims.notifications import (
     NotificationSendError,
     notify_admins_about_paid_claim,
 )
+from product_api.claims.preview_header_enrichment import rebuild_claim_preview_header
 from product_api.claims.rules import evaluate_claim_rules
-from product_api.claims.schemas import ClaimContactIn, ClaimPatchIn, ClaimPreviewOut, Step2Out
+from product_api.claims.schemas import (
+    ClaimContactIn,
+    ClaimPatchIn,
+    ClaimPreviewOut,
+    PreviewHeaderOut,
+    Step2Out,
+)
 from product_api.claims.storage import delete_claim_upload, save_claim_upload
 from product_api.db.session import get_session
 from product_api.gateway_client import GatewayError
@@ -56,6 +63,7 @@ class PublicClaimOut(BaseModel):
     client_email: str | None
     case_type: str | None
     normalized_data: dict[str, Any] | None
+    preview_header: PreviewHeaderOut
     step2: Step2Out
     created_at: str | None
     updated_at: str | None
@@ -205,6 +213,11 @@ async def update_public_claim(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    preview_header_rebuilt = False
+    if _must_rebuild_preview_header(changed_fields) or not isinstance(claim.preview_header_json, dict):
+        await rebuild_claim_preview_header(settings, claim)
+        preview_header_rebuilt = True
+
     snapshot = build_public_claim_snapshot(claim)
     await append_claim_event(
         session,
@@ -215,6 +228,7 @@ async def update_public_claim(
             "missing_fields_count": len(snapshot["step2"]["missing_fields"]),
             "generation_state": claim.generation_state,
             "derived": snapshot["step2"]["derived"],
+            "preview_header_rebuilt": preview_header_rebuilt,
         },
     )
     await session.commit()
@@ -254,6 +268,9 @@ async def generate_public_claim_preview(
     claim: Claim = Depends(require_claim_access),
     session: AsyncSession = Depends(get_session),
 ):
+    if not isinstance(claim.preview_header_json, dict):
+        await rebuild_claim_preview_header(settings, claim)
+
     decision = evaluate_claim_rules(
         case_type=claim.case_type,
         normalized_data=claim.normalized_data_json if isinstance(claim.normalized_data_json, dict) else None,
@@ -330,8 +347,17 @@ async def generate_public_claim_preview(
 @router.get("/claims/{claim_id}/preview", response_model=ClaimPreviewOut)
 async def get_public_claim_preview(
     claim: Claim = Depends(require_claim_access),
+    session: AsyncSession = Depends(get_session),
 ):
+    preview_header_rebuilt = False
+    if not isinstance(claim.preview_header_json, dict):
+        await rebuild_claim_preview_header(settings, claim)
+        preview_header_rebuilt = True
+
     preview = build_public_claim_preview_snapshot(claim)
+    if preview_header_rebuilt:
+        await session.commit()
+
     if claim.generation_state == "insufficient_data":
         raise HTTPException(
             status_code=409,
@@ -489,3 +515,13 @@ async def delete_public_claim_file(
 
     delete_claim_upload(settings, storage_path)
     return Response(status_code=204)
+
+
+def _must_rebuild_preview_header(changed_fields: list[str]) -> bool:
+    rebuild_trigger_fields = {
+        "normalized_data.creditor_inn",
+        "normalized_data.debtor_inn",
+        "normalized_data.creditor_name",
+        "normalized_data.debtor_name",
+    }
+    return any(field_name in rebuild_trigger_fields for field_name in changed_fields)

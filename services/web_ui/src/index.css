@@ -1786,6 +1786,14 @@ body.is-chat-page #root {
   color: #2f333a;
 }
 
+.claims-document-party__line--line1 {
+  font-weight: 600;
+}
+
+.claims-document-party__line--line2 {
+  font-weight: 400;
+}
+
 .claims-document-divider {
   height: 1px;
   background: #bfc3c9;

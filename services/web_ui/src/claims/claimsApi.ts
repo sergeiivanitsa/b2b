@@ -40,6 +40,20 @@ export type ClaimNormalizedData = {
   missing_fields?: string[]
 }
 
+export type ClaimPreviewHeaderParty = {
+  kind: string
+  company_name: string | null
+  position_raw: string | null
+  person_name: string | null
+  line1: string
+  line2: string | null
+}
+
+export type ClaimPreviewHeader = {
+  from_party: ClaimPreviewHeaderParty
+  to_party: ClaimPreviewHeaderParty
+}
+
 export type PublicClaimSnapshot = {
   id: number
   status: string
@@ -50,6 +64,7 @@ export type PublicClaimSnapshot = {
   client_email: string | null
   case_type: ClaimCaseType | null
   normalized_data: ClaimNormalizedData | null
+  preview_header?: ClaimPreviewHeader | null
   step2: PublicClaimStep2
   created_at: string | null
   updated_at: string | null
@@ -67,6 +82,7 @@ export type ClaimPreviewSnapshot = {
   blocked_blocks: string[]
   generated_preview_text: string
   missing_fields: string[]
+  preview_header?: ClaimPreviewHeader | null
 }
 
 export type ClaimFileSnapshot = {

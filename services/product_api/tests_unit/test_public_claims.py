@@ -339,6 +339,169 @@ async def test_update_public_claim_patch_accepts_inn_fields(async_client, mock_s
     assert mock_session.commit.await_count == 1
 
 
+async def test_update_public_claim_patch_rebuilds_header_when_inn_removed_after_enrichment(
+    async_client,
+    mock_session,
+    monkeypatch,
+):
+    claim = Claim(
+        id=192,
+        status="draft",
+        generation_state="ready",
+        price_rub=990,
+        input_text="OOO Vector did not pay for delivery",
+        edit_token_hash=hash_claim_edit_token("valid-token"),
+        normalized_data_json={
+            "creditor_name": "ООО «Альфа»",
+            "creditor_inn": "7701234567",
+            "debtor_name": "ООО «Вектор»",
+            "debtor_inn": "7801234567",
+            "contract_signed": True,
+            "contract_number": "17",
+            "contract_date": "2026-01-12",
+            "debt_amount": 380000,
+            "payment_due_date": "2026-02-01",
+            "partial_payments_present": False,
+            "partial_payments": [],
+            "penalty_exists": False,
+            "penalty_rate_text": None,
+            "documents_mentioned": ["contract"],
+            "missing_fields": [],
+        },
+    )
+    mock_session.execute.return_value = DummyResult(claim)
+
+    from product_api.claims import preview_header_enrichment
+    from product_api.routers import public_claims as public_claims_router
+
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_enabled", True)
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_api_key", "test-key")
+
+    async def fake_fetch(_settings, inn):
+        if inn == "7701234567":
+            return {
+                "kind": "legal_entity",
+                "company_name": "ООО «Альфа»",
+                "position_raw": "генеральный директор",
+                "person_name": "Петров Петр Петрович",
+                "address": None,
+            }
+        if inn == "7801234567":
+            return {
+                "kind": "legal_entity",
+                "company_name": "ООО «Вектор»",
+                "position_raw": "директор",
+                "person_name": "Иванов Иван Иванович",
+                "address": None,
+            }
+        return None
+
+    monkeypatch.setattr(preview_header_enrichment, "fetch_datanewton_party_by_inn", fake_fetch)
+
+    enriched_resp = await async_client.patch(
+        "/claims/192",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+        json={
+            "normalized_data": {
+                "creditor_name": "ООО «Альфа»",
+                "creditor_inn": "7701234567",
+                "debtor_name": "ООО «Вектор»",
+                "debtor_inn": "7801234567",
+            }
+        },
+    )
+    assert enriched_resp.status_code == 200
+    enriched_payload = enriched_resp.json()
+    assert enriched_payload["preview_header"]["from_party"]["line1"] == "Генерального директора ООО «Альфа»"
+    assert enriched_payload["preview_header"]["from_party"]["line2"] == "Петров Петр Петрович"
+
+    cleared_inn_resp = await async_client.patch(
+        "/claims/192",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+        json={
+            "normalized_data": {
+                "creditor_inn": None,
+                "debtor_inn": None,
+            }
+        },
+    )
+    assert cleared_inn_resp.status_code == 200
+    cleared_payload = cleared_inn_resp.json()
+    assert cleared_payload["preview_header"]["from_party"]["line1"] == "Руководителя ООО «Альфа»"
+    assert cleared_payload["preview_header"]["from_party"]["line2"] is None
+    assert cleared_payload["preview_header"]["to_party"]["line1"] == "Руководителю ООО «Вектор»"
+    assert cleared_payload["preview_header"]["to_party"]["line2"] is None
+
+
+async def test_update_public_claim_patch_rebuilds_header_when_name_changes(
+    async_client,
+    mock_session,
+    monkeypatch,
+):
+    claim = Claim(
+        id=194,
+        status="draft",
+        generation_state="ready",
+        price_rub=990,
+        input_text="OOO Vector did not pay for delivery",
+        edit_token_hash=hash_claim_edit_token("valid-token"),
+        normalized_data_json={
+            "creditor_name": "ООО «Старое имя»",
+            "creditor_inn": "7701234567",
+            "debtor_name": "ООО «Вектор»",
+            "debtor_inn": "7801234567",
+            "contract_signed": True,
+            "contract_number": "17",
+            "contract_date": "2026-01-12",
+            "debt_amount": 380000,
+            "payment_due_date": "2026-02-01",
+            "partial_payments_present": False,
+            "partial_payments": [],
+            "penalty_exists": False,
+            "penalty_rate_text": None,
+            "documents_mentioned": ["contract"],
+            "missing_fields": [],
+        },
+        preview_header_json={
+            "from_party": {
+                "kind": "legal_entity",
+                "company_name": "ООО «Старое имя»",
+                "position_raw": None,
+                "person_name": None,
+                "line1": "Руководителя ООО «Старое имя»",
+                "line2": None,
+            },
+            "to_party": {
+                "kind": "legal_entity",
+                "company_name": "ООО «Вектор»",
+                "position_raw": None,
+                "person_name": None,
+                "line1": "Руководителю ООО «Вектор»",
+                "line2": None,
+            },
+        },
+    )
+    mock_session.execute.return_value = DummyResult(claim)
+
+    from product_api.routers import public_claims as public_claims_router
+
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_enabled", False)
+
+    resp = await async_client.patch(
+        "/claims/194",
+        headers={"X-Claim-Edit-Token": "valid-token"},
+        json={
+            "normalized_data": {
+                "creditor_name": "ООО «Новое имя»",
+            }
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["preview_header"]["from_party"]["line1"] == "Руководителя ООО «Новое имя»"
+
+
 async def test_upload_public_claim_file_ok(async_client, mock_session, monkeypatch):
     claim = Claim(
         id=92,

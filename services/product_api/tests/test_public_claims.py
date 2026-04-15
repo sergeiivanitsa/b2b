@@ -313,6 +313,47 @@ async def test_patch_claims_invalid_case_type_returns_400(async_client):
     assert resp.json()["detail"] == "invalid case_type"
 
 
+async def test_patch_claims_with_datanewton_failure_falls_back_to_local_header(
+    async_client,
+    monkeypatch,
+):
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    from product_api.routers import public_claims as public_claims_router
+    from product_api.claims import preview_header_enrichment
+
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_enabled", True)
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_api_key", "test-key")
+
+    async def fake_fetch(_settings, inn):
+        raise RuntimeError("datanewton unavailable")
+
+    monkeypatch.setattr(preview_header_enrichment, "fetch_datanewton_party_by_inn", fake_fetch)
+
+    resp = await async_client.patch(
+        f"/claims/{created['claim_id']}",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+        json={
+            "normalized_data": {
+                "creditor_name": "OOO Alpha",
+                "creditor_inn": "7701234567",
+                "debtor_name": "OOO Vector",
+                "debtor_inn": "780123456789",
+            },
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["preview_header"]["from_party"]["line1"] == "Руководителя OOO Alpha"
+    assert payload["preview_header"]["to_party"]["line1"] == "Индивидуальному предпринимателю"
+
+
 async def test_post_claims_files_upload_and_list(async_client, engine):
     settings = get_settings()
     create_resp = await async_client.post(

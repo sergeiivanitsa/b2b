@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,7 +44,7 @@ async def test_generate_preview_and_get_preview(async_client, engine, monkeypatc
         _settings, *, claim_id, input_text, case_type, normalized_data, decision
     ):
         return {
-            "generated_preview_text": "Черновик претензии",
+            "generated_preview_text": "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё",
             "used_fallback": False,
             "error_code": None,
         }
@@ -66,7 +66,9 @@ async def test_generate_preview_and_get_preview(async_client, engine, monkeypatc
     preview = generate_resp.json()
     assert preview["claim_id"] == created["claim_id"]
     assert preview["generation_state"] == "ready"
-    assert preview["generated_preview_text"] == "Черновик претензии"
+    assert preview["generated_preview_text"] == "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё"
+    assert preview["preview_header"]["from_party"]["line1"] == "Руководителя OOO Alpha"
+    assert preview["preview_header"]["to_party"]["line1"] == "Индивидуальному предпринимателю"
 
     get_preview_resp = await async_client.get(
         f"/claims/{created['claim_id']}/preview",
@@ -74,7 +76,9 @@ async def test_generate_preview_and_get_preview(async_client, engine, monkeypatc
     )
     assert get_preview_resp.status_code == 200
     get_payload = get_preview_resp.json()
-    assert get_payload["generated_preview_text"] == "Черновик претензии"
+    assert get_payload["generated_preview_text"] == "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё"
+    assert get_payload["preview_header"]["from_party"]["line1"] == "Руководителя OOO Alpha"
+    assert get_payload["preview_header"]["to_party"]["line1"] == "Индивидуальному предпринимателю"
 
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         claim_row = await session.execute(
@@ -91,7 +95,7 @@ async def test_generate_preview_and_get_preview(async_client, engine, monkeypatc
         assert row[1] == []
         assert row[2] == ["header", "facts", "demands"]
         assert row[3] == []
-        assert row[4] == "Черновик претензии"
+        assert row[4] == "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё"
 
 
 async def test_generate_preview_insufficient_data_blocks(async_client, engine, monkeypatch):

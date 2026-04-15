@@ -9,13 +9,17 @@ import {
   getClaimPreview,
   getInsufficientDataDetail,
   payClaim,
+  type ClaimPreviewHeader,
+  type ClaimPreviewSnapshot,
   type PublicClaimSnapshot,
 } from '../claims/claimsApi'
 import { ApiHttpError } from '../lib/api'
 
 type DocumentHeader = {
-  senderLines: string[]
-  recipientLines: string[]
+  senderLine1: string
+  senderLine2: string | null
+  recipientLine1: string
+  recipientLine2: string | null
 }
 
 type LoadedClaimMeta = {
@@ -24,7 +28,7 @@ type LoadedClaimMeta = {
   priceRub: number
   manualReviewRequired: boolean
   alreadyPaid: boolean
-  header: DocumentHeader
+  fallbackHeader: DocumentHeader
 }
 
 const PACKAGE_ITEMS = [
@@ -37,8 +41,10 @@ const PACKAGE_ITEMS = [
 ]
 
 const DEFAULT_DOCUMENT_HEADER: DocumentHeader = {
-  senderLines: ['Кредитор'],
-  recipientLines: ['Должник'],
+  senderLine1: 'Кредитор',
+  senderLine2: null,
+  recipientLine1: 'Должник',
+  recipientLine2: null,
 }
 
 export function ClaimStep4Page() {
@@ -46,6 +52,7 @@ export function ClaimStep4Page() {
 
   const [meta, setMeta] = useState<LoadedClaimMeta | null>(null)
   const [previewText, setPreviewText] = useState('')
+  const [previewHeader, setPreviewHeader] = useState<ClaimPreviewHeader | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isPaying, setIsPaying] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -75,24 +82,35 @@ export function ClaimStep4Page() {
           return
         }
 
+        const fallbackHeader = buildLegacyDocumentHeader(restored.claim)
+
         setMeta({
           claimId: restored.claimId,
           editToken: restored.editToken,
           priceRub: restored.claim.price_rub,
           manualReviewRequired: restored.claim.manual_review_required,
-          alreadyPaid: restored.claim.status === 'paid' || restored.claim.status === 'in_review' || restored.claim.status === 'sent',
-          header: buildDocumentHeader(restored.claim),
+          alreadyPaid:
+            restored.claim.status === 'paid' ||
+            restored.claim.status === 'in_review' ||
+            restored.claim.status === 'sent',
+          fallbackHeader,
         })
 
-        const loadedPreviewText = await loadPreviewText(restored.claimId, restored.editToken)
+        const loadedPreview = await loadPreviewData(restored.claimId, restored.editToken)
         if (!isCanceled) {
-          setPreviewText(loadedPreviewText)
+          setPreviewText(loadedPreview.generated_preview_text)
+          setPreviewHeader(
+            loadedPreview.preview_header ?? restored.claim.preview_header ?? null,
+          )
         }
       } catch (loadError) {
         if (isCanceled) {
           return
         }
-        if (loadError instanceof Error && (loadError.message === 'missing_session' || loadError.message === 'invalid_session')) {
+        if (
+          loadError instanceof Error &&
+          (loadError.message === 'missing_session' || loadError.message === 'invalid_session')
+        ) {
           navigate('/claims', { replace: true })
           return
         }
@@ -123,8 +141,16 @@ export function ClaimStep4Page() {
     }
   }, [navigate])
 
-  const previewParagraphs = useMemo(() => buildPreviewParagraphs(previewText), [previewText])
-  const documentHeader = meta?.header ?? DEFAULT_DOCUMENT_HEADER
+  const previewParagraphs = useMemo(
+    () => buildPreviewParagraphs(previewText),
+    [previewText],
+  )
+  const documentHeader = useMemo(() => {
+    if (previewHeader) {
+      return buildDocumentHeaderFromBackend(previewHeader)
+    }
+    return meta?.fallbackHeader ?? DEFAULT_DOCUMENT_HEADER
+  }, [meta?.fallbackHeader, previewHeader])
   const discountPrice = useMemo(() => {
     if (!meta) {
       return 990
@@ -203,19 +229,25 @@ export function ClaimStep4Page() {
                 <div className="claims-document-header">
                   <section className="claims-document-party">
                     <p className="claims-document-party__label">ОТ КОГО:</p>
-                    {documentHeader.senderLines.map((line, index) => (
-                      <p key={`sender-${index}-${line}`} className="claims-document-party__line">
-                        {line}
+                    <p className="claims-document-party__line claims-document-party__line--line1">
+                      {documentHeader.senderLine1}
+                    </p>
+                    {documentHeader.senderLine2 ? (
+                      <p className="claims-document-party__line claims-document-party__line--line2">
+                        {documentHeader.senderLine2}
                       </p>
-                    ))}
+                    ) : null}
                   </section>
                   <section className="claims-document-party claims-document-party--to">
                     <p className="claims-document-party__label">КОМУ:</p>
-                    {documentHeader.recipientLines.map((line, index) => (
-                      <p key={`recipient-${index}-${line}`} className="claims-document-party__line">
-                        {line}
+                    <p className="claims-document-party__line claims-document-party__line--line1">
+                      {documentHeader.recipientLine1}
+                    </p>
+                    {documentHeader.recipientLine2 ? (
+                      <p className="claims-document-party__line claims-document-party__line--line2">
+                        {documentHeader.recipientLine2}
                       </p>
-                    ))}
+                    ) : null}
                   </section>
                 </div>
                 <div className="claims-document-divider" />
@@ -254,7 +286,9 @@ export function ClaimStep4Page() {
               <h3>Гарантия качества</h3>
               <p>Если в документе будет ошибка по нашей вине, вернем деньги</p>
               <h3>Конфиденциальность</h3>
-              <p>Данные защищены шифрованием AES-256 и обрабатываются конфиденциально</p>
+              <p>
+                Данные защищены шифрованием AES-256 и обрабатываются конфиденциально
+              </p>
             </section>
 
             <section className="claims-paywall-card__price">
@@ -265,7 +299,11 @@ export function ClaimStep4Page() {
                 onClick={onPayClick}
                 disabled={isPaying || Boolean(meta?.alreadyPaid)}
               >
-                {meta?.alreadyPaid ? 'Заявка уже оплачена' : isPaying ? 'ОПЛАТА...' : 'Получить пакет документов'}
+                {meta?.alreadyPaid
+                  ? 'Заявка уже оплачена'
+                  : isPaying
+                    ? 'ОПЛАТА...'
+                    : 'Получить пакет документов'}
               </button>
             </section>
             <p className="claims-paywall-card__hint">
@@ -278,45 +316,52 @@ export function ClaimStep4Page() {
           <Link to="/claims/step-2">Вернуться к уточнению данных</Link>
         </p>
 
-        {successMessage ? <p className="claims-alert claims-alert--success">{successMessage}</p> : null}
+        {successMessage ? (
+          <p className="claims-alert claims-alert--success">{successMessage}</p>
+        ) : null}
         {error ? <p className="claims-alert claims-alert--error">{error}</p> : null}
       </section>
     </main>
   )
 }
 
-function buildDocumentHeader(claim: PublicClaimSnapshot): DocumentHeader {
-  const normalizedData = claim.normalized_data
-  const senderLines = [
-    normalizeTextLine(normalizedData?.creditor_name),
-    normalizeTextLine(claim.client_email ? `Email: ${claim.client_email}` : null),
-  ].filter((line): line is string => Boolean(line))
-
-  const recipientLines = [
-    normalizeTextLine(normalizedData?.debtor_name),
-  ].filter((line): line is string => Boolean(line))
-
-  if (senderLines.length === 0) {
-    senderLines.push('Кредитор')
-  }
-  if (recipientLines.length === 0) {
-    recipientLines.push('Должник')
-  }
-
+function buildDocumentHeaderFromBackend(header: ClaimPreviewHeader): DocumentHeader {
+  const senderLine1 = normalizeTextLine(header.from_party.line1) ?? DEFAULT_DOCUMENT_HEADER.senderLine1
+  const recipientLine1 =
+    normalizeTextLine(header.to_party.line1) ?? DEFAULT_DOCUMENT_HEADER.recipientLine1
   return {
-    senderLines: senderLines.slice(0, 3),
-    recipientLines: recipientLines.slice(0, 3),
+    senderLine1,
+    senderLine2: normalizeTextLine(header.from_party.line2),
+    recipientLine1,
+    recipientLine2: normalizeTextLine(header.to_party.line2),
   }
 }
 
-async function loadPreviewText(claimId: number, editToken: string): Promise<string> {
+function buildLegacyDocumentHeader(claim: PublicClaimSnapshot): DocumentHeader {
+  const normalizedData = claim.normalized_data
+  const senderLine1 =
+    normalizeTextLine(normalizedData?.creditor_name) ?? DEFAULT_DOCUMENT_HEADER.senderLine1
+  const senderLine2 = normalizeTextLine(claim.client_email ? `Email: ${claim.client_email}` : null)
+  const recipientLine1 =
+    normalizeTextLine(normalizedData?.debtor_name) ?? DEFAULT_DOCUMENT_HEADER.recipientLine1
+
+  return {
+    senderLine1,
+    senderLine2,
+    recipientLine1,
+    recipientLine2: null,
+  }
+}
+
+async function loadPreviewData(
+  claimId: number,
+  editToken: string,
+): Promise<ClaimPreviewSnapshot> {
   try {
-    const preview = await getClaimPreview(claimId, editToken)
-    return preview.generated_preview_text
+    return await getClaimPreview(claimId, editToken)
   } catch (previewError) {
     if (previewError instanceof ApiHttpError && previewError.status === 404) {
-      const generated = await generateClaimPreview(claimId, editToken)
-      return generated.generated_preview_text
+      return generateClaimPreview(claimId, editToken)
     }
     throw previewError
   }
@@ -345,7 +390,10 @@ function buildPreviewParagraphs(previewText: string): string[] {
   }
 
   const sentenceParts =
-    normalized.match(/[^.!?]+[.!?]+/g)?.map((part) => part.trim()).filter(Boolean) ?? []
+    normalized
+      .match(/[^.!?]+[.!?]+/g)
+      ?.map((part) => part.trim())
+      .filter(Boolean) ?? []
   if (sentenceParts.length >= 3) {
     const paragraphs: string[] = []
     for (let index = 0; index < sentenceParts.length; index += 2) {

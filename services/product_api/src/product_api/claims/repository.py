@@ -13,6 +13,7 @@ from .normalization import (
     normalize_case_type,
     normalize_client_email,
 )
+from .preview_header_enrichment import build_preview_header_from_normalized_data
 
 
 def _isoformat(value: datetime | None) -> str | None:
@@ -31,6 +32,7 @@ def build_public_claim_snapshot(claim: Claim) -> dict:
         "client_email": claim.client_email,
         "case_type": claim.case_type,
         "normalized_data": normalized_data,
+        "preview_header": _build_claim_preview_header(claim, normalized_data),
         "step2": build_step2_contract(normalized_data),
         "created_at": _isoformat(claim.created_at),
         "updated_at": _isoformat(claim.updated_at),
@@ -201,6 +203,7 @@ def build_public_claim_preview_snapshot(claim: Claim) -> dict:
         "blocked_blocks": list(claim.blocked_blocks_json or []),
         "generated_preview_text": claim.generated_preview_text or "",
         "missing_fields": list(step2["missing_fields"]),
+        "preview_header": _build_claim_preview_header(claim, normalized_data),
     }
 
 
@@ -289,3 +292,9 @@ async def apply_claim_payment_stub(
     session.add(claim)
     await session.flush()
     return claim, changed_fields
+
+
+def _build_claim_preview_header(claim: Claim, normalized_data: dict[str, Any] | None) -> dict[str, Any]:
+    if isinstance(claim.preview_header_json, dict):
+        return claim.preview_header_json
+    return build_preview_header_from_normalized_data(normalized_data)
