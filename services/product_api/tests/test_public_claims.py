@@ -354,6 +354,116 @@ async def test_patch_claims_with_datanewton_failure_falls_back_to_local_header(
     assert payload["preview_header"]["to_party"]["line1"] == "Индивидуальному предпринимателю"
 
 
+async def test_patch_claims_enriches_preview_header_with_manager_fields(
+    async_client,
+    monkeypatch,
+):
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    from product_api.claims import datanewton_client
+    from product_api.routers import public_claims as public_claims_router
+
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_enabled", True)
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_api_key", "test-key")
+    monkeypatch.setattr(
+        public_claims_router.settings,
+        "datanewton_counterparty_filters",
+        ["MANAGER_BLOCK", "ADDRESS_BLOCK"],
+    )
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_cache_ttl_seconds", 0)
+    monkeypatch.setattr(datanewton_client, "_client_singleton", None)
+
+    requests: list[dict] = []
+    payloads_by_inn = {
+        "7701234567": {
+            "data": {
+                "company": {
+                    "company_names": {"short_name": "OOO Alpha"},
+                    "managers": [
+                        {
+                            "fio": "Petrov Petr Petrovich",
+                            "position": "general director",
+                        }
+                    ],
+                    "address": {"line_address": "Moscow"},
+                }
+            }
+        },
+        "7801234567": {
+            "data": {
+                "company": {
+                    "company_names": {"short_name": "OOO Vector"},
+                    "managers": [
+                        {
+                            "fio": "Ivanov Ivan Ivanovich",
+                            "position": "director",
+                        }
+                    ],
+                    "address": {"line_address": "Saint Petersburg"},
+                }
+            }
+        },
+    }
+
+    class FakeResponse:
+        def __init__(self, payload: dict):
+            self.status_code = 200
+            self._payload = payload
+            self.text = str(payload)
+
+        def json(self) -> dict:
+            return self._payload
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, params=None):
+            request_params = dict(params or {})
+            requests.append({"url": url, "params": request_params})
+            inn = request_params.get("inn")
+            payload = payloads_by_inn.get(inn)
+            if payload is None:
+                raise AssertionError(f"Unexpected inn: {inn}")
+            return FakeResponse(payload)
+
+    monkeypatch.setattr(datanewton_client.httpx, "AsyncClient", FakeAsyncClient)
+
+    resp = await async_client.patch(
+        f"/claims/{created['claim_id']}",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+        json={
+            "normalized_data": {
+                "creditor_name": "OOO Alpha",
+                "creditor_inn": "7701234567",
+                "debtor_name": "OOO Vector",
+                "debtor_inn": "7801234567",
+            },
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["preview_header"]["from_party"]["person_name"] == "Petrov Petr Petrovich"
+    assert payload["preview_header"]["from_party"]["position_raw"] == "general director"
+    assert payload["preview_header"]["to_party"]["person_name"] == "Ivanov Ivan Ivanovich"
+    assert payload["preview_header"]["to_party"]["position_raw"] == "director"
+    assert len(requests) == 2
+    for request in requests:
+        assert request["params"]["filters"] == "MANAGER_BLOCK,ADDRESS_BLOCK"
+
+
 async def test_post_claims_files_upload_and_list(async_client, engine):
     settings = get_settings()
     create_resp = await async_client.post(

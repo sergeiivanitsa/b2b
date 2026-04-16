@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from product_api.models import Claim
@@ -8,6 +9,8 @@ from product_api.settings import Settings
 from .datanewton_client import fetch_datanewton_party_by_inn
 from .normalization import normalize_inn
 from .preview_header_formatter import build_preview_header, infer_kind_from_inn
+
+logger = logging.getLogger(__name__)
 
 
 def build_preview_header_from_normalized_data(
@@ -92,5 +95,6 @@ def _normalize_string(value: Any) -> str | None:
 async def _safe_fetch_party(settings: Settings, inn: str) -> dict[str, Any] | None:
     try:
         return await fetch_datanewton_party_by_inn(settings, inn)
-    except Exception:
+    except Exception as exc:
+        logger.warning("datanewton_enrichment_failed inn=%s err=%s", inn, str(exc))
         return None

@@ -228,6 +228,7 @@ Required claims settings in `services/product_api/.env`:
 - `DATANEWTON_API_KEY`
 - `DATANEWTON_TIMEOUT_SECONDS`
 - `DATANEWTON_RETRY_COUNT`
+- `DATANEWTON_COUNTERPARTY_FILTERS`
 - `DATANEWTON_CACHE_TTL_SECONDS`
 
 Default local values are documented in:
@@ -237,6 +238,7 @@ Default local values are documented in:
 Preview header enrichment notes:
 - Step 4 header is returned from backend as `preview_header` (public claim snapshot + preview snapshot).
 - Enrichment is triggered on Step 2 patch when `creditor_inn`, `debtor_inn`, `creditor_name`, or `debtor_name` changes (including INN removal).
+- DataNewton counterparty requests include `filters` from `DATANEWTON_COUNTERPARTY_FILTERS` (default: `MANAGER_BLOCK,ADDRESS_BLOCK`).
 - If DataNewton is disabled/unavailable, backend still builds non-null header via deterministic formatter + fallback.
 
 ## Upload persistence and deploy notes

@@ -1,7 +1,8 @@
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -80,6 +81,10 @@ class Settings(BaseSettings):
         validation_alias="DATANEWTON_TIMEOUT_SECONDS",
     )
     datanewton_retry_count: int = Field(default=1, validation_alias="DATANEWTON_RETRY_COUNT")
+    datanewton_counterparty_filters: Annotated[list[str], NoDecode] = Field(
+        default=["MANAGER_BLOCK", "ADDRESS_BLOCK"],
+        validation_alias="DATANEWTON_COUNTERPARTY_FILTERS",
+    )
     datanewton_cache_ttl_seconds: int = Field(
         default=300,
         validation_alias="DATANEWTON_CACHE_TTL_SECONDS",
@@ -234,6 +239,34 @@ class Settings(BaseSettings):
         if value < 0:
             raise ValueError("DATANEWTON_RETRY_COUNT must be >= 0")
         return value
+
+    @field_validator("datanewton_counterparty_filters", mode="before")
+    @classmethod
+    def _parse_datanewton_counterparty_filters(
+        cls, value: str | list[str]
+    ) -> list[str]:
+        if isinstance(value, str):
+            parts = [item.strip() for item in value.split(",")]
+            return [item for item in parts if item]
+        return value
+
+    @field_validator("datanewton_counterparty_filters")
+    @classmethod
+    def _validate_datanewton_counterparty_filters(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError(
+                    "DATANEWTON_COUNTERPARTY_FILTERS must contain strings only"
+                )
+            candidate = item.strip()
+            if not candidate:
+                continue
+            if candidate not in normalized:
+                normalized.append(candidate)
+        if not normalized:
+            raise ValueError("DATANEWTON_COUNTERPARTY_FILTERS must not be empty")
+        return normalized
 
     @field_validator("datanewton_cache_ttl_seconds")
     @classmethod
