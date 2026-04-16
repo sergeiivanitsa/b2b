@@ -76,6 +76,9 @@ class DataNewtonClient:
             "key": self._settings.datanewton_api_key or "",
             "inn": inn,
         }
+        filters_value = _build_filters_param_value(self._settings.datanewton_counterparty_filters)
+        if filters_value:
+            params["filters"] = filters_value
         for path in _candidate_paths():
             url = _build_url(self._settings.datanewton_base_url, path)
             async with httpx.AsyncClient(timeout=timeout_seconds) as client:
@@ -99,6 +102,15 @@ class DataNewtonClient:
             parsed = parse_datanewton_counterparty_payload(payload, fallback_inn=inn)
             if parsed is None:
                 return None
+            if parsed.get("kind") == "legal_entity" and (
+                parsed.get("person_name") is None or parsed.get("position_raw") is None
+            ):
+                logger.info(
+                    "datanewton_missing_manager_fields inn=%s has_person_name=%s has_position_raw=%s",
+                    inn,
+                    parsed.get("person_name") is not None,
+                    parsed.get("position_raw") is not None,
+                )
             return parsed
         return None
 
@@ -176,6 +188,18 @@ def _candidate_paths() -> tuple[str, str]:
 
 def _build_url(base_url: str, path: str) -> str:
     return f"{base_url.rstrip('/')}{path}"
+
+
+def _build_filters_param_value(filters: Iterable[str]) -> str:
+    normalized: list[str] = []
+    for item in filters:
+        if not isinstance(item, str):
+            continue
+        candidate = item.strip()
+        if not candidate:
+            continue
+        normalized.append(candidate)
+    return ",".join(normalized)
 
 
 def _extract_primary_record(payload: Any) -> dict[str, Any] | None:
@@ -276,7 +300,45 @@ def _is_legal_entity(record: dict[str, Any]) -> bool:
 
 
 def _extract_company_name(record: dict[str, Any]) -> str | None:
-    name = _find_first_text(
+    company_names_name = _extract_company_name_from_company_names(record)
+    if company_names_name:
+        return company_names_name
+
+    top_level_name = _find_direct_text(
+        record,
+        (
+            "short_name",
+            "shortName",
+            "full_name",
+            "fullName",
+            "company_name",
+            "companyName",
+        ),
+    )
+    if top_level_name:
+        return top_level_name
+
+    for block_name in ("company", "organization", "legal", "counterparty"):
+        block = record.get(block_name)
+        if not isinstance(block, dict):
+            continue
+        block_name_value = _find_direct_text(
+            block,
+            (
+                "short_name",
+                "shortName",
+                "full_name",
+                "fullName",
+                "company_name",
+                "companyName",
+                "name",
+                "title",
+            ),
+        )
+        if block_name_value:
+            return block_name_value
+
+    return _find_first_text(
         record,
         {
             "short_name",
@@ -285,37 +347,46 @@ def _extract_company_name(record: dict[str, Any]) -> str | None:
             "fullName",
             "company_name",
             "companyName",
-            "name",
-            "title",
         },
     )
-    if name:
-        return name
-    company_block = _find_first_dict(
-        record,
-        {
-            "organization",
-            "company",
-            "legal",
-            "counterparty",
-        },
-    )
-    if company_block:
-        return _find_first_text(
-            company_block,
-            {
-                "short_name",
-                "shortName",
-                "full_name",
-                "fullName",
-                "name",
-                "title",
-            },
-        )
+
+
+def _extract_company_name_from_company_names(record: dict[str, Any]) -> str | None:
+    company_block = _extract_company_block(record)
+    if not company_block:
+        return None
+    company_names = company_block.get("company_names")
+    if not isinstance(company_names, dict):
+        return None
+
+    short_name = _find_direct_text(company_names, ("short_name", "shortName"))
+    if short_name:
+        return short_name
+    return _find_direct_text(company_names, ("full_name", "fullName"))
+
+
+def _extract_company_block(record: dict[str, Any]) -> dict[str, Any] | None:
+    company_block = record.get("company")
+    if isinstance(company_block, dict):
+        return company_block
     return None
 
 
+def _extract_company_primary_manager(record: dict[str, Any]) -> dict[str, Any] | None:
+    company_block = _extract_company_block(record)
+    if not company_block:
+        return None
+    managers = company_block.get("managers")
+    if not isinstance(managers, list):
+        return None
+    return _first_dict(managers)
+
+
 def _extract_manager_block(record: dict[str, Any]) -> dict[str, Any] | None:
+    company_primary_manager = _extract_company_primary_manager(record)
+    if company_primary_manager:
+        return company_primary_manager
+
     return _find_first_dict(
         record,
         {
@@ -348,6 +419,12 @@ def _extract_person_name(
     individual_block: dict[str, Any] | None,
     record: dict[str, Any],
 ) -> str | None:
+    company_primary_manager = _extract_company_primary_manager(record)
+    if company_primary_manager:
+        company_manager_fio = _find_direct_text(company_primary_manager, ("fio",))
+        if company_manager_fio:
+            return company_manager_fio
+
     if manager_block:
         name = _find_first_text(
             manager_block,
@@ -385,7 +462,10 @@ def _extract_person_name(
             "managerFio",
             "director_fio",
             "directorFio",
-            "fio",
+            "manager_name",
+            "managerName",
+            "director_name",
+            "directorName",
             "person_name",
             "personName",
         },
@@ -397,6 +477,12 @@ def _extract_position_raw(
     manager_block: dict[str, Any] | None,
     record: dict[str, Any],
 ) -> str | None:
+    company_primary_manager = _extract_company_primary_manager(record)
+    if company_primary_manager:
+        company_manager_position = _find_direct_text(company_primary_manager, ("position",))
+        if company_manager_position:
+            return company_manager_position
+
     if manager_block:
         position = _find_first_text(
             manager_block,
@@ -419,14 +505,60 @@ def _extract_position_raw(
             "managerPosition",
             "director_position",
             "directorPosition",
-            "position",
-            "post",
-            "title",
         },
     )
 
 
 def _extract_address(record: dict[str, Any]) -> str | None:
+    company_block = _extract_company_block(record)
+    if company_block:
+        company_address = company_block.get("address")
+        if isinstance(company_address, dict):
+            line_address = _find_direct_text(company_address, ("line_address", "lineAddress"))
+            if line_address:
+                return line_address
+        company_address_text = _normalize_text(company_address)
+        if company_address_text:
+            return company_address_text
+
+    top_level_address = _find_direct_text(
+        record,
+        (
+            "address",
+            "full_address",
+            "fullAddress",
+            "legal_address",
+            "legalAddress",
+            "registration_address",
+            "registrationAddress",
+            "line_address",
+            "lineAddress",
+        ),
+    )
+    if top_level_address:
+        return top_level_address
+
+    for block_name in ("address", "organization", "legal", "counterparty"):
+        block = record.get(block_name)
+        if not isinstance(block, dict):
+            continue
+        nested_address = _find_direct_text(
+            block,
+            (
+                "line_address",
+                "lineAddress",
+                "address",
+                "full_address",
+                "fullAddress",
+                "legal_address",
+                "legalAddress",
+                "registration_address",
+                "registrationAddress",
+            ),
+        )
+        if nested_address:
+            return nested_address
+
     return _find_first_text(
         record,
         {
@@ -437,8 +569,18 @@ def _extract_address(record: dict[str, Any]) -> str | None:
             "legalAddress",
             "registration_address",
             "registrationAddress",
+            "line_address",
+            "lineAddress",
         },
     )
+
+
+def _find_direct_text(payload: dict[str, Any], candidate_keys: Iterable[str]) -> str | None:
+    for key in candidate_keys:
+        normalized = _normalize_text(payload.get(key))
+        if normalized:
+            return normalized
+    return None
 
 
 def _find_first_dict(payload: Any, candidate_keys: set[str]) -> dict[str, Any] | None:
@@ -507,6 +649,10 @@ def _collect_bool_values(payload: Any, candidate_keys: set[str]) -> list[bool]:
 
 def _normalize_text(value: Any) -> str | None:
     if value is None:
+        return None
+    if isinstance(value, (dict, list, tuple, set)):
+        return None
+    if isinstance(value, bool):
         return None
     if not isinstance(value, str):
         value = str(value)

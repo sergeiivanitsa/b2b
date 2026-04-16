@@ -24,6 +24,7 @@ os.environ.setdefault("DATANEWTON_BASE_URL", "https://api.datanewton.ru")
 os.environ.setdefault("DATANEWTON_API_KEY", "")
 os.environ.setdefault("DATANEWTON_TIMEOUT_SECONDS", "10")
 os.environ.setdefault("DATANEWTON_RETRY_COUNT", "1")
+os.environ.setdefault("DATANEWTON_COUNTERPARTY_FILTERS", "MANAGER_BLOCK,ADDRESS_BLOCK")
 os.environ.setdefault("DATANEWTON_CACHE_TTL_SECONDS", "300")
 os.environ.setdefault(
     "CLAIMS_UPLOAD_DIR", str((REPO_ROOT / ".tmp" / "product_api_claims").as_posix())

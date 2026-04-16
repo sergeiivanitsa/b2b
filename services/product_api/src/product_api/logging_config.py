@@ -11,6 +11,7 @@ _SECRET_KV_RE = re.compile(
 _BEARER_RE = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9\-._~+/]+=*")
 _CONTENT_JSON_RE = re.compile(r'(?i)("content"\s*:\s*")[^"]*(")')
 _CONTENT_KV_RE = re.compile(r"(?i)(\bcontent\b\s*[:=]\s*)([^\s,;]+)")
+_QUERY_SECRET_RE = re.compile(r"(?i)([?&](?:key|api_key|apikey)=)([^&#\s]+)")
 
 
 def _redact_text(text: str) -> str:
@@ -19,6 +20,7 @@ def _redact_text(text: str) -> str:
     text = _CONTENT_KV_RE.sub(r"\1[redacted]", text)
     text = _BEARER_RE.sub("Bearer [redacted]", text)
     text = _SECRET_KV_RE.sub(r"\1=[redacted]", text)
+    text = _QUERY_SECRET_RE.sub(r"\1[redacted]", text)
     return text
 
 
@@ -72,6 +74,16 @@ def configure_logging(log_level: str) -> None:
                 "uvicorn.access": {
                     "handlers": ["console"],
                     "level": log_level,
+                    "propagate": False,
+                },
+                "httpx": {
+                    "handlers": ["console"],
+                    "level": "WARNING",
+                    "propagate": False,
+                },
+                "httpcore": {
+                    "handlers": ["console"],
+                    "level": "WARNING",
                     "propagate": False,
                 },
             },
