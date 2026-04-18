@@ -1762,20 +1762,12 @@ body.is-chat-page #root {
 
 .claims-document-party {
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .claims-document-party--to {
   justify-items: end;
   text-align: right;
-}
-
-.claims-document-party__label {
-  margin: 0;
-  font-size: 0.95rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  color: #2a2f36;
 }
 
 .claims-document-party__line {
@@ -1784,6 +1776,8 @@ body.is-chat-page #root {
   font-size: 1.04rem;
   line-height: 1.3;
   color: #2f333a;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .claims-document-party__line--line1 {
@@ -1791,6 +1785,10 @@ body.is-chat-page #root {
 }
 
 .claims-document-party__line--line2 {
+  font-weight: 400;
+}
+
+.claims-document-party__line--line3 {
   font-weight: 400;
 }
 

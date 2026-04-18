@@ -11,6 +11,7 @@ from .normalization import normalize_inn
 from .preview_header_formatter import build_preview_header, infer_kind_from_inn
 
 logger = logging.getLogger(__name__)
+PREVIEW_HEADER_FORMAT_VERSION = 2
 
 
 def build_preview_header_from_normalized_data(
@@ -66,7 +67,8 @@ async def rebuild_claim_preview_header(
             if debtor_party:
                 to_party = _merge_party(to_party, debtor_party)
 
-    claim.preview_header_json = build_preview_header(from_party=from_party, to_party=to_party)
+    rebuilt_header = build_preview_header(from_party=from_party, to_party=to_party)
+    claim.preview_header_json = _as_preview_header_v2(rebuilt_header)
     return claim.preview_header_json
 
 
@@ -98,3 +100,23 @@ async def _safe_fetch_party(settings: Settings, inn: str) -> dict[str, Any] | No
     except Exception as exc:
         logger.warning("datanewton_enrichment_failed inn=%s err=%s", inn, str(exc))
         return None
+
+
+def _as_preview_header_v2(payload: dict[str, Any]) -> dict[str, Any]:
+    source = payload if isinstance(payload, dict) else {}
+    from_party = dict(source.get("from_party") or {})
+    to_party = dict(source.get("to_party") or {})
+
+    from_rendered = from_party.get("rendered")
+    if isinstance(from_rendered, dict):
+        from_party["rendered"] = dict(from_rendered)
+
+    to_rendered = to_party.get("rendered")
+    if isinstance(to_rendered, dict):
+        to_party["rendered"] = dict(to_rendered)
+
+    return {
+        "format_version": PREVIEW_HEADER_FORMAT_VERSION,
+        "from_party": from_party,
+        "to_party": to_party,
+    }

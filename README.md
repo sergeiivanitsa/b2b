@@ -241,6 +241,64 @@ Preview header enrichment notes:
 - DataNewton counterparty requests include `filters` from `DATANEWTON_COUNTERPARTY_FILTERS` (default: `MANAGER_BLOCK,ADDRESS_BLOCK`).
 - If DataNewton is disabled/unavailable, backend still builds non-null header via deterministic formatter + fallback.
 
+### Preview Header v2 Contract (current behavior)
+- Backend response contract for `preview_header` uses `format_version = 2`.
+- Response keeps legacy fields and adds rendered fields for safe migration:
+  - `preview_header.from_party|to_party.kind`
+  - `preview_header.from_party|to_party.company_name`
+  - `preview_header.from_party|to_party.position_raw`
+  - `preview_header.from_party|to_party.person_name`
+  - `preview_header.from_party|to_party.line1` (legacy)
+  - `preview_header.from_party|to_party.line2` (legacy)
+  - `preview_header.from_party|to_party.rendered.line1`
+  - `preview_header.from_party|to_party.rendered.line2`
+  - `preview_header.from_party|to_party.rendered.line3`
+- `preview_header` remains nullable in API schema. In regular flow backend usually returns an object.
+
+Rendered line1 rules currently implemented:
+- Sender (`from_party`): `От генерального директора` | `От директора` | `От президента` | `От руководителя`.
+- Recipient (`to_party`): `Генеральному директору` | `Директору` | `Президенту` | `Руководителю`.
+- For `individual_entrepreneur`:
+  - sender line1: `От индивидуального предпринимателя`
+  - recipient line1: `Индивидуальному предпринимателю`
+- Supported Russian/English positions are matched by exact normalized equality only:
+  - `генеральный директор`, `директор`, `президент`
+  - `general director`, `director`, `president`
+- Non-exact forms (for example `assistant director`, `заместитель директора`, `президент, председатель правления`) use fallback `От руководителя` / `Руководителю`.
+
+### Preview Header Compatibility and Read-Path Upgrade (current behavior)
+- Write-path (`PATCH /claims/{id}` step 2 rebuild) stores v2 payload to `claims.preview_header_json`.
+- DataNewton flow is unchanged:
+  - source truth for legal entity on successful DataNewton response remains `company_name`, `position_raw`, `person_name` from DataNewton.
+  - formatter only formats lines and does not re-resolve leadership fields from alternate sources.
+- Read-path upgrade for stored legacy headers is response-only:
+  - no DataNewton calls;
+  - no mutation/rewrite of stored `preview_header_json`;
+  - response includes v2 shape.
+- Read-path source priority when legacy payload has no `rendered`:
+  1. raw party fields from stored payload (`kind/company_name/position_raw/person_name`);
+  2. fallback from `normalized_data` if raw is incomplete;
+  3. emergency bridge only as last resort:
+     - `rendered.line1 = legacy line1`
+     - `rendered.line2 = null`
+     - `rendered.line3 = legacy line2`
+- Legacy `line1/line2` are preserved in response unchanged.
+
+### Step 4 UI Header Mapping (current behavior)
+- Step 4 renders 3 lines per side, without `ОТ КОГО:` / `КОМУ:` labels.
+- Frontend precedence:
+  1. `rendered` (when `rendered.line1` exists)
+  2. legacy (`line1 -> UI line1`, `line2 -> UI line3`, UI line2 stays `null`)
+  3. local fallback
+- Local fallback (when `preview_header` is absent):
+  - sender line1: `От руководителя`
+  - sender line2: `normalized_data.creditor_name` or `null`
+  - sender line3: `null`
+  - recipient line1: `Руководителю`
+  - recipient line2: `normalized_data.debtor_name` or `null`
+  - recipient line3: `null`
+- `Email:` fallback line is removed from Step 4 header.
+
 ## Upload persistence and deploy notes
 - Docker local dev uses named volume:
   - `claims_uploads:/var/lib/product_api/claims_uploads`
@@ -261,6 +319,21 @@ Public `/claims/*`:
 State checks:
 1. `manual_review_required`: preview/pay still available.
 2. `insufficient_data`: preview/pay blocked, user returns to step 2 with missing fields.
+
+Preview header Step2 -> Step4 checks:
+1. Fill creditor/debtor names only, open Step 4, verify safe fallback:
+  - sender line1 `От руководителя`
+  - recipient line1 `Руководителю`
+  - line2 uses names when present.
+2. Fill INN for legal entities with DataNewton available, patch Step 2, verify Step 4:
+  - company name, position, and person are reflected from DataNewton in `preview_header` fields;
+  - rendered line1 uses formatter output (`От ...` / `...у`).
+3. Remove INN after enrichment, patch Step 2, verify rebuild:
+  - position/person reset to fallback-safe values;
+  - `format_version` stays `2`, legacy fields remain present.
+4. Force legacy header payload in DB (without `format_version/rendered`), open preview endpoint:
+  - API returns v2-shaped response with rendered lines;
+  - stored DB payload remains unchanged (no `format_version`/`rendered` persisted by read-path upgrade).
 
 Admin `/admin/*`:
 1. Request magic link on `/admin/login`.

@@ -136,3 +136,263 @@ async def test_generate_preview_insufficient_data_blocks(async_client, engine, m
         assert row is not None
         assert row[0] == "insufficient_data"
         assert row[1] is None
+
+
+async def test_get_preview_upgrades_legacy_header_full_raw_without_mutating_stored_payload(
+    async_client,
+    engine,
+):
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    legacy_header = {
+        "from_party": {
+            "kind": "legal_entity",
+            "company_name": "ООО «Stored Alpha»",
+            "position_raw": "генеральный директор",
+            "person_name": "Петров Петр Петрович",
+            "line1": "Генерального директора ООО «Stored Alpha»",
+            "line2": "Петров Петр Петрович",
+        },
+        "to_party": {
+            "kind": "legal_entity",
+            "company_name": "ООО «Stored Vector»",
+            "position_raw": "director",
+            "person_name": "Ivanov Ivan Ivanovich",
+            "line1": "Директору ООО «Stored Vector»",
+            "line2": "Ivanov Ivan Ivanovich",
+        },
+    }
+    normalized_data = {
+        "creditor_name": "Fallback Alpha",
+        "debtor_name": "Fallback Vector",
+        "missing_fields": [],
+    }
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        await session.execute(
+            text(
+                "UPDATE claims "
+                "SET generation_state = :generation_state, "
+                "generated_preview_text = :generated_preview_text, "
+                "normalized_data_json = :normalized_data_json, "
+                "preview_header_json = :preview_header_json "
+                "WHERE id = :id"
+            ),
+            {
+                "generation_state": "ready",
+                "generated_preview_text": "Draft preview text",
+                "normalized_data_json": normalized_data,
+                "preview_header_json": legacy_header,
+                "id": created["claim_id"],
+            },
+        )
+        await session.commit()
+
+    get_preview_resp = await async_client.get(
+        f"/claims/{created['claim_id']}/preview",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+    )
+    assert get_preview_resp.status_code == 200
+    payload = get_preview_resp.json()
+    assert payload["preview_header"]["format_version"] == 2
+    assert payload["preview_header"]["from_party"]["line1"] == "Генерального директора ООО «Stored Alpha»"
+    assert payload["preview_header"]["from_party"]["line2"] == "Петров Петр Петрович"
+    assert payload["preview_header"]["from_party"]["rendered"] == {
+        "line1": "От генерального директора",
+        "line2": "ООО «Stored Alpha»",
+        "line3": "Петров Петр Петрович",
+    }
+    assert payload["preview_header"]["to_party"]["line1"] == "Директору ООО «Stored Vector»"
+    assert payload["preview_header"]["to_party"]["line2"] == "Ivanov Ivan Ivanovich"
+    assert payload["preview_header"]["to_party"]["rendered"] == {
+        "line1": "Директору",
+        "line2": "ООО «Stored Vector»",
+        "line3": "Ivanov Ivan Ivanovich",
+    }
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        claim_row = await session.execute(
+            text("SELECT preview_header_json FROM claims WHERE id = :id"),
+            {"id": created["claim_id"]},
+        )
+        row = claim_row.first()
+        assert row is not None
+        stored_header = row[0]
+
+    assert stored_header == legacy_header
+    assert "format_version" not in stored_header
+    assert "rendered" not in stored_header["from_party"]
+    assert "rendered" not in stored_header["to_party"]
+
+
+async def test_get_preview_upgrades_legacy_header_with_normalized_fallback_without_mutation(
+    async_client,
+    engine,
+):
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    legacy_header = {
+        "from_party": {
+            "kind": "legal_entity",
+            "company_name": None,
+            "position_raw": None,
+            "person_name": None,
+            "line1": "Руководителя ООО «Old Alpha»",
+            "line2": None,
+        },
+        "to_party": {
+            "kind": "legal_entity",
+            "company_name": None,
+            "position_raw": None,
+            "person_name": None,
+            "line1": "Руководителю ООО «Old Vector»",
+            "line2": None,
+        },
+    }
+    normalized_data = {
+        "creditor_name": "Fallback Alpha",
+        "debtor_name": "Fallback Vector",
+        "missing_fields": [],
+    }
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        await session.execute(
+            text(
+                "UPDATE claims "
+                "SET generation_state = :generation_state, "
+                "generated_preview_text = :generated_preview_text, "
+                "normalized_data_json = :normalized_data_json, "
+                "preview_header_json = :preview_header_json "
+                "WHERE id = :id"
+            ),
+            {
+                "generation_state": "ready",
+                "generated_preview_text": "Draft preview text",
+                "normalized_data_json": normalized_data,
+                "preview_header_json": legacy_header,
+                "id": created["claim_id"],
+            },
+        )
+        await session.commit()
+
+    get_preview_resp = await async_client.get(
+        f"/claims/{created['claim_id']}/preview",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+    )
+    assert get_preview_resp.status_code == 200
+    payload = get_preview_resp.json()
+    assert payload["preview_header"]["format_version"] == 2
+    assert payload["preview_header"]["from_party"]["line1"] == "Руководителя ООО «Old Alpha»"
+    assert payload["preview_header"]["from_party"]["line2"] is None
+    assert payload["preview_header"]["from_party"]["rendered"] == {
+        "line1": "От руководителя",
+        "line2": "Fallback Alpha",
+        "line3": None,
+    }
+    assert payload["preview_header"]["to_party"]["line1"] == "Руководителю ООО «Old Vector»"
+    assert payload["preview_header"]["to_party"]["line2"] is None
+    assert payload["preview_header"]["to_party"]["rendered"] == {
+        "line1": "Руководителю",
+        "line2": "Fallback Vector",
+        "line3": None,
+    }
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        claim_row = await session.execute(
+            text("SELECT preview_header_json FROM claims WHERE id = :id"),
+            {"id": created["claim_id"]},
+        )
+        row = claim_row.first()
+        assert row is not None
+        stored_header = row[0]
+
+    assert stored_header == legacy_header
+    assert "format_version" not in stored_header
+    assert "rendered" not in stored_header["from_party"]
+    assert "rendered" not in stored_header["to_party"]
+
+
+async def test_get_preview_upgrades_legacy_broken_header_with_emergency_bridge_without_mutation(
+    async_client,
+    engine,
+):
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    legacy_header = {
+        "from_party": {
+            "line1": "Рук. ООО «Альфа»",
+            "line2": "Петров П.П.",
+        },
+        "to_party": {
+            "line1": "Кому: ???",
+            "line2": None,
+        },
+    }
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        await session.execute(
+            text(
+                "UPDATE claims "
+                "SET generation_state = :generation_state, "
+                "generated_preview_text = :generated_preview_text, "
+                "normalized_data_json = :normalized_data_json, "
+                "preview_header_json = :preview_header_json "
+                "WHERE id = :id"
+            ),
+            {
+                "generation_state": "ready",
+                "generated_preview_text": "Draft preview text",
+                "normalized_data_json": None,
+                "preview_header_json": legacy_header,
+                "id": created["claim_id"],
+            },
+        )
+        await session.commit()
+
+    get_preview_resp = await async_client.get(
+        f"/claims/{created['claim_id']}/preview",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+    )
+    assert get_preview_resp.status_code == 200
+    payload = get_preview_resp.json()
+    assert payload["preview_header"]["format_version"] == 2
+    assert payload["preview_header"]["from_party"]["line1"] == "Рук. ООО «Альфа»"
+    assert payload["preview_header"]["from_party"]["line2"] == "Петров П.П."
+    assert payload["preview_header"]["from_party"]["rendered"] == {
+        "line1": "Рук. ООО «Альфа»",
+        "line2": None,
+        "line3": "Петров П.П.",
+    }
+    assert payload["preview_header"]["to_party"]["line1"] == "Кому: ???"
+    assert payload["preview_header"]["to_party"]["line2"] is None
+    assert payload["preview_header"]["to_party"]["rendered"] == {
+        "line1": "Кому: ???",
+        "line2": None,
+        "line3": None,
+    }
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        claim_row = await session.execute(
+            text("SELECT preview_header_json FROM claims WHERE id = :id"),
+            {"id": created["claim_id"]},
+        )
+        row = claim_row.first()
+        assert row is not None
+        stored_header = row[0]
+
+    assert stored_header == legacy_header
+    assert "format_version" not in stored_header
+    assert "rendered" not in stored_header["from_party"]
+    assert "rendered" not in stored_header["to_party"]

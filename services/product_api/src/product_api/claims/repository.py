@@ -14,6 +14,7 @@ from .normalization import (
     normalize_client_email,
 )
 from .preview_header_enrichment import build_preview_header_from_normalized_data
+from .preview_header_formatter import build_preview_header_party
 
 
 def _isoformat(value: datetime | None) -> str | None:
@@ -294,7 +295,182 @@ async def apply_claim_payment_stub(
     return claim, changed_fields
 
 
-def _build_claim_preview_header(claim: Claim, normalized_data: dict[str, Any] | None) -> dict[str, Any]:
+PREVIEW_HEADER_FORMAT_VERSION = 2
+
+
+def _build_claim_preview_header(
+    claim: Claim, normalized_data: dict[str, Any] | None
+) -> dict[str, Any] | None:
     if isinstance(claim.preview_header_json, dict):
-        return claim.preview_header_json
-    return build_preview_header_from_normalized_data(normalized_data)
+        source_header = claim.preview_header_json
+    else:
+        source_header = build_preview_header_from_normalized_data(normalized_data)
+    return _normalize_preview_header_for_response(source_header, normalized_data)
+
+
+def _normalize_preview_header_for_response(
+    payload: Any,
+    normalized_data: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+
+    fallback_header = build_preview_header_from_normalized_data(normalized_data)
+    fallback_from_party = (
+        fallback_header.get("from_party")
+        if isinstance(fallback_header, dict)
+        else None
+    )
+    fallback_to_party = (
+        fallback_header.get("to_party")
+        if isinstance(fallback_header, dict)
+        else None
+    )
+
+    from_party = _normalize_preview_header_party(
+        payload.get("from_party"),
+        side="from",
+        fallback_party=fallback_from_party,
+    )
+    to_party = _normalize_preview_header_party(
+        payload.get("to_party"),
+        side="to",
+        fallback_party=fallback_to_party,
+    )
+    return {
+        "format_version": PREVIEW_HEADER_FORMAT_VERSION,
+        "from_party": from_party,
+        "to_party": to_party,
+    }
+
+
+def _normalize_preview_header_party(
+    payload: Any,
+    *,
+    side: str,
+    fallback_party: Any,
+) -> dict[str, Any]:
+    source = dict(payload) if isinstance(payload, dict) else {}
+    source_fields = _extract_party_source_fields(source)
+    kind = source_fields["kind"]
+    company_name = source_fields["company_name"]
+    position_raw = source_fields["position_raw"]
+    person_name = source_fields["person_name"]
+    line1 = _normalize_required_line(source.get("line1"))
+    line2 = _normalize_optional_line(source.get("line2"))
+
+    rendered = _normalize_rendered_payload(source.get("rendered"), legacy_line1=line1)
+    if rendered is None:
+        rendered = _build_rendered_from_sources(
+            side=side,
+            source_fields=source_fields,
+            fallback_fields=_extract_party_source_fields(fallback_party),
+        )
+    if rendered is None:
+        rendered = {
+            "line1": line1,
+            "line2": None,
+            "line3": line2,
+        }
+
+    source["kind"] = kind
+    source["company_name"] = company_name
+    source["position_raw"] = position_raw
+    source["person_name"] = person_name
+    source["line1"] = line1
+    source["line2"] = line2
+    source["rendered"] = rendered
+    return source
+
+
+def _extract_party_source_fields(payload: Any) -> dict[str, Any]:
+    source = dict(payload) if isinstance(payload, dict) else {}
+    kind_raw = source.get("kind")
+    if isinstance(kind_raw, str) and kind_raw.strip():
+        kind = kind_raw.strip()
+    else:
+        kind = "unknown"
+    return {
+        "kind": kind,
+        "company_name": _normalize_optional_line(source.get("company_name")),
+        "position_raw": _normalize_optional_line(source.get("position_raw")),
+        "person_name": _normalize_optional_line(source.get("person_name")),
+    }
+
+
+def _normalize_rendered_payload(payload: Any, *, legacy_line1: str) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    line1 = _normalize_required_line(payload.get("line1")) or legacy_line1
+    return {
+        "line1": line1,
+        "line2": _normalize_optional_line(payload.get("line2")),
+        "line3": _normalize_optional_line(payload.get("line3")),
+    }
+
+
+def _build_rendered_from_sources(
+    *,
+    side: str,
+    source_fields: dict[str, Any],
+    fallback_fields: dict[str, Any],
+) -> dict[str, Any] | None:
+    effective_kind = (
+        source_fields["kind"]
+        if source_fields["kind"] != "unknown"
+        else fallback_fields["kind"]
+    )
+    effective_company_name = (
+        source_fields["company_name"]
+        if source_fields["company_name"] is not None
+        else fallback_fields["company_name"]
+    )
+    effective_position_raw = (
+        source_fields["position_raw"]
+        if source_fields["position_raw"] is not None
+        else fallback_fields["position_raw"]
+    )
+    effective_person_name = (
+        source_fields["person_name"]
+        if source_fields["person_name"] is not None
+        else fallback_fields["person_name"]
+    )
+
+    if (
+        effective_kind == "unknown"
+        and effective_company_name is None
+        and effective_position_raw is None
+        and effective_person_name is None
+    ):
+        return None
+
+    formatted_party = build_preview_header_party(
+        {
+            "kind": effective_kind,
+            "company_name": effective_company_name,
+            "position_raw": effective_position_raw,
+            "person_name": effective_person_name,
+        },
+        side=side,
+    )
+    return _normalize_rendered_payload(
+        formatted_party.get("rendered"),
+        legacy_line1="",
+    )
+
+
+def _normalize_required_line(value: Any) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        value = str(value)
+    return value.strip()
+
+
+def _normalize_optional_line(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    normalized = value.strip()
+    return normalized or None

@@ -47,9 +47,17 @@ export type ClaimPreviewHeaderParty = {
   person_name: string | null
   line1: string
   line2: string | null
+  rendered?: ClaimPreviewHeaderRendered | null
+}
+
+export type ClaimPreviewHeaderRendered = {
+  line1: string
+  line2: string | null
+  line3: string | null
 }
 
 export type ClaimPreviewHeader = {
+  format_version?: number
   from_party: ClaimPreviewHeaderParty
   to_party: ClaimPreviewHeaderParty
 }

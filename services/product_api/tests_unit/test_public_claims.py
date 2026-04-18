@@ -414,6 +414,13 @@ async def test_update_public_claim_patch_rebuilds_header_when_inn_removed_after_
     enriched_payload = enriched_resp.json()
     assert enriched_payload["preview_header"]["from_party"]["line1"] == "Генерального директора ООО «Альфа»"
     assert enriched_payload["preview_header"]["from_party"]["line2"] == "Петров Петр Петрович"
+    assert claim.preview_header_json["format_version"] == 2
+    assert claim.preview_header_json["from_party"]["position_raw"] == "генеральный директор"
+    assert claim.preview_header_json["from_party"]["person_name"] == "Петров Петр Петрович"
+    assert claim.preview_header_json["from_party"]["rendered"]["line1"] == "От генерального директора"
+    assert claim.preview_header_json["to_party"]["position_raw"] == "директор"
+    assert claim.preview_header_json["to_party"]["person_name"] == "Иванов Иван Иванович"
+    assert claim.preview_header_json["to_party"]["rendered"]["line1"] == "Директору"
 
     cleared_inn_resp = await async_client.patch(
         "/claims/192",
@@ -431,6 +438,21 @@ async def test_update_public_claim_patch_rebuilds_header_when_inn_removed_after_
     assert cleared_payload["preview_header"]["from_party"]["line2"] is None
     assert cleared_payload["preview_header"]["to_party"]["line1"] == "Руководителю ООО «Вектор»"
     assert cleared_payload["preview_header"]["to_party"]["line2"] is None
+    assert claim.preview_header_json["format_version"] == 2
+    assert claim.preview_header_json["from_party"]["position_raw"] is None
+    assert claim.preview_header_json["from_party"]["person_name"] is None
+    assert claim.preview_header_json["from_party"]["rendered"] == {
+        "line1": "От руководителя",
+        "line2": "ООО «Альфа»",
+        "line3": None,
+    }
+    assert claim.preview_header_json["to_party"]["position_raw"] is None
+    assert claim.preview_header_json["to_party"]["person_name"] is None
+    assert claim.preview_header_json["to_party"]["rendered"] == {
+        "line1": "Руководителю",
+        "line2": "ООО «Вектор»",
+        "line3": None,
+    }
 
 
 async def test_update_public_claim_patch_rebuilds_header_when_name_changes(
@@ -500,6 +522,18 @@ async def test_update_public_claim_patch_rebuilds_header_when_name_changes(
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["preview_header"]["from_party"]["line1"] == "Руководителя ООО «Новое имя»"
+    assert claim.preview_header_json["format_version"] == 2
+    assert claim.preview_header_json["from_party"]["company_name"] == claim.normalized_data_json["creditor_name"]
+    assert claim.preview_header_json["from_party"]["rendered"] == {
+        "line1": "От руководителя",
+        "line2": claim.normalized_data_json["creditor_name"],
+        "line3": None,
+    }
+    assert claim.preview_header_json["to_party"]["rendered"] == {
+        "line1": "Руководителю",
+        "line2": claim.normalized_data_json["debtor_name"],
+        "line3": None,
+    }
 
 
 async def test_upload_public_claim_file_ok(async_client, mock_session, monkeypatch):
