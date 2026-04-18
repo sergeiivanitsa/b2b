@@ -315,6 +315,7 @@ async def test_patch_claims_invalid_case_type_returns_400(async_client):
 
 async def test_patch_claims_with_datanewton_failure_falls_back_to_local_header(
     async_client,
+    engine,
     monkeypatch,
 ):
     create_resp = await async_client.post(
@@ -352,10 +353,45 @@ async def test_patch_claims_with_datanewton_failure_falls_back_to_local_header(
     payload = resp.json()
     assert payload["preview_header"]["from_party"]["line1"] == "Руководителя OOO Alpha"
     assert payload["preview_header"]["to_party"]["line1"] == "Индивидуальному предпринимателю"
+    assert payload["preview_header"]["from_party"]["rendered"]["line1"] == "От руководителя"
+    assert (
+        payload["preview_header"]["to_party"]["rendered"]["line1"]
+        == "Индивидуальному предпринимателю"
+    )
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        claim_row = await session.execute(
+            text("SELECT preview_header_json FROM claims WHERE id = :id"),
+            {"id": created["claim_id"]},
+        )
+        row = claim_row.first()
+        assert row is not None
+        saved_header = row[0]
+
+    assert saved_header["format_version"] == 2
+    assert saved_header["from_party"]["kind"] == "legal_entity"
+    assert saved_header["from_party"]["company_name"] == "OOO Alpha"
+    assert saved_header["from_party"]["position_raw"] is None
+    assert saved_header["from_party"]["person_name"] is None
+    assert saved_header["from_party"]["rendered"] == {
+        "line1": "От руководителя",
+        "line2": "OOO Alpha",
+        "line3": None,
+    }
+    assert saved_header["to_party"]["kind"] == "individual_entrepreneur"
+    assert saved_header["to_party"]["company_name"] == "OOO Vector"
+    assert saved_header["to_party"]["position_raw"] is None
+    assert saved_header["to_party"]["person_name"] is None
+    assert saved_header["to_party"]["rendered"] == {
+        "line1": "Индивидуальному предпринимателю",
+        "line2": "OOO Vector",
+        "line3": None,
+    }
 
 
 async def test_patch_claims_enriches_preview_header_with_manager_fields(
     async_client,
+    engine,
     monkeypatch,
 ):
     create_resp = await async_client.post(
@@ -459,9 +495,30 @@ async def test_patch_claims_enriches_preview_header_with_manager_fields(
     assert payload["preview_header"]["from_party"]["position_raw"] == "general director"
     assert payload["preview_header"]["to_party"]["person_name"] == "Ivanov Ivan Ivanovich"
     assert payload["preview_header"]["to_party"]["position_raw"] == "director"
+    assert payload["preview_header"]["from_party"]["rendered"]["line1"] == "От генерального директора"
+    assert payload["preview_header"]["to_party"]["rendered"]["line1"] == "Директору"
     assert len(requests) == 2
     for request in requests:
         assert request["params"]["filters"] == "MANAGER_BLOCK,ADDRESS_BLOCK"
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        claim_row = await session.execute(
+            text("SELECT preview_header_json FROM claims WHERE id = :id"),
+            {"id": created["claim_id"]},
+        )
+        row = claim_row.first()
+        assert row is not None
+        saved_header = row[0]
+
+    assert saved_header["format_version"] == 2
+    assert saved_header["from_party"]["company_name"] == "OOO Alpha"
+    assert saved_header["from_party"]["position_raw"] == "general director"
+    assert saved_header["from_party"]["person_name"] == "Petrov Petr Petrovich"
+    assert saved_header["from_party"]["rendered"]["line1"] == "От генерального директора"
+    assert saved_header["to_party"]["company_name"] == "OOO Vector"
+    assert saved_header["to_party"]["position_raw"] == "director"
+    assert saved_header["to_party"]["person_name"] == "Ivanov Ivan Ivanovich"
+    assert saved_header["to_party"]["rendered"]["line1"] == "Директору"
 
 
 async def test_post_claims_files_upload_and_list(async_client, engine):

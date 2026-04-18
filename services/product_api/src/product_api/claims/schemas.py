@@ -64,6 +64,12 @@ class Step2Out(BaseModel):
     derived: Step2DerivedOut
 
 
+class PreviewHeaderRenderedOut(BaseModel):
+    line1: str
+    line2: str | None
+    line3: str | None
+
+
 class PreviewHeaderPartyOut(BaseModel):
     kind: str
     company_name: str | None
@@ -71,9 +77,11 @@ class PreviewHeaderPartyOut(BaseModel):
     person_name: str | None
     line1: str
     line2: str | None
+    rendered: PreviewHeaderRenderedOut
 
 
 class PreviewHeaderOut(BaseModel):
+    format_version: int
     from_party: PreviewHeaderPartyOut
     to_party: PreviewHeaderPartyOut
 
@@ -87,4 +95,4 @@ class ClaimPreviewOut(BaseModel):
     blocked_blocks: list[str]
     generated_preview_text: str
     missing_fields: list[str]
-    preview_header: PreviewHeaderOut
+    preview_header: PreviewHeaderOut | None

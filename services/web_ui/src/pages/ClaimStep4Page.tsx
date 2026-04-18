@@ -18,8 +18,10 @@ import { ApiHttpError } from '../lib/api'
 type DocumentHeader = {
   senderLine1: string
   senderLine2: string | null
+  senderLine3: string | null
   recipientLine1: string
   recipientLine2: string | null
+  recipientLine3: string | null
 }
 
 type LoadedClaimMeta = {
@@ -41,10 +43,12 @@ const PACKAGE_ITEMS = [
 ]
 
 const DEFAULT_DOCUMENT_HEADER: DocumentHeader = {
-  senderLine1: 'Кредитор',
+  senderLine1: 'От руководителя',
   senderLine2: null,
-  recipientLine1: 'Должник',
+  senderLine3: null,
+  recipientLine1: 'Руководителю',
   recipientLine2: null,
+  recipientLine3: null,
 }
 
 export function ClaimStep4Page() {
@@ -146,10 +150,11 @@ export function ClaimStep4Page() {
     [previewText],
   )
   const documentHeader = useMemo(() => {
+    const fallbackHeader = meta?.fallbackHeader ?? DEFAULT_DOCUMENT_HEADER
     if (previewHeader) {
-      return buildDocumentHeaderFromBackend(previewHeader)
+      return buildDocumentHeaderFromBackend(previewHeader, fallbackHeader)
     }
-    return meta?.fallbackHeader ?? DEFAULT_DOCUMENT_HEADER
+    return fallbackHeader
   }, [meta?.fallbackHeader, previewHeader])
   const discountPrice = useMemo(() => {
     if (!meta) {
@@ -228,7 +233,6 @@ export function ClaimStep4Page() {
               <div className="claims-document-sheet__inner">
                 <div className="claims-document-header">
                   <section className="claims-document-party">
-                    <p className="claims-document-party__label">ОТ КОГО:</p>
                     <p className="claims-document-party__line claims-document-party__line--line1">
                       {documentHeader.senderLine1}
                     </p>
@@ -237,15 +241,24 @@ export function ClaimStep4Page() {
                         {documentHeader.senderLine2}
                       </p>
                     ) : null}
+                    {documentHeader.senderLine3 ? (
+                      <p className="claims-document-party__line claims-document-party__line--line3">
+                        {documentHeader.senderLine3}
+                      </p>
+                    ) : null}
                   </section>
                   <section className="claims-document-party claims-document-party--to">
-                    <p className="claims-document-party__label">КОМУ:</p>
                     <p className="claims-document-party__line claims-document-party__line--line1">
                       {documentHeader.recipientLine1}
                     </p>
                     {documentHeader.recipientLine2 ? (
                       <p className="claims-document-party__line claims-document-party__line--line2">
                         {documentHeader.recipientLine2}
+                      </p>
+                    ) : null}
+                    {documentHeader.recipientLine3 ? (
+                      <p className="claims-document-party__line claims-document-party__line--line3">
+                        {documentHeader.recipientLine3}
                       </p>
                     ) : null}
                   </section>
@@ -325,31 +338,77 @@ export function ClaimStep4Page() {
   )
 }
 
-function buildDocumentHeaderFromBackend(header: ClaimPreviewHeader): DocumentHeader {
-  const senderLine1 = normalizeTextLine(header.from_party.line1) ?? DEFAULT_DOCUMENT_HEADER.senderLine1
-  const recipientLine1 =
-    normalizeTextLine(header.to_party.line1) ?? DEFAULT_DOCUMENT_HEADER.recipientLine1
+function buildDocumentHeaderFromBackend(
+  header: ClaimPreviewHeader,
+  fallbackHeader: DocumentHeader,
+): DocumentHeader {
+  const senderParty = mapPartyForThreeLineDocumentHeader(
+    header.from_party,
+    fallbackHeader.senderLine1,
+    fallbackHeader.senderLine2,
+    fallbackHeader.senderLine3,
+  )
+  const recipientParty = mapPartyForThreeLineDocumentHeader(
+    header.to_party,
+    fallbackHeader.recipientLine1,
+    fallbackHeader.recipientLine2,
+    fallbackHeader.recipientLine3,
+  )
   return {
-    senderLine1,
-    senderLine2: normalizeTextLine(header.from_party.line2),
-    recipientLine1,
-    recipientLine2: normalizeTextLine(header.to_party.line2),
+    senderLine1: senderParty.line1,
+    senderLine2: senderParty.line2,
+    senderLine3: senderParty.line3,
+    recipientLine1: recipientParty.line1,
+    recipientLine2: recipientParty.line2,
+    recipientLine3: recipientParty.line3,
+  }
+}
+
+function mapPartyForThreeLineDocumentHeader(
+  party: ClaimPreviewHeader['from_party'] | ClaimPreviewHeader['to_party'],
+  fallbackLine1: string,
+  fallbackLine2: string | null,
+  fallbackLine3: string | null,
+): { line1: string; line2: string | null; line3: string | null } {
+  const renderedLine1 = normalizeTextLine(party.rendered?.line1)
+  if (renderedLine1) {
+    return {
+      line1: renderedLine1,
+      line2: normalizeTextLine(party.rendered?.line2),
+      line3: normalizeTextLine(party.rendered?.line3),
+    }
+  }
+
+  const legacyLine1 = normalizeTextLine(party.line1)
+  if (legacyLine1) {
+    return {
+      line1: legacyLine1,
+      line2: null,
+      line3: normalizeTextLine(party.line2),
+    }
+  }
+
+  return {
+    line1: fallbackLine1,
+    line2: fallbackLine2,
+    line3: fallbackLine3,
   }
 }
 
 function buildLegacyDocumentHeader(claim: PublicClaimSnapshot): DocumentHeader {
   const normalizedData = claim.normalized_data
-  const senderLine1 =
-    normalizeTextLine(normalizedData?.creditor_name) ?? DEFAULT_DOCUMENT_HEADER.senderLine1
-  const senderLine2 = normalizeTextLine(claim.client_email ? `Email: ${claim.client_email}` : null)
-  const recipientLine1 =
-    normalizeTextLine(normalizedData?.debtor_name) ?? DEFAULT_DOCUMENT_HEADER.recipientLine1
+  const senderLine1 = DEFAULT_DOCUMENT_HEADER.senderLine1
+  const senderLine2 = normalizeTextLine(normalizedData?.creditor_name)
+  const recipientLine1 = DEFAULT_DOCUMENT_HEADER.recipientLine1
+  const recipientLine2 = normalizeTextLine(normalizedData?.debtor_name)
 
   return {
     senderLine1,
     senderLine2,
+    senderLine3: null,
     recipientLine1,
-    recipientLine2: null,
+    recipientLine2,
+    recipientLine3: null,
   }
 }
 

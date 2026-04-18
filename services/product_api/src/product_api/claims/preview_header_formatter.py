@@ -8,6 +8,21 @@ PartySide = Literal["from", "to"]
 
 _GENERAL_DIRECTOR_PATTERN = re.compile(r"\bгенеральн\w*\s+директор\w*\b", re.IGNORECASE)
 _DIRECTOR_PATTERN = re.compile(r"\bдиректор\w*\b", re.IGNORECASE)
+_RENDERED_POSITION_ALIASES: dict[str, str] = {
+    "генеральный директор": "general_director",
+    "директор": "director",
+    "президент": "president",
+    "general director": "general_director",
+    "director": "director",
+    "president": "president",
+}
+_IP_PREFIXES = (
+    "ип ",
+    "ип. ",
+    "индивидуальный предприниматель ",
+    "индивидуального предпринимателя ",
+    "индивидуальному предпринимателю ",
+)
 
 
 def build_preview_header(
@@ -37,6 +52,13 @@ def build_preview_header_party(
         position_raw=position_raw,
         side=side,
     )
+    rendered = _build_rendered_lines(
+        kind=kind,
+        company_name=company_name,
+        position_raw=position_raw,
+        person_name=person_name,
+        side=side,
+    )
     return {
         "kind": kind,
         "company_name": company_name,
@@ -44,6 +66,7 @@ def build_preview_header_party(
         "person_name": person_name,
         "line1": line1,
         "line2": person_name,
+        "rendered": rendered,
     }
 
 
@@ -120,3 +143,77 @@ def _normalize_string(value: Any) -> str | None:
         value = str(value)
     normalized = value.strip()
     return normalized or None
+
+
+def _build_rendered_lines(
+    *,
+    kind: PartyKind,
+    company_name: str | None,
+    position_raw: str | None,
+    person_name: str | None,
+    side: PartySide,
+) -> dict[str, str | None]:
+    rendered_line1 = _build_rendered_line1(kind=kind, position_raw=position_raw, side=side)
+    rendered_line2 = company_name
+    rendered_line3 = person_name
+
+    if (
+        kind == "individual_entrepreneur"
+        and rendered_line2 is not None
+        and rendered_line3 is not None
+        and _normalize_ip_identity(rendered_line2) == _normalize_ip_identity(rendered_line3)
+    ):
+        rendered_line3 = None
+
+    return {
+        "line1": rendered_line1,
+        "line2": rendered_line2,
+        "line3": rendered_line3,
+    }
+
+
+def _build_rendered_line1(*, kind: PartyKind, position_raw: str | None, side: PartySide) -> str:
+    if kind == "individual_entrepreneur":
+        return (
+            "От индивидуального предпринимателя"
+            if side == "from"
+            else "Индивидуальному предпринимателю"
+        )
+
+    normalized_position = _normalize_rendered_position(position_raw)
+    if side == "from":
+        if normalized_position == "general_director":
+            return "От генерального директора"
+        if normalized_position == "director":
+            return "От директора"
+        if normalized_position == "president":
+            return "От президента"
+        return "От руководителя"
+
+    if normalized_position == "general_director":
+        return "Генеральному директору"
+    if normalized_position == "director":
+        return "Директору"
+    if normalized_position == "president":
+        return "Президенту"
+    return "Руководителю"
+
+
+def _normalize_rendered_position(position_raw: str | None) -> str:
+    if not position_raw:
+        return "unknown"
+    normalized = _normalize_for_exact_equality(position_raw)
+    return _RENDERED_POSITION_ALIASES.get(normalized, "unknown")
+
+
+def _normalize_for_exact_equality(value: str) -> str:
+    return " ".join(value.strip().lower().split())
+
+
+def _normalize_ip_identity(value: str) -> str:
+    normalized = _normalize_for_exact_equality(value)
+    for prefix in _IP_PREFIXES:
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix) :]
+            break
+    return " ".join(normalized.split())
