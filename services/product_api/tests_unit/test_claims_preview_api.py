@@ -298,7 +298,7 @@ async def test_get_preview_old_payload_line2_null_bridge_is_stable(async_client,
     assert "rendered" not in claim.preview_header_json["to_party"]
 
 
-async def test_get_preview_legacy_payload_full_raw_uses_stored_raw_for_rendered(
+async def test_get_preview_legacy_payload_full_raw_inflects_rendered_line3_from_stored_raw(
     async_client,
     mock_session,
 ):
@@ -342,7 +342,7 @@ async def test_get_preview_legacy_payload_full_raw_uses_stored_raw_for_rendered(
     assert payload["preview_header"]["from_party"]["rendered"] == {
         "line1": "От генерального директора",
         "line2": "ООО «Stored Alpha»",
-        "line3": "Петров Петр Петрович",
+        "line3": "Петрова Петра Петровича",
     }
     assert payload["preview_header"]["to_party"]["line1"] == "Директору ООО «Stored Vector»"
     assert payload["preview_header"]["to_party"]["line2"] == "Ivanov Ivan Ivanovich"
