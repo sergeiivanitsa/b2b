@@ -1,5 +1,6 @@
 import pytest
 
+import product_api.claims.preview_header_formatter as preview_header_formatter_module
 from product_api.claims.preview_header_formatter import build_preview_header
 
 
@@ -26,12 +27,12 @@ def test_formatter_legal_entity_director_keeps_legacy_and_builds_rendered():
     assert header["from_party"]["rendered"] == {
         "line1": "От директора",
         "line2": "ООО «Альфа»",
-        "line3": "Петров Петр Петрович",
+        "line3": "Петрова Петра Петровича",
     }
     assert header["to_party"]["rendered"] == {
         "line1": "Директору",
         "line2": "ООО «Вектор»",
-        "line3": "Иванов Иван Иванович",
+        "line3": "Иванову Ивану Ивановичу",
     }
 
 
@@ -98,12 +99,12 @@ def test_formatter_unknown_position_uses_rendered_fallback():
     assert header["from_party"]["rendered"] == {
         "line1": "От руководителя",
         "line2": "ООО «Альфа»",
-        "line3": "Петров Петр Петрович",
+        "line3": "Петрова Петра Петровича",
     }
     assert header["to_party"]["rendered"] == {
         "line1": "Руководителю",
         "line2": "ООО «Вектор»",
-        "line3": "Иванов Иван Иванович",
+        "line3": "Иванову Ивану Ивановичу",
     }
 
 
@@ -138,7 +139,7 @@ def test_formatter_rendered_english_aliases_use_exact_normalized_equality(
     assert header["from_party"]["rendered"]["line1"] == expected_from_line1
     assert header["to_party"]["rendered"]["line1"] == expected_to_line1
     assert header["from_party"]["rendered"]["line2"] == "ООО «Альфа»"
-    assert header["to_party"]["rendered"]["line3"] == "Иванов Иван Иванович"
+    assert header["to_party"]["rendered"]["line3"] == "Иванову Ивану Ивановичу"
 
 
 @pytest.mark.parametrize(
@@ -223,6 +224,108 @@ def test_formatter_ip_without_person_name_keeps_line3_none():
         "line2": "ИП Иванов Иван Иванович",
         "line3": None,
     }
+
+
+@pytest.mark.parametrize(
+    ("person_name", "expected_from", "expected_to"),
+    [
+        ("Иванов Иван Иванович", "Иванова Ивана Ивановича", "Иванову Ивану Ивановичу"),
+        ("Смирнова Анна Ивановна", "Смирновой Анны Ивановны", "Смирновой Анне Ивановне"),
+        ("Иваница Сергей Петрович", "Иваницы Сергея Петровича", "Иванице Сергею Петровичу"),
+        ("Иваница Анна Петровна", "Иваница Анны Петровны", "Иваница Анне Петровне"),
+    ],
+)
+def test_formatter_legal_entity_line3_exact_outputs(
+    person_name: str,
+    expected_from: str,
+    expected_to: str,
+):
+    header = build_preview_header(
+        from_party={
+            "kind": "legal_entity",
+            "company_name": "ООО «Альфа»",
+            "position_raw": "директор",
+            "person_name": person_name,
+        },
+        to_party={
+            "kind": "legal_entity",
+            "company_name": "ООО «Вектор»",
+            "position_raw": "директор",
+            "person_name": person_name,
+        },
+    )
+
+    # Raw source fields must remain unchanged.
+    assert header["from_party"]["person_name"] == person_name
+    assert header["to_party"]["person_name"] == person_name
+    assert header["from_party"]["line2"] == person_name
+    assert header["to_party"]["line2"] == person_name
+
+    assert header["from_party"]["rendered"]["line3"] == expected_from
+    assert header["to_party"]["rendered"]["line3"] == expected_to
+
+
+def test_formatter_non_legal_kind_keeps_old_line3_and_skips_inflector(monkeypatch: pytest.MonkeyPatch):
+    called = False
+
+    def fake_inflector(_person_name: str | None, *, side: str) -> str | None:
+        nonlocal called
+        called = True
+        return "SHOULD_NOT_BE_USED"
+
+    monkeypatch.setattr(preview_header_formatter_module, "inflect_person_name_for_display", fake_inflector)
+
+    header = build_preview_header(
+        from_party={
+            "kind": "unknown",
+            "company_name": "ООО «Альфа»",
+            "position_raw": "директор",
+            "person_name": "Иванов Иван Иванович",
+        },
+        to_party={
+            "kind": "individual_entrepreneur",
+            "company_name": "ИП Сидоров Сидор Сидорович",
+            "position_raw": "директор",
+            "person_name": "Сидоров Сидор Сидорович",
+        },
+    )
+
+    assert called is False
+    assert header["from_party"]["rendered"]["line3"] == "Иванов Иван Иванович"
+    # IP branch still uses preexisting anti-dup behavior.
+    assert header["to_party"]["rendered"]["line3"] is None
+
+
+def test_formatter_empty_person_name_keeps_line3_none_and_skips_inflector(monkeypatch: pytest.MonkeyPatch):
+    called = False
+
+    def fake_inflector(_person_name: str | None, *, side: str) -> str | None:
+        nonlocal called
+        called = True
+        return "SHOULD_NOT_BE_USED"
+
+    monkeypatch.setattr(preview_header_formatter_module, "inflect_person_name_for_display", fake_inflector)
+
+    header = build_preview_header(
+        from_party={
+            "kind": "legal_entity",
+            "company_name": "ООО «Альфа»",
+            "position_raw": "директор",
+            "person_name": "   ",
+        },
+        to_party={
+            "kind": "legal_entity",
+            "company_name": "ООО «Вектор»",
+            "position_raw": "директор",
+            "person_name": None,
+        },
+    )
+
+    assert called is False
+    assert header["from_party"]["person_name"] is None
+    assert header["to_party"]["person_name"] is None
+    assert header["from_party"]["rendered"]["line3"] is None
+    assert header["to_party"]["rendered"]["line3"] is None
 
 
 def test_formatter_partial_data():

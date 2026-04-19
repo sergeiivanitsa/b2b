@@ -98,6 +98,184 @@ async def test_generate_preview_and_get_preview(async_client, engine, monkeypatc
         assert row[4] == "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё"
 
 
+async def test_generate_and_get_preview_preserve_safe_no_inflect_line3_from_write_path(
+    async_client,
+    engine,
+    monkeypatch,
+):
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    from product_api.claims import datanewton_client
+    from product_api.routers import public_claims as public_claims_router
+
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_enabled", True)
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_api_key", "test-key")
+    monkeypatch.setattr(
+        public_claims_router.settings,
+        "datanewton_counterparty_filters",
+        ["MANAGER_BLOCK", "ADDRESS_BLOCK"],
+    )
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_cache_ttl_seconds", 0)
+    monkeypatch.setattr(datanewton_client, "_client_singleton", None)
+
+    payloads_by_inn = {
+        "7701234567": {
+            "data": {
+                "company": {
+                    "company_names": {"short_name": "OOO Alpha"},
+                    "managers": [
+                        {
+                            "fio": "ИВАНОВ ИВАН ИВАНОВИЧ",
+                            "position": "генеральный директор",
+                        }
+                    ],
+                    "address": {"line_address": "Moscow"},
+                }
+            }
+        },
+        "7801234567": {
+            "data": {
+                "company": {
+                    "company_names": {"short_name": "OOO Vector"},
+                    "managers": [
+                        {
+                            "fio": "Петров П.П.",
+                            "position": "директор",
+                        }
+                    ],
+                    "address": {"line_address": "Saint Petersburg"},
+                }
+            }
+        },
+    }
+
+    class FakeResponse:
+        def __init__(self, payload: dict):
+            self.status_code = 200
+            self._payload = payload
+            self.text = str(payload)
+
+        def json(self) -> dict:
+            return self._payload
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, params=None):
+            request_params = dict(params or {})
+            inn = request_params.get("inn")
+            payload = payloads_by_inn.get(inn)
+            if payload is None:
+                raise AssertionError(f"Unexpected inn: {inn}")
+            return FakeResponse(payload)
+
+    monkeypatch.setattr(datanewton_client.httpx, "AsyncClient", FakeAsyncClient)
+
+    patch_resp = await async_client.patch(
+        f"/claims/{created['claim_id']}",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+        json={
+            "case_type": "supply",
+            "normalized_data": {
+                "creditor_name": "OOO Alpha",
+                "creditor_inn": "7701234567",
+                "debtor_name": "OOO Vector",
+                "debtor_inn": "7801234567",
+                "contract_signed": True,
+                "debt_amount": 380000,
+                "payment_due_date": "2026-02-01",
+                "documents_mentioned": ["contract"],
+            },
+        },
+    )
+    assert patch_resp.status_code == 200
+
+    decision = {
+        "generation_state": "ready",
+        "risk_flags": [],
+        "allowed_blocks": ["header", "facts", "demands"],
+        "blocked_blocks": [],
+        "missing_fields": [],
+    }
+
+    async def fake_generate_claim_preview(
+        _settings, *, claim_id, input_text, case_type, normalized_data, decision
+    ):
+        return {
+            "generated_preview_text": "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё",
+            "used_fallback": False,
+            "error_code": None,
+        }
+
+    monkeypatch.setattr(public_claims_router, "evaluate_claim_rules", lambda **_: decision)
+    monkeypatch.setattr(
+        public_claims_router,
+        "generate_claim_preview",
+        fake_generate_claim_preview,
+    )
+
+    generate_resp = await async_client.post(
+        f"/claims/{created['claim_id']}/generate-preview",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+    )
+    assert generate_resp.status_code == 200
+    generate_payload = generate_resp.json()
+    assert generate_payload["preview_header"]["from_party"]["person_name"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
+    assert generate_payload["preview_header"]["from_party"]["line2"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
+    assert generate_payload["preview_header"]["from_party"]["rendered"] == {
+        "line1": "От генерального директора",
+        "line2": "OOO Alpha",
+        "line3": "ИВАНОВ ИВАН ИВАНОВИЧ",
+    }
+    assert generate_payload["preview_header"]["to_party"]["person_name"] == "Петров П.П."
+    assert generate_payload["preview_header"]["to_party"]["line2"] == "Петров П.П."
+    assert generate_payload["preview_header"]["to_party"]["rendered"] == {
+        "line1": "Директору",
+        "line2": "OOO Vector",
+        "line3": "Петров П.П.",
+    }
+
+    get_preview_resp = await async_client.get(
+        f"/claims/{created['claim_id']}/preview",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+    )
+    assert get_preview_resp.status_code == 200
+    get_payload = get_preview_resp.json()
+    assert get_payload["preview_header"]["from_party"]["rendered"]["line3"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
+    assert get_payload["preview_header"]["to_party"]["rendered"]["line3"] == "Петров П.П."
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        claim_row = await session.execute(
+            text("SELECT preview_header_json FROM claims WHERE id = :id"),
+            {"id": created["claim_id"]},
+        )
+        row = claim_row.first()
+        assert row is not None
+        saved_header = row[0]
+
+    assert saved_header["format_version"] == 2
+    assert saved_header["from_party"]["person_name"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
+    assert saved_header["from_party"]["line2"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
+    assert saved_header["from_party"]["rendered"]["line2"] == "OOO Alpha"
+    assert saved_header["from_party"]["rendered"]["line3"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
+    assert saved_header["to_party"]["person_name"] == "Петров П.П."
+    assert saved_header["to_party"]["line2"] == "Петров П.П."
+    assert saved_header["to_party"]["rendered"]["line2"] == "OOO Vector"
+    assert saved_header["to_party"]["rendered"]["line3"] == "Петров П.П."
+
+
 async def test_generate_preview_insufficient_data_blocks(async_client, engine, monkeypatch):
     create_resp = await async_client.post(
         "/claims",

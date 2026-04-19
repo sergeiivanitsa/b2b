@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Literal
 
+from .person_name_inflection import inflect_person_name_for_display
+
 PartyKind = Literal["legal_entity", "individual_entrepreneur", "unknown"]
 PartySide = Literal["from", "to"]
 
@@ -155,13 +157,22 @@ def _build_rendered_lines(
 ) -> dict[str, str | None]:
     rendered_line1 = _build_rendered_line1(kind=kind, position_raw=position_raw, side=side)
     rendered_line2 = company_name
-    rendered_line3 = person_name
+    raw_person_name = _normalize_string(person_name)
+    rendered_line3: str | None = None
+    if raw_person_name is not None:
+        if kind == "legal_entity":
+            rendered_line3 = inflect_person_name_for_display(
+                raw_person_name,
+                side=side,
+            )
+        else:
+            rendered_line3 = raw_person_name
 
     if (
         kind == "individual_entrepreneur"
         and rendered_line2 is not None
-        and rendered_line3 is not None
-        and _normalize_ip_identity(rendered_line2) == _normalize_ip_identity(rendered_line3)
+        and raw_person_name is not None
+        and _normalize_ip_identity(rendered_line2) == _normalize_ip_identity(raw_person_name)
     ):
         rendered_line3 = None
 

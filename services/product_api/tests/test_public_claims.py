@@ -353,6 +353,14 @@ async def test_patch_claims_with_datanewton_failure_falls_back_to_local_header(
     payload = resp.json()
     assert payload["preview_header"]["from_party"]["line1"] == "Руководителя OOO Alpha"
     assert payload["preview_header"]["to_party"]["line1"] == "Индивидуальному предпринимателю"
+    assert payload["preview_header"]["from_party"]["person_name"] is None
+    assert payload["preview_header"]["from_party"]["line2"] is None
+    assert payload["preview_header"]["from_party"]["rendered"]["line2"] == "OOO Alpha"
+    assert payload["preview_header"]["from_party"]["rendered"]["line3"] is None
+    assert payload["preview_header"]["to_party"]["person_name"] is None
+    assert payload["preview_header"]["to_party"]["line2"] is None
+    assert payload["preview_header"]["to_party"]["rendered"]["line2"] == "OOO Vector"
+    assert payload["preview_header"]["to_party"]["rendered"]["line3"] is None
     assert payload["preview_header"]["from_party"]["rendered"]["line1"] == "От руководителя"
     assert (
         payload["preview_header"]["to_party"]["rendered"]["line1"]
@@ -422,8 +430,8 @@ async def test_patch_claims_enriches_preview_header_with_manager_fields(
                     "company_names": {"short_name": "OOO Alpha"},
                     "managers": [
                         {
-                            "fio": "Petrov Petr Petrovich",
-                            "position": "general director",
+                            "fio": "Петров Петр Петрович",
+                            "position": "генеральный директор",
                         }
                     ],
                     "address": {"line_address": "Moscow"},
@@ -436,8 +444,8 @@ async def test_patch_claims_enriches_preview_header_with_manager_fields(
                     "company_names": {"short_name": "OOO Vector"},
                     "managers": [
                         {
-                            "fio": "Ivanov Ivan Ivanovich",
-                            "position": "director",
+                            "fio": "Иванов Иван Иванович",
+                            "position": "директор",
                         }
                     ],
                     "address": {"line_address": "Saint Petersburg"},
@@ -491,12 +499,18 @@ async def test_patch_claims_enriches_preview_header_with_manager_fields(
 
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["preview_header"]["from_party"]["person_name"] == "Petrov Petr Petrovich"
-    assert payload["preview_header"]["from_party"]["position_raw"] == "general director"
-    assert payload["preview_header"]["to_party"]["person_name"] == "Ivanov Ivan Ivanovich"
-    assert payload["preview_header"]["to_party"]["position_raw"] == "director"
+    assert payload["preview_header"]["from_party"]["person_name"] == "Петров Петр Петрович"
+    assert payload["preview_header"]["from_party"]["line2"] == "Петров Петр Петрович"
+    assert payload["preview_header"]["from_party"]["position_raw"] == "генеральный директор"
+    assert payload["preview_header"]["to_party"]["person_name"] == "Иванов Иван Иванович"
+    assert payload["preview_header"]["to_party"]["line2"] == "Иванов Иван Иванович"
+    assert payload["preview_header"]["to_party"]["position_raw"] == "директор"
     assert payload["preview_header"]["from_party"]["rendered"]["line1"] == "От генерального директора"
+    assert payload["preview_header"]["from_party"]["rendered"]["line2"] == "OOO Alpha"
+    assert payload["preview_header"]["from_party"]["rendered"]["line3"] == "Петрова Петра Петровича"
     assert payload["preview_header"]["to_party"]["rendered"]["line1"] == "Директору"
+    assert payload["preview_header"]["to_party"]["rendered"]["line2"] == "OOO Vector"
+    assert payload["preview_header"]["to_party"]["rendered"]["line3"] == "Иванову Ивану Ивановичу"
     assert len(requests) == 2
     for request in requests:
         assert request["params"]["filters"] == "MANAGER_BLOCK,ADDRESS_BLOCK"
@@ -512,13 +526,152 @@ async def test_patch_claims_enriches_preview_header_with_manager_fields(
 
     assert saved_header["format_version"] == 2
     assert saved_header["from_party"]["company_name"] == "OOO Alpha"
-    assert saved_header["from_party"]["position_raw"] == "general director"
-    assert saved_header["from_party"]["person_name"] == "Petrov Petr Petrovich"
+    assert saved_header["from_party"]["position_raw"] == "генеральный директор"
+    assert saved_header["from_party"]["person_name"] == "Петров Петр Петрович"
+    assert saved_header["from_party"]["line2"] == "Петров Петр Петрович"
     assert saved_header["from_party"]["rendered"]["line1"] == "От генерального директора"
+    assert saved_header["from_party"]["rendered"]["line2"] == "OOO Alpha"
+    assert saved_header["from_party"]["rendered"]["line3"] == "Петрова Петра Петровича"
     assert saved_header["to_party"]["company_name"] == "OOO Vector"
-    assert saved_header["to_party"]["position_raw"] == "director"
-    assert saved_header["to_party"]["person_name"] == "Ivanov Ivan Ivanovich"
+    assert saved_header["to_party"]["position_raw"] == "директор"
+    assert saved_header["to_party"]["person_name"] == "Иванов Иван Иванович"
+    assert saved_header["to_party"]["line2"] == "Иванов Иван Иванович"
     assert saved_header["to_party"]["rendered"]["line1"] == "Директору"
+    assert saved_header["to_party"]["rendered"]["line2"] == "OOO Vector"
+    assert saved_header["to_party"]["rendered"]["line3"] == "Иванову Ивану Ивановичу"
+
+
+async def test_patch_claims_enrichment_success_safe_no_inflect_keeps_raw_line3(
+    async_client,
+    engine,
+    monkeypatch,
+):
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    from product_api.claims import datanewton_client
+    from product_api.routers import public_claims as public_claims_router
+
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_enabled", True)
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_api_key", "test-key")
+    monkeypatch.setattr(
+        public_claims_router.settings,
+        "datanewton_counterparty_filters",
+        ["MANAGER_BLOCK", "ADDRESS_BLOCK"],
+    )
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_cache_ttl_seconds", 0)
+    monkeypatch.setattr(datanewton_client, "_client_singleton", None)
+
+    payloads_by_inn = {
+        "7701234567": {
+            "data": {
+                "company": {
+                    "company_names": {"short_name": "OOO Alpha"},
+                    "managers": [
+                        {
+                            "fio": "ИВАНОВ ИВАН ИВАНОВИЧ",
+                            "position": "генеральный директор",
+                        }
+                    ],
+                    "address": {"line_address": "Moscow"},
+                }
+            }
+        },
+        "7801234567": {
+            "data": {
+                "company": {
+                    "company_names": {"short_name": "OOO Vector"},
+                    "managers": [
+                        {
+                            "fio": "Петров П.П.",
+                            "position": "директор",
+                        }
+                    ],
+                    "address": {"line_address": "Saint Petersburg"},
+                }
+            }
+        },
+    }
+
+    class FakeResponse:
+        def __init__(self, payload: dict):
+            self.status_code = 200
+            self._payload = payload
+            self.text = str(payload)
+
+        def json(self) -> dict:
+            return self._payload
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, params=None):
+            request_params = dict(params or {})
+            inn = request_params.get("inn")
+            payload = payloads_by_inn.get(inn)
+            if payload is None:
+                raise AssertionError(f"Unexpected inn: {inn}")
+            return FakeResponse(payload)
+
+    monkeypatch.setattr(datanewton_client.httpx, "AsyncClient", FakeAsyncClient)
+
+    resp = await async_client.patch(
+        f"/claims/{created['claim_id']}",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+        json={
+            "normalized_data": {
+                "creditor_name": "OOO Alpha",
+                "creditor_inn": "7701234567",
+                "debtor_name": "OOO Vector",
+                "debtor_inn": "7801234567",
+            },
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["preview_header"]["from_party"]["person_name"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
+    assert payload["preview_header"]["from_party"]["line2"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
+    assert payload["preview_header"]["to_party"]["person_name"] == "Петров П.П."
+    assert payload["preview_header"]["to_party"]["line2"] == "Петров П.П."
+    assert payload["preview_header"]["from_party"]["rendered"]["line1"] == "От генерального директора"
+    assert payload["preview_header"]["to_party"]["rendered"]["line1"] == "Директору"
+    assert payload["preview_header"]["from_party"]["rendered"]["line2"] == "OOO Alpha"
+    assert payload["preview_header"]["to_party"]["rendered"]["line2"] == "OOO Vector"
+    assert payload["preview_header"]["from_party"]["rendered"]["line3"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
+    assert payload["preview_header"]["to_party"]["rendered"]["line3"] == "Петров П.П."
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        claim_row = await session.execute(
+            text("SELECT preview_header_json FROM claims WHERE id = :id"),
+            {"id": created["claim_id"]},
+        )
+        row = claim_row.first()
+        assert row is not None
+        saved_header = row[0]
+
+    assert saved_header["format_version"] == 2
+    assert saved_header["from_party"]["person_name"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
+    assert saved_header["from_party"]["line2"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
+    assert saved_header["from_party"]["rendered"]["line1"] == "От генерального директора"
+    assert saved_header["from_party"]["rendered"]["line2"] == "OOO Alpha"
+    assert saved_header["from_party"]["rendered"]["line3"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
+    assert saved_header["to_party"]["person_name"] == "Петров П.П."
+    assert saved_header["to_party"]["line2"] == "Петров П.П."
+    assert saved_header["to_party"]["rendered"]["line1"] == "Директору"
+    assert saved_header["to_party"]["rendered"]["line2"] == "OOO Vector"
+    assert saved_header["to_party"]["rendered"]["line3"] == "Петров П.П."
 
 
 async def test_post_claims_files_upload_and_list(async_client, engine):
