@@ -98,10 +98,72 @@ async def test_generate_preview_and_get_preview(async_client, engine, monkeypatc
         assert row[4] == "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё"
 
 
-async def test_generate_and_get_preview_preserve_safe_no_inflect_line3_from_write_path(
+@pytest.mark.parametrize(
+    ("source_fio", "expected_from_line3", "expected_to_line3"),
+    [
+        pytest.param(
+            "АБДУСАМАТОВ АЗАМАТ КАРОМАТОВИЧ",
+            "Абдусаматова Азамата Кароматовича",
+            "Абдусаматову Азамату Кароматовичу",
+            id="all_caps_male_structured_inflect",
+        ),
+        pytest.param(
+            "ИЛЬИНА ЮЛИЯ СЕРГЕЕВНА",
+            "Ильиной Юлии Сергеевны",
+            "Ильиной Юлии Сергеевне",
+            id="all_caps_female_structured_inflect",
+        ),
+        pytest.param(
+            "СМИРНОВА ЛЮБОВЬ ИВАНОВНА",
+            "Смирнова Любовь Ивановна",
+            "Смирнова Любовь Ивановна",
+            id="all_caps_structured_normalize_only",
+        ),
+        pytest.param(
+            "IVANOV IVAN IVANOVICH",
+            "IVANOV IVAN IVANOVICH",
+            "IVANOV IVAN IVANOVICH",
+            id="latin_raw_fallback",
+        ),
+        pytest.param(
+            "Петров П.П.",
+            "Петров П.П.",
+            "Петров П.П.",
+            id="initials_raw_fallback",
+        ),
+        pytest.param(
+            "Иванов Иван",
+            "Иванов Иван",
+            "Иванов Иван",
+            id="not_three_words_raw_fallback",
+        ),
+        pytest.param(
+            "ИВАНОВ-ПЕТРОВ ИВАН ИВАНОВИЧ",
+            "ИВАНОВ-ПЕТРОВ ИВАН ИВАНОВИЧ",
+            "ИВАНОВ-ПЕТРОВ ИВАН ИВАНОВИЧ",
+            id="hyphen_raw_fallback",
+        ),
+        pytest.param(
+            "ИВАНИЦА СЕРГЕЙ ПЕТРОВИЧ",
+            "Иваницы Сергея Петровича",
+            "Иванице Сергею Петровичу",
+            id="ivanitsa_male_all_caps_override",
+        ),
+        pytest.param(
+            "ИВАНИЦА АННА ПЕТРОВНА",
+            "Иваница Анны Петровны",
+            "Иваница Анне Петровне",
+            id="ivanitsa_female_all_caps_override",
+        ),
+    ],
+)
+async def test_generate_and_get_preview_keep_line3_consistent_with_write_path_contract(
     async_client,
     engine,
     monkeypatch,
+    source_fio: str,
+    expected_from_line3: str,
+    expected_to_line3: str,
 ):
     create_resp = await async_client.post(
         "/claims",
@@ -130,7 +192,7 @@ async def test_generate_and_get_preview_preserve_safe_no_inflect_line3_from_writ
                     "company_names": {"short_name": "OOO Alpha"},
                     "managers": [
                         {
-                            "fio": "ИВАНОВ ИВАН ИВАНОВИЧ",
+                            "fio": source_fio,
                             "position": "генеральный директор",
                         }
                     ],
@@ -144,7 +206,7 @@ async def test_generate_and_get_preview_preserve_safe_no_inflect_line3_from_writ
                     "company_names": {"short_name": "OOO Vector"},
                     "managers": [
                         {
-                            "fio": "Петров П.П.",
+                            "fio": source_fio,
                             "position": "директор",
                         }
                     ],
@@ -201,6 +263,12 @@ async def test_generate_and_get_preview_preserve_safe_no_inflect_line3_from_writ
         },
     )
     assert patch_resp.status_code == 200
+    patch_payload = patch_resp.json()
+    assert patch_payload["preview_header"]["format_version"] == 2
+    assert patch_payload["preview_header"]["from_party"]["rendered"]["line2"] == "OOO Alpha"
+    assert patch_payload["preview_header"]["to_party"]["rendered"]["line2"] == "OOO Vector"
+    assert patch_payload["preview_header"]["from_party"]["rendered"]["line3"] == expected_from_line3
+    assert patch_payload["preview_header"]["to_party"]["rendered"]["line3"] == expected_to_line3
 
     decision = {
         "generation_state": "ready",
@@ -232,20 +300,15 @@ async def test_generate_and_get_preview_preserve_safe_no_inflect_line3_from_writ
     )
     assert generate_resp.status_code == 200
     generate_payload = generate_resp.json()
-    assert generate_payload["preview_header"]["from_party"]["person_name"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
-    assert generate_payload["preview_header"]["from_party"]["line2"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
-    assert generate_payload["preview_header"]["from_party"]["rendered"] == {
-        "line1": "От генерального директора",
-        "line2": "OOO Alpha",
-        "line3": "ИВАНОВ ИВАН ИВАНОВИЧ",
-    }
-    assert generate_payload["preview_header"]["to_party"]["person_name"] == "Петров П.П."
-    assert generate_payload["preview_header"]["to_party"]["line2"] == "Петров П.П."
-    assert generate_payload["preview_header"]["to_party"]["rendered"] == {
-        "line1": "Директору",
-        "line2": "OOO Vector",
-        "line3": "Петров П.П.",
-    }
+    assert generate_payload["preview_header"]["format_version"] == 2
+    assert generate_payload["preview_header"]["from_party"]["person_name"] == source_fio
+    assert generate_payload["preview_header"]["from_party"]["line2"] == source_fio
+    assert generate_payload["preview_header"]["to_party"]["person_name"] == source_fio
+    assert generate_payload["preview_header"]["to_party"]["line2"] == source_fio
+    assert generate_payload["preview_header"]["from_party"]["rendered"]["line2"] == "OOO Alpha"
+    assert generate_payload["preview_header"]["to_party"]["rendered"]["line2"] == "OOO Vector"
+    assert generate_payload["preview_header"]["from_party"]["rendered"]["line3"] == expected_from_line3
+    assert generate_payload["preview_header"]["to_party"]["rendered"]["line3"] == expected_to_line3
 
     get_preview_resp = await async_client.get(
         f"/claims/{created['claim_id']}/preview",
@@ -253,8 +316,11 @@ async def test_generate_and_get_preview_preserve_safe_no_inflect_line3_from_writ
     )
     assert get_preview_resp.status_code == 200
     get_payload = get_preview_resp.json()
-    assert get_payload["preview_header"]["from_party"]["rendered"]["line3"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
-    assert get_payload["preview_header"]["to_party"]["rendered"]["line3"] == "Петров П.П."
+    assert get_payload["preview_header"]["format_version"] == 2
+    assert get_payload["preview_header"]["from_party"]["rendered"]["line2"] == "OOO Alpha"
+    assert get_payload["preview_header"]["to_party"]["rendered"]["line2"] == "OOO Vector"
+    assert get_payload["preview_header"]["from_party"]["rendered"]["line3"] == expected_from_line3
+    assert get_payload["preview_header"]["to_party"]["rendered"]["line3"] == expected_to_line3
 
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         claim_row = await session.execute(
@@ -266,14 +332,14 @@ async def test_generate_and_get_preview_preserve_safe_no_inflect_line3_from_writ
         saved_header = row[0]
 
     assert saved_header["format_version"] == 2
-    assert saved_header["from_party"]["person_name"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
-    assert saved_header["from_party"]["line2"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
+    assert saved_header["from_party"]["person_name"] == source_fio
+    assert saved_header["from_party"]["line2"] == source_fio
     assert saved_header["from_party"]["rendered"]["line2"] == "OOO Alpha"
-    assert saved_header["from_party"]["rendered"]["line3"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
-    assert saved_header["to_party"]["person_name"] == "Петров П.П."
-    assert saved_header["to_party"]["line2"] == "Петров П.П."
+    assert saved_header["from_party"]["rendered"]["line3"] == expected_from_line3
+    assert saved_header["to_party"]["person_name"] == source_fio
+    assert saved_header["to_party"]["line2"] == source_fio
     assert saved_header["to_party"]["rendered"]["line2"] == "OOO Vector"
-    assert saved_header["to_party"]["rendered"]["line3"] == "Петров П.П."
+    assert saved_header["to_party"]["rendered"]["line3"] == expected_to_line3
 
 
 async def test_generate_preview_insufficient_data_blocks(async_client, engine, monkeypatch):

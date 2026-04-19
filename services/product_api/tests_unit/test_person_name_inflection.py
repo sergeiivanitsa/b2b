@@ -94,13 +94,35 @@ def test_non_cyrillic_uses_raw():
     assert decision.parsed is not None
 
 
-def test_all_caps_uses_raw_with_dedicated_reason():
-    decision = build_inflection_decision("ИВАНОВ ИВАН ИВАНОВИЧ", side="to")
-    assert decision.status == "use_raw"
-    assert decision.reason == "all_caps"
-    assert decision.gender_hint == "unknown"
-    assert decision.target_case == "dative"
-    assert decision.parsed is not None
+def test_all_caps_structured_male_normalizes_and_inflects():
+    source = "АБДУСАМАТОВ АЗАМАТ КАРОМАТОВИЧ"
+    assert (
+        inflect_person_name_for_display(source, side="from")
+        == "Абдусаматова Азамата Кароматовича"
+    )
+    assert (
+        inflect_person_name_for_display(source, side="to")
+        == "Абдусаматову Азамату Кароматовичу"
+    )
+
+
+def test_all_caps_structured_female_normalizes_and_inflects():
+    source = "ИЛЬИНА ЮЛИЯ СЕРГЕЕВНА"
+    assert (
+        inflect_person_name_for_display(source, side="from")
+        == "Ильиной Юлии Сергеевны"
+    )
+    assert (
+        inflect_person_name_for_display(source, side="to")
+        == "Ильиной Юлии Сергеевне"
+    )
+
+
+def test_all_caps_structured_with_unsupported_component_returns_normalized_display_only():
+    source = "СМИРНОВА ЛЮБОВЬ ИВАНОВНА"
+    expected = "Смирнова Любовь Ивановна"
+    assert inflect_person_name_for_display(source, side="from") == expected
+    assert inflect_person_name_for_display(source, side="to") == expected
 
 
 def test_hyphenated_cyrillic_form_uses_safe_raw():
@@ -109,6 +131,12 @@ def test_hyphenated_cyrillic_form_uses_safe_raw():
     assert decision.reason == "initials_or_noise"
     assert decision.gender_hint == "unknown"
     assert decision.parsed is not None
+
+
+def test_all_caps_latin_uses_raw():
+    source = "IVANOV IVAN IVANOVICH"
+    assert inflect_person_name_for_display(source, side="from") == source
+    assert inflect_person_name_for_display(source, side="to") == source
 
 
 def test_inflect_person_name_male_supported_rules():
@@ -184,10 +212,40 @@ def test_if_any_component_is_unsupported_return_raw_full_name():
     assert inflect_person_name_for_display(source, side="to") == source
 
 
-def test_use_raw_for_all_caps_in_final_output():
-    source = "ИВАНОВ ИВАН ИВАНОВИЧ"
-    assert inflect_person_name_for_display(source, side="from") == source
-    assert inflect_person_name_for_display(source, side="to") == source
+def test_mixed_case_input_is_not_forced_into_all_caps_normalization_branch():
+    source = "ИВАНОВ Иван Иванович"
+    assert (
+        inflect_person_name_for_display(source, side="from")
+        == "ИВАНОВа Ивана Ивановича"
+    )
+    assert (
+        inflect_person_name_for_display(source, side="to")
+        == "ИВАНОВу Ивану Ивановичу"
+    )
+
+
+def test_inflect_person_name_ivanitsa_male_all_caps_uses_surname_override():
+    source = "ИВАНИЦА СЕРГЕЙ ПЕТРОВИЧ"
+    assert (
+        inflect_person_name_for_display(source, side="from")
+        == "Иваницы Сергея Петровича"
+    )
+    assert (
+        inflect_person_name_for_display(source, side="to")
+        == "Иванице Сергею Петровичу"
+    )
+
+
+def test_inflect_person_name_ivanitsa_female_all_caps_uses_surname_override():
+    source = "ИВАНИЦА АННА ПЕТРОВНА"
+    assert (
+        inflect_person_name_for_display(source, side="from")
+        == "Иваница Анны Петровны"
+    )
+    assert (
+        inflect_person_name_for_display(source, side="to")
+        == "Иваница Анне Петровне"
+    )
 
 
 def test_full_name_override_has_highest_priority(monkeypatch: pytest.MonkeyPatch):
