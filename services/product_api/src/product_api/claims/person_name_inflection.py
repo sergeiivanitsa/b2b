@@ -154,17 +154,27 @@ def inflect_person_name_for_display(
     *,
     side: PartySide,
 ) -> str | None:
-    decision = build_inflection_decision(person_name, side=side)
-    if decision.status == "empty":
+    normalized_raw = normalize_person_name_for_decision(person_name)
+    if normalized_raw is None:
         return None
 
-    normalized_raw = normalize_person_name_for_decision(person_name)
-    if decision.status != "can_inflect":
-        return normalized_raw
+    # For a narrow safe subset of ALL CAPS cyrillic full names, first normalize
+    # the display casing and then run the regular inflection pipeline.
+    display_candidate = normalize_person_name_for_display(person_name)
+    if display_candidate is not None:
+        decision = build_inflection_decision(display_candidate, side=side)
+        if decision.status != "can_inflect":
+            return display_candidate
+    else:
+        decision = build_inflection_decision(person_name, side=side)
+        if decision.status == "empty":
+            return None
+        if decision.status != "can_inflect":
+            return normalized_raw
 
     parsed = decision.parsed
     if parsed is None:
-        return normalized_raw
+        return display_candidate if display_candidate is not None else normalized_raw
 
     full_name_override = _get_full_name_override(parsed.raw, decision.target_case)
     if full_name_override is not None:
@@ -200,6 +210,16 @@ def _contains_latin_letters(tokens: list[str]) -> bool:
     return any(_LATIN_PATTERN.search(token) for token in tokens)
 
 
+def normalize_person_name_for_display(person_name: str | None) -> str | None:
+    normalized = normalize_person_name_for_decision(person_name)
+    if normalized is None:
+        return None
+    tokens = normalized.split(" ")
+    if not _is_safe_structured_all_caps_cyrillic(tokens):
+        return None
+    return " ".join(_titlecase_cyrillic_token(token) for token in tokens)
+
+
 def _contains_initials_or_noise(tokens: list[str]) -> bool:
     for token in tokens:
         if "." in token:
@@ -216,6 +236,27 @@ def _is_all_caps(tokens: list[str]) -> bool:
     if not letters_only:
         return False
     return all(token.upper() == token and token.lower() != token for token in letters_only)
+
+
+def _is_safe_structured_all_caps_cyrillic(tokens: list[str]) -> bool:
+    if len(tokens) != 3:
+        return False
+    if _contains_latin_letters(tokens):
+        return False
+    if _contains_initials_or_noise(tokens):
+        return False
+    if not _is_all_caps(tokens):
+        return False
+    patronymic = tokens[2]
+    if not _is_valid_patronymic_token(patronymic):
+        return False
+    return _infer_gender_from_patronymic(patronymic) != "unknown"
+
+
+def _titlecase_cyrillic_token(token: str) -> str:
+    if not token:
+        return token
+    return f"{token[:1].upper()}{token[1:].lower()}"
 
 
 def _is_valid_patronymic_token(token: str) -> bool:

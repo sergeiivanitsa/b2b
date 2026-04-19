@@ -541,10 +541,72 @@ async def test_patch_claims_enriches_preview_header_with_manager_fields(
     assert saved_header["to_party"]["rendered"]["line3"] == "Иванову Ивану Ивановичу"
 
 
-async def test_patch_claims_enrichment_success_safe_no_inflect_keeps_raw_line3(
+@pytest.mark.parametrize(
+    ("source_fio", "expected_from_line3", "expected_to_line3"),
+    [
+        pytest.param(
+            "АБДУСАМАТОВ АЗАМАТ КАРОМАТОВИЧ",
+            "Абдусаматова Азамата Кароматовича",
+            "Абдусаматову Азамату Кароматовичу",
+            id="all_caps_male_structured_inflect",
+        ),
+        pytest.param(
+            "ИЛЬИНА ЮЛИЯ СЕРГЕЕВНА",
+            "Ильиной Юлии Сергеевны",
+            "Ильиной Юлии Сергеевне",
+            id="all_caps_female_structured_inflect",
+        ),
+        pytest.param(
+            "СМИРНОВА ЛЮБОВЬ ИВАНОВНА",
+            "Смирнова Любовь Ивановна",
+            "Смирнова Любовь Ивановна",
+            id="all_caps_structured_normalize_only",
+        ),
+        pytest.param(
+            "IVANOV IVAN IVANOVICH",
+            "IVANOV IVAN IVANOVICH",
+            "IVANOV IVAN IVANOVICH",
+            id="latin_raw_fallback",
+        ),
+        pytest.param(
+            "Петров П.П.",
+            "Петров П.П.",
+            "Петров П.П.",
+            id="initials_raw_fallback",
+        ),
+        pytest.param(
+            "Иванов Иван",
+            "Иванов Иван",
+            "Иванов Иван",
+            id="not_three_words_raw_fallback",
+        ),
+        pytest.param(
+            "ИВАНОВ-ПЕТРОВ ИВАН ИВАНОВИЧ",
+            "ИВАНОВ-ПЕТРОВ ИВАН ИВАНОВИЧ",
+            "ИВАНОВ-ПЕТРОВ ИВАН ИВАНОВИЧ",
+            id="hyphen_raw_fallback",
+        ),
+        pytest.param(
+            "ИВАНИЦА СЕРГЕЙ ПЕТРОВИЧ",
+            "Иваницы Сергея Петровича",
+            "Иванице Сергею Петровичу",
+            id="ivanitsa_male_all_caps_override",
+        ),
+        pytest.param(
+            "ИВАНИЦА АННА ПЕТРОВНА",
+            "Иваница Анны Петровны",
+            "Иваница Анне Петровне",
+            id="ivanitsa_female_all_caps_override",
+        ),
+    ],
+)
+async def test_patch_claims_enrichment_line3_contract_for_all_caps_and_fallback_cases(
     async_client,
     engine,
     monkeypatch,
+    source_fio: str,
+    expected_from_line3: str,
+    expected_to_line3: str,
 ):
     create_resp = await async_client.post(
         "/claims",
@@ -573,7 +635,7 @@ async def test_patch_claims_enrichment_success_safe_no_inflect_keeps_raw_line3(
                     "company_names": {"short_name": "OOO Alpha"},
                     "managers": [
                         {
-                            "fio": "ИВАНОВ ИВАН ИВАНОВИЧ",
+                            "fio": source_fio,
                             "position": "генеральный директор",
                         }
                     ],
@@ -587,7 +649,7 @@ async def test_patch_claims_enrichment_success_safe_no_inflect_keeps_raw_line3(
                     "company_names": {"short_name": "OOO Vector"},
                     "managers": [
                         {
-                            "fio": "Петров П.П.",
+                            "fio": source_fio,
                             "position": "директор",
                         }
                     ],
@@ -641,16 +703,17 @@ async def test_patch_claims_enrichment_success_safe_no_inflect_keeps_raw_line3(
 
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["preview_header"]["from_party"]["person_name"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
-    assert payload["preview_header"]["from_party"]["line2"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
-    assert payload["preview_header"]["to_party"]["person_name"] == "Петров П.П."
-    assert payload["preview_header"]["to_party"]["line2"] == "Петров П.П."
+    assert payload["preview_header"]["format_version"] == 2
+    assert payload["preview_header"]["from_party"]["person_name"] == source_fio
+    assert payload["preview_header"]["from_party"]["line2"] == source_fio
+    assert payload["preview_header"]["to_party"]["person_name"] == source_fio
+    assert payload["preview_header"]["to_party"]["line2"] == source_fio
     assert payload["preview_header"]["from_party"]["rendered"]["line1"] == "От генерального директора"
     assert payload["preview_header"]["to_party"]["rendered"]["line1"] == "Директору"
     assert payload["preview_header"]["from_party"]["rendered"]["line2"] == "OOO Alpha"
     assert payload["preview_header"]["to_party"]["rendered"]["line2"] == "OOO Vector"
-    assert payload["preview_header"]["from_party"]["rendered"]["line3"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
-    assert payload["preview_header"]["to_party"]["rendered"]["line3"] == "Петров П.П."
+    assert payload["preview_header"]["from_party"]["rendered"]["line3"] == expected_from_line3
+    assert payload["preview_header"]["to_party"]["rendered"]["line3"] == expected_to_line3
 
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         claim_row = await session.execute(
@@ -662,16 +725,16 @@ async def test_patch_claims_enrichment_success_safe_no_inflect_keeps_raw_line3(
         saved_header = row[0]
 
     assert saved_header["format_version"] == 2
-    assert saved_header["from_party"]["person_name"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
-    assert saved_header["from_party"]["line2"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
+    assert saved_header["from_party"]["person_name"] == source_fio
+    assert saved_header["from_party"]["line2"] == source_fio
     assert saved_header["from_party"]["rendered"]["line1"] == "От генерального директора"
     assert saved_header["from_party"]["rendered"]["line2"] == "OOO Alpha"
-    assert saved_header["from_party"]["rendered"]["line3"] == "ИВАНОВ ИВАН ИВАНОВИЧ"
-    assert saved_header["to_party"]["person_name"] == "Петров П.П."
-    assert saved_header["to_party"]["line2"] == "Петров П.П."
+    assert saved_header["from_party"]["rendered"]["line3"] == expected_from_line3
+    assert saved_header["to_party"]["person_name"] == source_fio
+    assert saved_header["to_party"]["line2"] == source_fio
     assert saved_header["to_party"]["rendered"]["line1"] == "Директору"
     assert saved_header["to_party"]["rendered"]["line2"] == "OOO Vector"
-    assert saved_header["to_party"]["rendered"]["line3"] == "Петров П.П."
+    assert saved_header["to_party"]["rendered"]["line3"] == expected_to_line3
 
 
 async def test_post_claims_files_upload_and_list(async_client, engine):

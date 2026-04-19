@@ -254,6 +254,19 @@ Preview header enrichment notes:
   - `preview_header.from_party|to_party.rendered.line2`
   - `preview_header.from_party|to_party.rendered.line3`
 - `preview_header` remains nullable in API schema. In regular flow backend usually returns an object.
+- Source truth remains raw:
+  - `preview_header.from_party|to_party.person_name` is stored and returned as raw source value.
+  - legacy `preview_header.from_party|to_party.line2` is preserved as raw/legacy value.
+
+Rendered line3 policy for legal entity (current behavior):
+- `rendered.line3` is a display field and can differ from raw `person_name`.
+- For safe structured ALL CAPS Cyrillic FIO:
+  - normalize display casing first;
+  - then inflect (`from_party` -> genitive, `to_party` -> dative) when inflection is safe.
+- For safe structured ALL CAPS Cyrillic FIO where inflection is unsafe:
+  - return normalized display form without inflection (`normalize-only`).
+- For all other unsafe fallback cases (for example non-cyrillic/initials/not-three-words/hyphenated-unsafe), keep raw behavior for display fallback.
+- Scope: this behavior is applied for newly generated write-path/rebuild payloads; previously stored payloads are not retroactively rewritten for this rule.
 
 Rendered line1 rules currently implemented:
 - Sender (`from_party`): `От генерального директора` | `От директора` | `От президента` | `От руководителя`.
