@@ -5,6 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from product_api.auth import hmac_sha256
+from product_api.claims.person_name_ai_service import PersonNameAIResult
 from product_api.gateway_client import GatewayError
 from product_api.settings import get_settings
 
@@ -539,6 +540,107 @@ async def test_patch_claims_enriches_preview_header_with_manager_fields(
     assert saved_header["to_party"]["rendered"]["line1"] == "Директору"
     assert saved_header["to_party"]["rendered"]["line2"] == "OOO Vector"
     assert saved_header["to_party"]["rendered"]["line3"] == "Иванову Ивану Ивановичу"
+
+
+@pytest.mark.parametrize(
+    ("ai_status", "preprocessed_fio"),
+    [
+        ("invalid_response", "Ена Владимир Владиславович"),
+        ("timeout", "Ена Владимир Владиславович"),
+        ("gateway_error", "Ена Владимир Владиславович"),
+        ("empty_input", "Ена Владимир Владиславович"),
+    ],
+)
+async def test_patch_claims_legal_entity_ai_failure_fallbacks_to_preprocessed_fio(
+    async_client,
+    engine,
+    monkeypatch,
+    ai_status: str,
+    preprocessed_fio: str,
+):
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    from product_api.claims import preview_header_enrichment
+    from product_api.routers import public_claims as public_claims_router
+
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_enabled", True)
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_api_key", "test-key")
+    monkeypatch.setattr(public_claims_router.settings, "claims_fio_ai_enabled", True)
+
+    async def fake_fetch(_settings, inn):
+        if inn != "7701234567":
+            return None
+        return {
+            "kind": "legal_entity",
+            "company_name": "OOO Alpha",
+            "position_raw": "генеральный директор",
+            "person_name": "Ена Владимир Владиславович",
+            "address": None,
+        }
+
+    async def fake_transform(
+        _settings,
+        *,
+        raw_fio,
+        target_case,
+        entity_kind,
+        strip_ip_prefix,
+    ):
+        assert raw_fio == "Ена Владимир Владиславович"
+        assert target_case == "genitive"
+        assert entity_kind == "legal_entity"
+        assert strip_ip_prefix is False
+        return PersonNameAIResult(
+            status=ai_status,  # type: ignore[arg-type]
+            fio=None,
+            preprocessed_fio=preprocessed_fio,
+            error_code=ai_status,
+            cache_hit=False,
+        )
+
+    monkeypatch.setattr(preview_header_enrichment, "fetch_datanewton_party_by_inn", fake_fetch)
+    monkeypatch.setattr(preview_header_enrichment, "transform_person_name_with_ai", fake_transform)
+
+    resp = await async_client.patch(
+        f"/claims/{created['claim_id']}",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+        json={
+            "normalized_data": {
+                "creditor_name": "OOO Alpha",
+                "creditor_inn": "7701234567",
+                "debtor_name": "OOO Vector",
+                "debtor_inn": None,
+            },
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["preview_header"]["format_version"] == 2
+    assert payload["preview_header"]["from_party"]["person_name"] == "Ена Владимир Владиславович"
+    assert payload["preview_header"]["from_party"]["line2"] == "Ена Владимир Владиславович"
+    assert payload["preview_header"]["from_party"]["rendered"]["line2"] == "OOO Alpha"
+    assert payload["preview_header"]["from_party"]["rendered"]["line3"] == preprocessed_fio
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        claim_row = await session.execute(
+            text("SELECT preview_header_json FROM claims WHERE id = :id"),
+            {"id": created["claim_id"]},
+        )
+        row = claim_row.first()
+        assert row is not None
+        saved_header = row[0]
+
+    assert saved_header["format_version"] == 2
+    assert saved_header["from_party"]["person_name"] == "Ена Владимир Владиславович"
+    assert saved_header["from_party"]["line2"] == "Ена Владимир Владиславович"
+    assert saved_header["from_party"]["rendered"]["line2"] == "OOO Alpha"
+    assert saved_header["from_party"]["rendered"]["line3"] == preprocessed_fio
 
 
 @pytest.mark.parametrize(

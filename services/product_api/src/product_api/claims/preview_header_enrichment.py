@@ -8,6 +8,7 @@ from product_api.settings import Settings
 
 from .datanewton_client import fetch_datanewton_party_by_inn
 from .normalization import normalize_inn
+from .person_name_ai_service import transform_person_name_with_ai
 from .preview_header_formatter import build_preview_header, infer_kind_from_inn
 
 logger = logging.getLogger(__name__)
@@ -68,8 +69,130 @@ async def rebuild_claim_preview_header(
                 to_party = _merge_party(to_party, debtor_party)
 
     rebuilt_header = build_preview_header(from_party=from_party, to_party=to_party)
+    await _apply_fio_ai_for_legal_entities(settings, rebuilt_header)
+    await _apply_fio_ai_for_individual_entrepreneurs(settings, rebuilt_header)
     claim.preview_header_json = _as_preview_header_v2(rebuilt_header)
     return claim.preview_header_json
+
+
+async def _apply_fio_ai_for_legal_entities(
+    settings: Settings,
+    header: dict[str, Any],
+) -> None:
+    if not settings.claims_fio_ai_enabled:
+        return
+
+    await _apply_fio_ai_to_party_line3(
+        settings,
+        header=header,
+        party_key="from_party",
+        target_case="genitive",
+    )
+    await _apply_fio_ai_to_party_line3(
+        settings,
+        header=header,
+        party_key="to_party",
+        target_case="dative",
+    )
+
+
+async def _apply_fio_ai_to_party_line3(
+    settings: Settings,
+    *,
+    header: dict[str, Any],
+    party_key: str,
+    target_case: str,
+) -> None:
+    party = header.get(party_key)
+    if not isinstance(party, dict):
+        return
+    if party.get("kind") != "legal_entity":
+        return
+
+    raw_person_name = _normalize_string(party.get("person_name"))
+    if raw_person_name is None:
+        return
+
+    rendered = party.get("rendered")
+    if not isinstance(rendered, dict):
+        return
+    formatter_line3 = rendered.get("line3")
+
+    result = await transform_person_name_with_ai(
+        settings,
+        raw_fio=raw_person_name,
+        target_case=target_case,
+        entity_kind="legal_entity",
+        strip_ip_prefix=False,
+    )
+    if result.status == "ok" and result.fio:
+        rendered["line3"] = result.fio
+        return
+    if result.preprocessed_fio:
+        rendered["line3"] = result.preprocessed_fio
+        return
+    rendered["line3"] = formatter_line3
+
+
+async def _apply_fio_ai_for_individual_entrepreneurs(
+    settings: Settings,
+    header: dict[str, Any],
+) -> None:
+    if not settings.claims_fio_ai_enabled:
+        return
+
+    await _apply_fio_ai_to_ip_party_line2(
+        settings,
+        header=header,
+        party_key="from_party",
+        target_case="genitive",
+    )
+    await _apply_fio_ai_to_ip_party_line2(
+        settings,
+        header=header,
+        party_key="to_party",
+        target_case="dative",
+    )
+
+
+async def _apply_fio_ai_to_ip_party_line2(
+    settings: Settings,
+    *,
+    header: dict[str, Any],
+    party_key: str,
+    target_case: str,
+) -> None:
+    party = header.get(party_key)
+    if not isinstance(party, dict):
+        return
+    if party.get("kind") != "individual_entrepreneur":
+        return
+
+    rendered = party.get("rendered")
+    if not isinstance(rendered, dict):
+        return
+    formatter_line2 = rendered.get("line2")
+
+    raw_person_name = _normalize_string(party.get("person_name"))
+    raw_company_name = _normalize_string(party.get("company_name"))
+    raw_source_fio = raw_person_name or raw_company_name
+    if raw_source_fio is None:
+        return
+
+    result = await transform_person_name_with_ai(
+        settings,
+        raw_fio=raw_source_fio,
+        target_case=target_case,
+        entity_kind="individual_entrepreneur",
+        strip_ip_prefix=True,
+    )
+    if result.status == "ok" and result.fio:
+        rendered["line2"] = result.fio
+        return
+    if result.preprocessed_fio:
+        rendered["line2"] = result.preprocessed_fio
+        return
+    rendered["line2"] = formatter_line2
 
 
 def _merge_party(base_party: dict[str, Any], incoming_party: dict[str, Any]) -> dict[str, Any]:

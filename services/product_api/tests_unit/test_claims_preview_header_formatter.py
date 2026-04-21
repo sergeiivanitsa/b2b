@@ -169,7 +169,7 @@ def test_formatter_rendered_fallback_for_non_exact_or_unsupported_positions(posi
     assert header["to_party"]["rendered"]["line1"] == "Руководителю"
 
 
-def test_formatter_ip_uses_kind_not_position_and_applies_narrow_antidup():
+def test_formatter_ip_uses_kind_not_position_and_keeps_deterministic_rendered_contract():
     header = build_preview_header(
         from_party={
             "kind": "individual_entrepreneur",
@@ -189,12 +189,12 @@ def test_formatter_ip_uses_kind_not_position_and_applies_narrow_antidup():
 
     assert header["from_party"]["rendered"] == {
         "line1": "От индивидуального предпринимателя",
-        "line2": "ИП Петров Петр Петрович",
+        "line2": "Петров Петр Петрович",
         "line3": None,
     }
     assert header["to_party"]["rendered"] == {
         "line1": "Индивидуальному предпринимателю",
-        "line2": "Индивидуальный предприниматель Иванов Иван Иванович",
+        "line2": "Иванов Иван Иванович",
         "line3": None,
     }
 
@@ -216,14 +216,57 @@ def test_formatter_ip_without_person_name_keeps_line3_none():
     )
     assert header["from_party"]["rendered"] == {
         "line1": "От индивидуального предпринимателя",
-        "line2": "ИП Петров Петр Петрович",
+        "line2": "Петров Петр Петрович",
         "line3": None,
     }
     assert header["to_party"]["rendered"] == {
         "line1": "Индивидуальному предпринимателю",
-        "line2": "ИП Иванов Иван Иванович",
+        "line2": "Иванов Иван Иванович",
         "line3": None,
     }
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("ИП Абрамов Дмитрий Вадимович", "Абрамов Дмитрий Вадимович"),
+        ("ИП. Абрамов Дмитрий Вадимович", "Абрамов Дмитрий Вадимович"),
+        (
+            "Индивидуальный предприниматель Абрамов Дмитрий Вадимович",
+            "Абрамов Дмитрий Вадимович",
+        ),
+        (
+            "Индивидуального предпринимателя Абрамов Дмитрий Вадимович",
+            "Абрамов Дмитрий Вадимович",
+        ),
+        (
+            "Индивидуальному предпринимателю Абрамов Дмитрий Вадимович",
+            "Абрамов Дмитрий Вадимович",
+        ),
+        (
+            "Компания ИП Абрамов Дмитрий Вадимович",
+            "Компания ИП Абрамов Дмитрий Вадимович",
+        ),
+    ],
+)
+def test_formatter_ip_strip_prefix_policy_only_from_start(source: str, expected: str):
+    header = build_preview_header(
+        from_party={
+            "kind": "individual_entrepreneur",
+            "company_name": source,
+            "position_raw": None,
+            "person_name": None,
+        },
+        to_party={
+            "kind": "unknown",
+            "company_name": "ООО «Вектор»",
+            "position_raw": None,
+            "person_name": None,
+        },
+    )
+    assert header["from_party"]["rendered"]["line1"] == "От индивидуального предпринимателя"
+    assert header["from_party"]["rendered"]["line2"] == expected
+    assert header["from_party"]["rendered"]["line3"] is None
 
 
 @pytest.mark.parametrize(
@@ -292,7 +335,7 @@ def test_formatter_non_legal_kind_keeps_old_line3_and_skips_inflector(monkeypatc
 
     assert called is False
     assert header["from_party"]["rendered"]["line3"] == "Иванов Иван Иванович"
-    # IP branch still uses preexisting anti-dup behavior.
+    assert header["to_party"]["rendered"]["line2"] == "Сидоров Сидор Сидорович"
     assert header["to_party"]["rendered"]["line3"] is None
 
 
