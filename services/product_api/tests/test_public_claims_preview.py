@@ -2,6 +2,8 @@
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from product_api.claims.person_name_ai_service import PersonNameAIResult
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -96,6 +98,377 @@ async def test_generate_preview_and_get_preview(async_client, engine, monkeypatc
         assert row[2] == ["header", "facts", "demands"]
         assert row[3] == []
         assert row[4] == "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё"
+
+
+
+async def test_generate_and_get_preview_legal_entity_ai_keeps_line3_consistent(
+    async_client,
+    engine,
+    monkeypatch,
+):
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    from product_api.claims import preview_header_enrichment
+    from product_api.routers import public_claims as public_claims_router
+
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_enabled", True)
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_api_key", "test-key")
+    monkeypatch.setattr(public_claims_router.settings, "claims_fio_ai_enabled", True)
+
+    async def fake_fetch(_settings, inn):
+        if inn == "7701234567":
+            return {
+                "kind": "legal_entity",
+                "company_name": "OOO Alpha",
+                "position_raw": "генеральный директор",
+                "person_name": "Ли Виктор Менгинович",
+                "address": None,
+            }
+        if inn == "7801234567":
+            return {
+                "kind": "legal_entity",
+                "company_name": "OOO Vector",
+                "position_raw": "директор",
+                "person_name": "Сапсай Владислав Александрович",
+                "address": None,
+            }
+        return None
+
+    async def fake_transform(
+        _settings,
+        *,
+        raw_fio,
+        target_case,
+        entity_kind,
+        strip_ip_prefix,
+    ):
+        assert entity_kind == "legal_entity"
+        assert strip_ip_prefix is False
+        mapping = {
+            ("Ли Виктор Менгинович", "genitive"): "Ли Виктора Менгиновича",
+            ("Сапсай Владислав Александрович", "dative"): "Сапсаю Владиславу Александровичу",
+        }
+        return PersonNameAIResult(
+            status="ok",
+            fio=mapping[(raw_fio, target_case)],
+            preprocessed_fio=raw_fio,
+            error_code=None,
+            cache_hit=False,
+        )
+
+    monkeypatch.setattr(preview_header_enrichment, "fetch_datanewton_party_by_inn", fake_fetch)
+    monkeypatch.setattr(preview_header_enrichment, "transform_person_name_with_ai", fake_transform)
+
+    patch_resp = await async_client.patch(
+        f"/claims/{created['claim_id']}",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+        json={
+            "case_type": "supply",
+            "normalized_data": {
+                "creditor_name": "OOO Alpha",
+                "creditor_inn": "7701234567",
+                "debtor_name": "OOO Vector",
+                "debtor_inn": "7801234567",
+                "contract_signed": True,
+                "debt_amount": 380000,
+                "payment_due_date": "2026-02-01",
+                "documents_mentioned": ["contract"],
+            },
+        },
+    )
+    assert patch_resp.status_code == 200
+    patch_payload = patch_resp.json()
+    assert patch_payload["preview_header"]["format_version"] == 2
+    assert patch_payload["preview_header"]["from_party"]["person_name"] == "Ли Виктор Менгинович"
+    assert patch_payload["preview_header"]["from_party"]["line2"] == "Ли Виктор Менгинович"
+    assert (
+        patch_payload["preview_header"]["from_party"]["rendered"]["line3"]
+        == "Ли Виктора Менгиновича"
+    )
+    assert (
+        patch_payload["preview_header"]["to_party"]["person_name"]
+        == "Сапсай Владислав Александрович"
+    )
+    assert patch_payload["preview_header"]["to_party"]["line2"] == "Сапсай Владислав Александрович"
+    assert (
+        patch_payload["preview_header"]["to_party"]["rendered"]["line3"]
+        == "Сапсаю Владиславу Александровичу"
+    )
+
+    decision = {
+        "generation_state": "ready",
+        "risk_flags": [],
+        "allowed_blocks": ["header", "facts", "demands"],
+        "blocked_blocks": [],
+        "missing_fields": [],
+    }
+
+    async def fake_generate_claim_preview(
+        _settings, *, claim_id, input_text, case_type, normalized_data, decision
+    ):
+        return {
+            "generated_preview_text": "Черновик претензии",
+            "used_fallback": False,
+            "error_code": None,
+        }
+
+    monkeypatch.setattr(public_claims_router, "evaluate_claim_rules", lambda **_: decision)
+    monkeypatch.setattr(
+        public_claims_router,
+        "generate_claim_preview",
+        fake_generate_claim_preview,
+    )
+
+    generate_resp = await async_client.post(
+        f"/claims/{created['claim_id']}/generate-preview",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+    )
+    assert generate_resp.status_code == 200
+    generate_payload = generate_resp.json()
+    assert (
+        generate_payload["preview_header"]["from_party"]["rendered"]["line3"]
+        == "Ли Виктора Менгиновича"
+    )
+    assert (
+        generate_payload["preview_header"]["to_party"]["rendered"]["line3"]
+        == "Сапсаю Владиславу Александровичу"
+    )
+
+    get_preview_resp = await async_client.get(
+        f"/claims/{created['claim_id']}/preview",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+    )
+    assert get_preview_resp.status_code == 200
+    get_payload = get_preview_resp.json()
+    assert (
+        get_payload["preview_header"]["from_party"]["rendered"]["line3"]
+        == "Ли Виктора Менгиновича"
+    )
+    assert (
+        get_payload["preview_header"]["to_party"]["rendered"]["line3"]
+        == "Сапсаю Владиславу Александровичу"
+    )
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        claim_row = await session.execute(
+            text("SELECT preview_header_json FROM claims WHERE id = :id"),
+            {"id": created["claim_id"]},
+        )
+        row = claim_row.first()
+        assert row is not None
+        saved_header = row[0]
+
+    assert saved_header["format_version"] == 2
+    assert saved_header["from_party"]["person_name"] == "Ли Виктор Менгинович"
+    assert saved_header["from_party"]["line2"] == "Ли Виктор Менгинович"
+    assert saved_header["from_party"]["rendered"]["line3"] == "Ли Виктора Менгиновича"
+    assert saved_header["to_party"]["person_name"] == "Сапсай Владислав Александрович"
+    assert saved_header["to_party"]["line2"] == "Сапсай Владислав Александрович"
+    assert saved_header["to_party"]["rendered"]["line3"] == "Сапсаю Владиславу Александровичу"
+
+
+async def test_generate_and_get_preview_ip_ai_keeps_line2_consistent_and_line3_none(
+    async_client,
+    engine,
+    monkeypatch,
+):
+    create_resp = await async_client.post(
+        "/claims",
+        json={"input_text": "OOO Vector did not pay for delivery"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+
+    from product_api.claims import preview_header_enrichment
+    from product_api.routers import public_claims as public_claims_router
+
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_enabled", True)
+    monkeypatch.setattr(public_claims_router.settings, "datanewton_api_key", "test-key")
+    monkeypatch.setattr(public_claims_router.settings, "claims_fio_ai_enabled", True)
+
+    async def fake_fetch(_settings, inn):
+        if inn == "770123456789":
+            return {
+                "kind": "individual_entrepreneur",
+                "company_name": "ИП Абрамов Дмитрий Вадимович",
+                "position_raw": "директор",
+                "person_name": "ИП Абрамов Дмитрий Вадимович",
+                "address": None,
+            }
+        if inn == "780123456789":
+            return {
+                "kind": "individual_entrepreneur",
+                "company_name": "Индивидуальный предприниматель Суляндзига Аркадий Васильевич",
+                "position_raw": "генеральный директор",
+                "person_name": None,
+                "address": None,
+            }
+        return None
+
+    calls: list[tuple[str | None, str, bool]] = []
+
+    async def fake_transform(
+        _settings,
+        *,
+        raw_fio,
+        target_case,
+        entity_kind,
+        strip_ip_prefix,
+    ):
+        calls.append((raw_fio, target_case, strip_ip_prefix))
+        assert entity_kind == "individual_entrepreneur"
+        assert strip_ip_prefix is True
+        mapping = {
+            ("ИП Абрамов Дмитрий Вадимович", "genitive"): "Абрамова Дмитрия Вадимовича",
+            (
+                "Индивидуальный предприниматель Суляндзига Аркадий Васильевич",
+                "dative",
+            ): "Суляндзиге Аркадию Васильевичу",
+        }
+        return PersonNameAIResult(
+            status="ok",
+            fio=mapping[(raw_fio, target_case)],
+            preprocessed_fio=raw_fio,
+            error_code=None,
+            cache_hit=False,
+        )
+
+    monkeypatch.setattr(preview_header_enrichment, "fetch_datanewton_party_by_inn", fake_fetch)
+    monkeypatch.setattr(preview_header_enrichment, "transform_person_name_with_ai", fake_transform)
+
+    patch_resp = await async_client.patch(
+        f"/claims/{created['claim_id']}",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+        json={
+            "case_type": "supply",
+            "normalized_data": {
+                "creditor_name": "ИП Абрамов Дмитрий Вадимович",
+                "creditor_inn": "770123456789",
+                "debtor_name": "Индивидуальный предприниматель Суляндзига Аркадий Васильевич",
+                "debtor_inn": "780123456789",
+                "contract_signed": True,
+                "debt_amount": 380000,
+                "payment_due_date": "2026-02-01",
+                "documents_mentioned": ["contract"],
+            },
+        },
+    )
+    assert patch_resp.status_code == 200
+    patch_payload = patch_resp.json()
+    assert patch_payload["preview_header"]["format_version"] == 2
+    assert (
+        patch_payload["preview_header"]["from_party"]["person_name"]
+        == "ИП Абрамов Дмитрий Вадимович"
+    )
+    assert patch_payload["preview_header"]["from_party"]["line2"] == "ИП Абрамов Дмитрий Вадимович"
+    assert patch_payload["preview_header"]["to_party"]["person_name"] is None
+    assert patch_payload["preview_header"]["to_party"]["line2"] is None
+    assert patch_payload["preview_header"]["from_party"]["rendered"] == {
+        "line1": "От индивидуального предпринимателя",
+        "line2": "Абрамова Дмитрия Вадимовича",
+        "line3": None,
+    }
+    assert patch_payload["preview_header"]["to_party"]["rendered"] == {
+        "line1": "Индивидуальному предпринимателю",
+        "line2": "Суляндзиге Аркадию Васильевичу",
+        "line3": None,
+    }
+
+    decision = {
+        "generation_state": "ready",
+        "risk_flags": [],
+        "allowed_blocks": ["header", "facts", "demands"],
+        "blocked_blocks": [],
+        "missing_fields": [],
+    }
+
+    async def fake_generate_claim_preview(
+        _settings, *, claim_id, input_text, case_type, normalized_data, decision
+    ):
+        return {
+            "generated_preview_text": "Черновик претензии",
+            "used_fallback": False,
+            "error_code": None,
+        }
+
+    monkeypatch.setattr(public_claims_router, "evaluate_claim_rules", lambda **_: decision)
+    monkeypatch.setattr(
+        public_claims_router,
+        "generate_claim_preview",
+        fake_generate_claim_preview,
+    )
+
+    generate_resp = await async_client.post(
+        f"/claims/{created['claim_id']}/generate-preview",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+    )
+    assert generate_resp.status_code == 200
+    generate_payload = generate_resp.json()
+    assert generate_payload["preview_header"]["from_party"]["rendered"] == {
+        "line1": "От индивидуального предпринимателя",
+        "line2": "Абрамова Дмитрия Вадимовича",
+        "line3": None,
+    }
+    assert generate_payload["preview_header"]["to_party"]["rendered"] == {
+        "line1": "Индивидуальному предпринимателю",
+        "line2": "Суляндзиге Аркадию Васильевичу",
+        "line3": None,
+    }
+
+    get_preview_resp = await async_client.get(
+        f"/claims/{created['claim_id']}/preview",
+        headers={"X-Claim-Edit-Token": created["edit_token"]},
+    )
+    assert get_preview_resp.status_code == 200
+    get_payload = get_preview_resp.json()
+    assert get_payload["preview_header"]["from_party"]["rendered"] == {
+        "line1": "От индивидуального предпринимателя",
+        "line2": "Абрамова Дмитрия Вадимовича",
+        "line3": None,
+    }
+    assert get_payload["preview_header"]["to_party"]["rendered"] == {
+        "line1": "Индивидуальному предпринимателю",
+        "line2": "Суляндзиге Аркадию Васильевичу",
+        "line3": None,
+    }
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        claim_row = await session.execute(
+            text("SELECT preview_header_json FROM claims WHERE id = :id"),
+            {"id": created["claim_id"]},
+        )
+        row = claim_row.first()
+        assert row is not None
+        saved_header = row[0]
+
+    assert saved_header["format_version"] == 2
+    assert saved_header["from_party"]["person_name"] == "ИП Абрамов Дмитрий Вадимович"
+    assert saved_header["from_party"]["line2"] == "ИП Абрамов Дмитрий Вадимович"
+    assert saved_header["from_party"]["rendered"] == {
+        "line1": "От индивидуального предпринимателя",
+        "line2": "Абрамова Дмитрия Вадимовича",
+        "line3": None,
+    }
+    assert saved_header["to_party"]["person_name"] is None
+    assert saved_header["to_party"]["line2"] is None
+    assert saved_header["to_party"]["rendered"] == {
+        "line1": "Индивидуальному предпринимателю",
+        "line2": "Суляндзиге Аркадию Васильевичу",
+        "line3": None,
+    }
+    assert calls == [
+        ("ИП Абрамов Дмитрий Вадимович", "genitive", True),
+        (
+            "Индивидуальный предприниматель Суляндзига Аркадий Васильевич",
+            "dative",
+            True,
+        ),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -640,3 +1013,5 @@ async def test_get_preview_upgrades_legacy_broken_header_with_emergency_bridge_w
     assert "format_version" not in stored_header
     assert "rendered" not in stored_header["from_party"]
     assert "rendered" not in stored_header["to_party"]
+
+

@@ -1,8 +1,11 @@
+import re
 from functools import lru_cache
 from typing import Annotated
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+_PROMPT_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")
 
 
 class Settings(BaseSettings):
@@ -70,6 +73,30 @@ class Settings(BaseSettings):
     invite_ttl_seconds: int = Field(default=604800, validation_alias="INVITE_TTL_SECONDS")
     chat_context_limit: int = Field(default=20, validation_alias="CHAT_CONTEXT_LIMIT")
     gateway_timeout_seconds: int = Field(default=30, validation_alias="GATEWAY_TIMEOUT_SECONDS")
+    claims_fio_ai_enabled: bool = Field(
+        default=False,
+        validation_alias="CLAIMS_FIO_AI_ENABLED",
+    )
+    claims_fio_ai_model: str = Field(
+        default="gpt-5.2",
+        validation_alias="CLAIMS_FIO_AI_MODEL",
+    )
+    claims_fio_ai_prompt_version: str = Field(
+        default="v1",
+        validation_alias="CLAIMS_FIO_AI_PROMPT_VERSION",
+    )
+    claims_fio_ai_timeout_seconds: int = Field(
+        default=10,
+        validation_alias="CLAIMS_FIO_AI_TIMEOUT_SECONDS",
+    )
+    claims_fio_ai_cache_ttl_seconds: int = Field(
+        default=86400,
+        validation_alias="CLAIMS_FIO_AI_CACHE_TTL_SECONDS",
+    )
+    claims_fio_ai_negative_cache_ttl_seconds: int = Field(
+        default=300,
+        validation_alias="CLAIMS_FIO_AI_NEGATIVE_CACHE_TTL_SECONDS",
+    )
     datanewton_enabled: bool = Field(default=False, validation_alias="DATANEWTON_ENABLED")
     datanewton_base_url: str = Field(
         default="https://api.datanewton.ru",
@@ -113,6 +140,47 @@ class Settings(BaseSettings):
         value = value.lower()
         if value not in {"lax", "strict", "none"}:
             raise ValueError("COOKIE_SAMESITE must be one of: lax, strict, none")
+        return value
+
+    @field_validator("claims_fio_ai_model")
+    @classmethod
+    def _validate_claims_fio_ai_model(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("CLAIMS_FIO_AI_MODEL must not be empty")
+        return normalized
+
+    @field_validator("claims_fio_ai_prompt_version")
+    @classmethod
+    def _validate_claims_fio_ai_prompt_version(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("CLAIMS_FIO_AI_PROMPT_VERSION must not be empty")
+        if not _PROMPT_VERSION_PATTERN.fullmatch(normalized):
+            raise ValueError(
+                "CLAIMS_FIO_AI_PROMPT_VERSION must match [A-Za-z0-9_.-]{1,32}"
+            )
+        return normalized
+
+    @field_validator("claims_fio_ai_timeout_seconds")
+    @classmethod
+    def _validate_claims_fio_ai_timeout_seconds(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("CLAIMS_FIO_AI_TIMEOUT_SECONDS must be > 0")
+        return value
+
+    @field_validator("claims_fio_ai_cache_ttl_seconds")
+    @classmethod
+    def _validate_claims_fio_ai_cache_ttl_seconds(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("CLAIMS_FIO_AI_CACHE_TTL_SECONDS must be >= 0")
+        return value
+
+    @field_validator("claims_fio_ai_negative_cache_ttl_seconds")
+    @classmethod
+    def _validate_claims_fio_ai_negative_cache_ttl_seconds(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("CLAIMS_FIO_AI_NEGATIVE_CACHE_TTL_SECONDS must be >= 0")
         return value
 
     @field_validator("claims_price_rub")

@@ -156,8 +156,17 @@ def _build_rendered_lines(
     side: PartySide,
 ) -> dict[str, str | None]:
     rendered_line1 = _build_rendered_line1(kind=kind, position_raw=position_raw, side=side)
-    rendered_line2 = company_name
     raw_person_name = _normalize_string(person_name)
+    if kind == "individual_entrepreneur":
+        ip_display_source = raw_person_name or _normalize_string(company_name)
+        rendered_line2 = _normalize_ip_display_name(ip_display_source)
+        return {
+            "line1": rendered_line1,
+            "line2": rendered_line2,
+            "line3": None,
+        }
+
+    rendered_line2 = company_name
     rendered_line3: str | None = None
     if raw_person_name is not None:
         if kind == "legal_entity":
@@ -167,14 +176,6 @@ def _build_rendered_lines(
             )
         else:
             rendered_line3 = raw_person_name
-
-    if (
-        kind == "individual_entrepreneur"
-        and rendered_line2 is not None
-        and raw_person_name is not None
-        and _normalize_ip_identity(rendered_line2) == _normalize_ip_identity(raw_person_name)
-    ):
-        rendered_line3 = None
 
     return {
         "line1": rendered_line1,
@@ -221,10 +222,18 @@ def _normalize_for_exact_equality(value: str) -> str:
     return " ".join(value.strip().lower().split())
 
 
-def _normalize_ip_identity(value: str) -> str:
-    normalized = _normalize_for_exact_equality(value)
+def _normalize_ip_display_name(value: str | None) -> str | None:
+    normalized = _normalize_string(value)
+    if normalized is None:
+        return None
+    without_prefix = _strip_ip_prefix_from_start(normalized)
+    collapsed = " ".join(without_prefix.strip().split())
+    return collapsed or None
+
+
+def _strip_ip_prefix_from_start(value: str) -> str:
+    lowered = value.lower()
     for prefix in _IP_PREFIXES:
-        if normalized.startswith(prefix):
-            normalized = normalized[len(prefix) :]
-            break
-    return " ".join(normalized.split())
+        if lowered.startswith(prefix):
+            return value[len(prefix) :]
+    return value
