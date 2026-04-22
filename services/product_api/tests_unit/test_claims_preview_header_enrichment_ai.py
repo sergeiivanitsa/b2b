@@ -42,6 +42,41 @@ def _build_claim(normalized_data_json: dict[str, object]) -> Claim:
 
 
 @pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("ЛИ ВИКТОРА МЕНГИНОВИЧА", "Ли Виктора Менгиновича"),
+        ("САПСАЙ-ЖУКОВ ВЛАДИСЛАВА АЛЕКСАНДРОВИЧА", "Сапсай-Жуков Владислава Александровича"),
+    ],
+)
+async def test_normalize_all_caps_cyrillic_fio_display_value(
+    raw_value: str,
+    expected: str,
+) -> None:
+    assert (
+        preview_header_enrichment._normalize_all_caps_cyrillic_fio_display_value(raw_value)  # noqa: SLF001
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "raw_value",
+    [
+        "Ли Виктора МЕНГИНОВИЧА",
+        "LI VIKTORA MENGINOVICHA",
+        "ЛИ ВИКТОРА МЕНГИНОВИЧА.",
+        "ЛИ",
+    ],
+)
+async def test_normalize_all_caps_cyrillic_fio_display_value_ignores_non_matching(
+    raw_value: str,
+) -> None:
+    assert (
+        preview_header_enrichment._normalize_all_caps_cyrillic_fio_display_value(raw_value)  # noqa: SLF001
+        == raw_value
+    )
+
+
+@pytest.mark.parametrize(
     ("side", "source_fio", "expected_line3"),
     [
         pytest.param("from", "Ли Виктор Менгинович", "Ли Виктора Менгиновича", id="from_li"),
@@ -160,6 +195,62 @@ async def test_rebuild_claim_preview_header_legal_entity_ai_success(
     assert target_party["rendered"]["line2"] == expected_company
     assert target_party["rendered"]["line3"] == expected_line3
     assert calls == [(source_fio, expected_case)]
+
+
+async def test_rebuild_claim_preview_header_legal_entity_all_caps_ai_output_is_normalized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _build_settings()
+    source_fio = "Ли Виктор Менгинович"
+    claim = _build_claim(
+        {
+            "creditor_name": "OOO Alpha",
+            "creditor_inn": "7701234567",
+            "debtor_name": "OOO Vector",
+            "debtor_inn": None,
+        }
+    )
+
+    async def fake_fetch(_settings: Settings, inn: str) -> dict[str, object] | None:
+        if inn != "7701234567":
+            return None
+        return {
+            "kind": "legal_entity",
+            "company_name": "OOO Alpha",
+            "position_raw": "генеральный директор",
+            "person_name": source_fio,
+            "address": None,
+        }
+
+    async def fake_transform(
+        _settings: Settings,
+        *,
+        raw_fio: str | None,
+        target_case: str,
+        entity_kind: str,
+        strip_ip_prefix: bool,
+    ) -> PersonNameAIResult:
+        assert raw_fio == source_fio
+        assert target_case == "genitive"
+        assert entity_kind == "legal_entity"
+        assert strip_ip_prefix is False
+        return PersonNameAIResult(
+            status="ok",
+            fio="ЛИ ВИКТОРА МЕНГИНОВИЧА",
+            preprocessed_fio=source_fio,
+            error_code=None,
+            cache_hit=False,
+        )
+
+    monkeypatch.setattr(preview_header_enrichment, "fetch_datanewton_party_by_inn", fake_fetch)
+    monkeypatch.setattr(preview_header_enrichment, "transform_person_name_with_ai", fake_transform)
+
+    header = await preview_header_enrichment.rebuild_claim_preview_header(settings, claim)
+
+    assert header["from_party"]["person_name"] == source_fio
+    assert header["from_party"]["line2"] == source_fio
+    assert header["from_party"]["rendered"]["line2"] == "OOO Alpha"
+    assert header["from_party"]["rendered"]["line3"] == "Ли Виктора Менгиновича"
 
 
 @pytest.mark.parametrize(
@@ -325,11 +416,11 @@ async def test_rebuild_claim_preview_header_applies_ai_to_individual_entrepreneu
         assert entity_kind == "individual_entrepreneur"
         assert strip_ip_prefix is True
         mapping = {
-            ("ИП Абрамов Дмитрий Вадимович", "genitive"): "Абрамова Дмитрия Вадимовича",
+            ("ИП Абрамов Дмитрий Вадимович", "genitive"): "АБРАМОВА ДМИТРИЯ ВАДИМОВИЧА",
             (
                 "Индивидуальный предприниматель Суляндзига Аркадий Васильевич",
                 "dative",
-            ): "Суляндзиге Аркадию Васильевичу",
+            ): "СУЛЯНДЗИГЕ АРКАДИЮ ВАСИЛЬЕВИЧУ",
         }
         return PersonNameAIResult(
             status="ok",

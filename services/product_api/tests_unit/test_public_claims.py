@@ -499,11 +499,11 @@ async def test_update_public_claim_patch_individual_entrepreneur_ai_updates_rend
         assert entity_kind == "individual_entrepreneur"
         assert strip_ip_prefix is True
         mapping = {
-            ("ИП Абрамов Дмитрий Вадимович", "genitive"): "Абрамова Дмитрия Вадимовича",
+            ("ИП Абрамов Дмитрий Вадимович", "genitive"): "АБРАМОВА ДМИТРИЯ ВАДИМОВИЧА",
             (
                 "Индивидуальный предприниматель Суляндзига Аркадий Васильевич",
                 "dative",
-            ): "Суляндзиге Аркадию Васильевичу",
+            ): "СУЛЯНДЗИГЕ АРКАДИЮ ВАСИЛЬЕВИЧУ",
         }
         return PersonNameAIResult(
             status="ok",

@@ -324,11 +324,11 @@ async def test_generate_and_get_preview_ip_ai_keeps_line2_consistent_and_line3_n
         assert entity_kind == "individual_entrepreneur"
         assert strip_ip_prefix is True
         mapping = {
-            ("ИП Абрамов Дмитрий Вадимович", "genitive"): "Абрамова Дмитрия Вадимовича",
+            ("ИП Абрамов Дмитрий Вадимович", "genitive"): "АБРАМОВА ДМИТРИЯ ВАДИМОВИЧА",
             (
                 "Индивидуальный предприниматель Суляндзига Аркадий Васильевич",
                 "dative",
-            ): "Суляндзиге Аркадию Васильевичу",
+            ): "СУЛЯНДЗИГЕ АРКАДИЮ ВАСИЛЬЕВИЧУ",
         }
         return PersonNameAIResult(
             status="ok",

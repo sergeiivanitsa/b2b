@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from product_api.models import Claim
@@ -13,6 +14,9 @@ from .preview_header_formatter import build_preview_header, infer_kind_from_inn
 
 logger = logging.getLogger(__name__)
 PREVIEW_HEADER_FORMAT_VERSION = 2
+_ALL_CAPS_CYRILLIC_FIO_ALLOWED_PATTERN = re.compile(r"^[А-ЯЁ -]+$")
+_ALL_CAPS_CYRILLIC_FIO_TOKEN_PATTERN = re.compile(r"^[А-ЯЁ]+(?:-[А-ЯЁ]+)*$")
+_LOWERCASE_CYRILLIC_PATTERN = re.compile(r"[а-яё]")
 
 
 def build_preview_header_from_normalized_data(
@@ -117,6 +121,7 @@ async def _apply_fio_ai_to_party_line3(
     if not isinstance(rendered, dict):
         return
     formatter_line3 = rendered.get("line3")
+    formatter_line3_text = formatter_line3 if isinstance(formatter_line3, str) else None
 
     result = await transform_person_name_with_ai(
         settings,
@@ -125,13 +130,12 @@ async def _apply_fio_ai_to_party_line3(
         entity_kind="legal_entity",
         strip_ip_prefix=False,
     )
+    final_line3 = formatter_line3_text
     if result.status == "ok" and result.fio:
-        rendered["line3"] = result.fio
-        return
-    if result.preprocessed_fio:
-        rendered["line3"] = result.preprocessed_fio
-        return
-    rendered["line3"] = formatter_line3
+        final_line3 = result.fio
+    elif result.preprocessed_fio:
+        final_line3 = result.preprocessed_fio
+    rendered["line3"] = _normalize_all_caps_cyrillic_fio_display_value(final_line3)
 
 
 async def _apply_fio_ai_for_individual_entrepreneurs(
@@ -172,6 +176,7 @@ async def _apply_fio_ai_to_ip_party_line2(
     if not isinstance(rendered, dict):
         return
     formatter_line2 = rendered.get("line2")
+    formatter_line2_text = formatter_line2 if isinstance(formatter_line2, str) else None
 
     raw_person_name = _normalize_string(party.get("person_name"))
     raw_company_name = _normalize_string(party.get("company_name"))
@@ -186,13 +191,41 @@ async def _apply_fio_ai_to_ip_party_line2(
         entity_kind="individual_entrepreneur",
         strip_ip_prefix=True,
     )
+    final_line2 = formatter_line2_text
     if result.status == "ok" and result.fio:
-        rendered["line2"] = result.fio
-        return
-    if result.preprocessed_fio:
-        rendered["line2"] = result.preprocessed_fio
-        return
-    rendered["line2"] = formatter_line2
+        final_line2 = result.fio
+    elif result.preprocessed_fio:
+        final_line2 = result.preprocessed_fio
+    rendered["line2"] = _normalize_all_caps_cyrillic_fio_display_value(final_line2)
+
+
+def _normalize_all_caps_cyrillic_fio_display_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not _looks_like_all_caps_cyrillic_fio(value):
+        return value
+    normalized_tokens: list[str] = []
+    for token in value.split():
+        normalized_parts = [
+            part[:1].upper() + part[1:].lower()
+            for part in token.split("-")
+            if part
+        ]
+        if not normalized_parts:
+            return value
+        normalized_tokens.append("-".join(normalized_parts))
+    return " ".join(normalized_tokens)
+
+
+def _looks_like_all_caps_cyrillic_fio(value: str) -> bool:
+    if _LOWERCASE_CYRILLIC_PATTERN.search(value):
+        return False
+    if not _ALL_CAPS_CYRILLIC_FIO_ALLOWED_PATTERN.fullmatch(value):
+        return False
+    tokens = value.split()
+    if len(tokens) < 2:
+        return False
+    return all(_ALL_CAPS_CYRILLIC_FIO_TOKEN_PATTERN.fullmatch(token) for token in tokens)
 
 
 def _merge_party(base_party: dict[str, Any], incoming_party: dict[str, Any]) -> dict[str, Any]:
