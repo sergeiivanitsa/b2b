@@ -84,19 +84,21 @@ export function ClaimStep1Page() {
       <section className="claims-wrap">
         <ClaimsBrand />
 
-        <div className="claims-hero">
+        <div className="claims-hero claims-step1-first-screen">
           <div className="claims-hero__left">
-            <h1 className="claims-hero__title">
-              ВЕРНИТЕ ДОЛГ С КОНТРАГЕНТА <span>БЕЗ СУДА</span>
+            <h1 className="claims-hero__title claims-step1-first-screen__title">
+              <span className="claims-step1-first-screen__title-line claims-step1-first-screen__title-line--top">ВЕРНИТЕ ДОЛГ</span>{' '}
+              <span className="claims-step1-first-screen__title-line claims-step1-first-screen__title-line--middle">С КОНТРАГЕНТА</span>{' '}
+              <span className="claims-step1-first-screen__title-line claims-step1-first-screen__title-line--accent">БЕЗ СУДА</span>
             </h1>
-            <p className="claims-hero__lead">
+            <p className="claims-hero__lead claims-step1-first-screen__lead">
               Опишите ситуацию, и через 5 минут получите досудебную претензию с требованиями к
               должнику, расчётом неустойки и правовыми основаниями для взыскания долга
             </p>
 
-            <section className="claims-benefits">
-              <h2>После анализа вашей ситуации AI-ассистент:</h2>
-              <ul>
+            <section className="claims-benefits claims-step1-first-screen__benefits">
+              <h2 className="claims-step1-first-screen__benefits-title">После анализа вашей ситуации AI-ассистент:</h2>
+              <ul className="claims-step1-first-screen__benefits-list">
                 <li>задаст важные уточняющие вопросы</li>
                 <li>подготовит документ с учётом норм ГК РФ</li>
                 <li>
@@ -108,10 +110,11 @@ export function ClaimStep1Page() {
             </section>
           </div>
 
-          <div className="claims-hero__right">
-            <form className="claims-step1-form" onSubmit={onSubmit}>
+          <div className="claims-hero__right claims-step1-first-screen__form-area">
+            <form className="claims-step1-form claims-step1-first-screen__form" onSubmit={onSubmit}>
               <textarea
                 id="claim-input-text"
+                className="claims-step1-first-screen__textarea"
                 value={inputText}
                 onChange={(event) => setInputText(event.target.value)}
                 placeholder="Коротко опишите ситуацию: кто должен, по какому договору, сумму долга и когда истёк срок оплаты?"
@@ -119,12 +122,12 @@ export function ClaimStep1Page() {
                 required
                 aria-label="Коротко опишите ситуацию"
               />
-              <p className="claims-step1-form__example">{STEP_1_EXAMPLE}</p>
-              <button type="submit" disabled={isSubmitting}>
+              <p className="claims-step1-form__example claims-step1-first-screen__example">{STEP_1_EXAMPLE}</p>
+              <button className="claims-step1-first-screen__cta" type="submit" disabled={isSubmitting}>
                 {isSubmitting ? 'СОЗДАЁМ...' : 'СОЗДАТЬ ПРЕТЕНЗИЮ'}
               </button>
             </form>
-            <p className="claims-step1-footnote">шаг 1 из 4: описание ситуации</p>
+            <p className="claims-step1-footnote claims-step1-first-screen__footnote">шаг 1 из 4: описание ситуации</p>
           </div>
         </div>
 

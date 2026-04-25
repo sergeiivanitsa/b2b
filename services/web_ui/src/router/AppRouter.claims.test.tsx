@@ -32,6 +32,22 @@ function renderRouter(path: string): void {
   )
 }
 
+function expectStep1SmokeUi(): void {
+  const heading = screen.getByRole('heading', { level: 1 })
+  const headingText = heading.textContent ?? ''
+  expect(headingText).toContain('ВЕРНИТЕ ДОЛГ')
+  expect(headingText).toContain('С КОНТРАГЕНТА')
+  expect(headingText).toContain('БЕЗ СУДА')
+
+  expect(screen.getByText(/Опишите ситуацию, и через 5 минут получите/i)).toBeTruthy()
+  expect(screen.getByText('После анализа вашей ситуации AI-ассистент:')).toBeTruthy()
+  expect(screen.getByText('задаст важные уточняющие вопросы')).toBeTruthy()
+  expect(screen.getByRole('textbox', { name: 'Коротко опишите ситуацию' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'СОЗДАТЬ ПРЕТЕНЗИЮ' })).toBeTruthy()
+  expect(screen.getByText('шаг 1 из 4: описание ситуации')).toBeTruthy()
+  expect(screen.getByText(/Например: ООО «Вектор»/)).toBeTruthy()
+}
+
 describe('AppRouter claims shell', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -48,8 +64,7 @@ describe('AppRouter claims shell', () => {
 
     renderRouter('/claims')
 
-    expect(screen.getByText('СОЗДАТЬ ПРЕТЕНЗИЮ')).toBeTruthy()
-    expect(screen.getByText('шаг 1 из 4: описание ситуации')).toBeTruthy()
+    expectStep1SmokeUi()
   })
 
   it('redirects /claims/* to /claims shell', () => {
@@ -57,7 +72,7 @@ describe('AppRouter claims shell', () => {
 
     renderRouter('/claims/step-unknown')
 
-    expect(screen.getByText('СОЗДАТЬ ПРЕТЕНЗИЮ')).toBeTruthy()
+    expectStep1SmokeUi()
   })
 
   it('keeps root redirect behavior unchanged', () => {
