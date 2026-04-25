@@ -87,7 +87,9 @@ export function ClaimStep1Page() {
         <div className="claims-hero claims-step1-first-screen">
           <div className="claims-hero__left">
             <h1 className="claims-hero__title claims-step1-first-screen__title">
-              ВЕРНИТЕ ДОЛГ С КОНТРАГЕНТА <span>БЕЗ СУДА</span>
+              <span className="claims-step1-first-screen__title-line claims-step1-first-screen__title-line--top">ВЕРНИТЕ ДОЛГ</span>{' '}
+              <span className="claims-step1-first-screen__title-line claims-step1-first-screen__title-line--middle">С КОНТРАГЕНТА</span>{' '}
+              <span className="claims-step1-first-screen__title-line claims-step1-first-screen__title-line--accent">БЕЗ СУДА</span>
             </h1>
             <p className="claims-hero__lead claims-step1-first-screen__lead">
               Опишите ситуацию, и через 5 минут получите досудебную претензию с требованиями к

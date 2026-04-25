@@ -1167,6 +1167,15 @@ body.is-chat-page #root {
   color: #00a326;
 }
 
+.claims-page--step1 .claims-step1-first-screen__title-line--top,
+.claims-page--step1 .claims-step1-first-screen__title-line--middle {
+  color: inherit;
+}
+
+.claims-page--step1 .claims-step1-first-screen__title-line--accent {
+  color: #00a326;
+}
+
 .claims-hero__lead {
   margin: 0 0 -100px;
   max-width: 820px;
@@ -2183,6 +2192,25 @@ body.is-chat-page #root {
   gap: 8px;
 }
 
+@media (min-width: 721px) and (max-width: 1024px) {
+  .claims-page--step1 .claims-step1-first-screen__title {
+    text-align: center;
+    margin-bottom: 18px;
+  }
+
+  .claims-page--step1 .claims-step1-first-screen__title-line--accent {
+    display: block;
+  }
+
+  .claims-page--step1 .claims-step1-first-screen__lead {
+    margin: 0 0 18px;
+  }
+
+  .claims-page--step1 .claims-step1-first-screen__benefits {
+    margin: 0;
+  }
+}
+
 @media (max-width: 1024px) {
   .claims-page {
     padding: 22px 30px;
@@ -2272,6 +2300,23 @@ body.is-chat-page #root {
 @media (max-width: 720px) {
   .claims-page {
     padding: 18px 22px;
+  }
+
+  .claims-page--step1 .claims-step1-first-screen__title {
+    text-align: center;
+    margin-bottom: 14px;
+  }
+
+  .claims-page--step1 .claims-step1-first-screen__title-line {
+    display: block;
+  }
+
+  .claims-page--step1 .claims-step1-first-screen__lead {
+    margin: 0 0 14px;
+  }
+
+  .claims-page--step1 .claims-step1-first-screen__benefits {
+    margin: 0;
   }
 
   .chat-main__header {
