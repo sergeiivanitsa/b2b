@@ -1208,9 +1208,17 @@ body.is-chat-page #root {
     letter-spacing: 0;
   }
 
-  .claims-page--step1 .claims-hero__lead,
-  .claims-page--step1 .claims-benefits {
+  .claims-page--step1 .claims-step1-first-screen__lead,
+  .claims-page--step1 .claims-step1-first-screen__benefits {
     grid-column: 1;
+  }
+
+  .claims-page--step1 .claims-step1-first-screen__lead {
+    margin: 0 0 22px;
+  }
+
+  .claims-page--step1 .claims-step1-first-screen__benefits {
+    margin: 0;
   }
 
   .claims-page--step1 .claims-hero__right {
