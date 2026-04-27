@@ -2202,6 +2202,12 @@ body.is-chat-page #root {
   }
 }
 
+@media (min-width: 1025px) and (max-width: 1280px) {
+  .claims-page--step3 .claims-step-header > p {
+    font-size: 1.75rem;
+  }
+}
+
 @media (min-width: 721px) and (max-width: 1024px) {
   .claims-page--step1 .claims-step1-first-screen__title {
     text-align: center;
