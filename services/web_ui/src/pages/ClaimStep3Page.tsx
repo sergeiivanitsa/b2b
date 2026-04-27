@@ -30,6 +30,7 @@ export function ClaimStep3Page() {
   const [email, setEmail] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [submittingDotCount, setSubmittingDotCount] = useState(1)
   const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState(92)
   const step3DocumentIds = useMemo(
@@ -91,9 +92,30 @@ export function ClaimStep3Page() {
     }
   }, [navigate])
 
+  useEffect(() => {
+    if (!isSubmitting) {
+      setSubmittingDotCount(1)
+      return
+    }
+
+    setSubmittingDotCount(1)
+    const intervalId = window.setInterval(() => {
+      setSubmittingDotCount((currentDotCount) =>
+        currentDotCount >= 3 ? 1 : currentDotCount + 1,
+      )
+    }, 500)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [isSubmitting])
+
   const submitButtonText = useMemo(
-    () => (isSubmitting ? 'ГОТОВИМ PREVIEW...' : 'ПОКАЗАТЬ ГОТОВУЮ ПРЕТЕНЗИЮ'),
-    [isSubmitting],
+    () =>
+      isSubmitting
+        ? `ГОТОВИМ ПРЕТЕНЗИЮ${'.'.repeat(submittingDotCount)}`
+        : 'ПОКАЗАТЬ ГОТОВУЮ ПРЕТЕНЗИЮ',
+    [isSubmitting, submittingDotCount],
   )
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -107,6 +129,7 @@ export function ClaimStep3Page() {
       return
     }
 
+    setSubmittingDotCount(1)
     setIsSubmitting(true)
     setError(null)
 
