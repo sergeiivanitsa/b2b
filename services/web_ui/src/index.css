@@ -2198,7 +2198,12 @@ body.is-chat-page #root {
 
 @media (min-width: 1025px) {
   .claims-page--step3 .claims-step3-contact__form {
-    grid-template-columns: minmax(260px, 420px) minmax(220px, 360px);
+    grid-template-columns: minmax(320px, 420px) minmax(360px, 460px);
+    justify-content: center;
+  }
+
+  .claims-page--step3 .claims-step3-contact__form button {
+    white-space: nowrap;
   }
 }
 
