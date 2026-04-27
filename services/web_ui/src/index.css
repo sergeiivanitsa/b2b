@@ -1647,8 +1647,12 @@ body.is-chat-page #root {
 }
 
 .claims-step3-matrix article:first-child li::before {
-  content: "✔";
-  color: #00a229;
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #00a229;
   margin-right: 9px;
 }
 
