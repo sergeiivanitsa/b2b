@@ -70,6 +70,18 @@ async function flushAsyncUpdates(): Promise<void> {
   })
 }
 
+function createPendingPreview() {
+  let resolvePreview!: (value: Awaited<ReturnType<typeof generateClaimPreview>>) => void
+  const promise = new Promise<Awaited<ReturnType<typeof generateClaimPreview>>>((resolve) => {
+    resolvePreview = resolve
+  })
+
+  return {
+    promise,
+    resolvePreview,
+  }
+}
+
 describe('ClaimStep3Page', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -164,6 +176,61 @@ describe('ClaimStep3Page', () => {
     })
     expect(mockedGenerateClaimPreview).toHaveBeenCalledTimes(1)
     expect(mockedGenerateClaimPreview).toHaveBeenCalledWith(12, 'token-1')
+    expect(mockedNavigate).toHaveBeenCalledWith('/claims/step-4')
+  })
+
+  it('animates the submitting button label while preview generation is pending', async () => {
+    const pendingPreview = createPendingPreview()
+    mockedGenerateClaimPreview.mockReturnValue(pendingPreview.promise)
+    const { container } = render(<ClaimStep3Page />)
+
+    await flushAsyncUpdates()
+
+    const emailInput = container.querySelector('input[type="email"]') as HTMLInputElement
+    fireEvent.change(emailInput, { target: { value: 'client@example.com' } })
+
+    const submitButton = screen.getByRole('button', {
+      name: 'ПОКАЗАТЬ ГОТОВУЮ ПРЕТЕНЗИЮ',
+    })
+    fireEvent.click(submitButton)
+
+    await flushAsyncUpdates()
+
+    const submittingButton = screen.getByRole('button', {
+      name: 'ГОТОВИМ ПРЕТЕНЗИЮ.',
+    }) as HTMLButtonElement
+    expect(submittingButton.disabled).toBe(true)
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(screen.getByRole('button', { name: 'ГОТОВИМ ПРЕТЕНЗИЮ..' })).toBeTruthy()
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(screen.getByRole('button', { name: 'ГОТОВИМ ПРЕТЕНЗИЮ...' })).toBeTruthy()
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(screen.getByRole('button', { name: 'ГОТОВИМ ПРЕТЕНЗИЮ.' })).toBeTruthy()
+
+    await act(async () => {
+      pendingPreview.resolvePreview({
+        claim_id: 12,
+        generation_state: 'preview_ready',
+        manual_review_required: false,
+        risk_flags: [],
+        allowed_blocks: [],
+        blocked_blocks: [],
+        generated_preview_text: 'Preview text',
+        missing_fields: [],
+      })
+      await pendingPreview.promise
+    })
+    await flushAsyncUpdates()
+
     expect(mockedNavigate).toHaveBeenCalledWith('/claims/step-4')
   })
 })
