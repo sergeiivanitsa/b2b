@@ -1647,8 +1647,12 @@ body.is-chat-page #root {
 }
 
 .claims-step3-matrix article:first-child li::before {
-  content: "✔";
-  color: #00a229;
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #00a229;
   margin-right: 9px;
 }
 
@@ -2190,6 +2194,18 @@ body.is-chat-page #root {
   display: flex;
   justify-content: space-between;
   gap: 8px;
+}
+
+@media (min-width: 1025px) {
+  .claims-page--step3 .claims-step3-contact__form {
+    grid-template-columns: minmax(260px, 420px) minmax(220px, 360px);
+  }
+}
+
+@media (min-width: 1025px) and (max-width: 1280px) {
+  .claims-page--step3 .claims-step-header > p {
+    font-size: 1.75rem;
+  }
 }
 
 @media (min-width: 721px) and (max-width: 1024px) {

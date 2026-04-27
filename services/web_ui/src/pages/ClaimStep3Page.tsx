@@ -187,7 +187,7 @@ export function ClaimStep3Page() {
                     aria-busy={status === 'loading'}
                   >
                     <span className="claims-doc-queue__status" aria-hidden="true">
-                      {status === 'done' ? '☑' : '◌'}
+                      {status === 'done' ? '✔' : '◌'}
                     </span>
                     <span className="claims-doc-queue__label">{item.label}</span>
                   </li>
