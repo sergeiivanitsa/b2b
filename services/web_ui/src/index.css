@@ -2196,6 +2196,12 @@ body.is-chat-page #root {
   gap: 8px;
 }
 
+@media (min-width: 1025px) {
+  .claims-page--step3 .claims-step3-contact__form {
+    grid-template-columns: minmax(260px, 420px) minmax(220px, 360px);
+  }
+}
+
 @media (min-width: 721px) and (max-width: 1024px) {
   .claims-page--step1 .claims-step1-first-screen__title {
     text-align: center;
