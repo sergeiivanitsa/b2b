@@ -2425,6 +2425,15 @@ body.is-chat-page #root {
     font-size: 1.25rem;
   }
 
+  .claims-page--step2 .claims-step2-header__subtitle,
+  .claims-page--step2 .claims-step2-header .claims-progress__label {
+    font-size: 1.25rem;
+  }
+
+  .claims-page--step2 .claims-step2-header__title-line {
+    display: block;
+  }
+
   .claims-hero__title {
     font-size: 1.85rem;
   }
