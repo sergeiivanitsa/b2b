@@ -354,9 +354,12 @@ export function ClaimStep2Page() {
           <p className="claims-topline__step">ШАГ 2 ИЗ 4</p>
         </div>
 
-        <header className="claims-step-header">
-          <h1>УТОЧНИТЕ ДАННЫЕ ДЛЯ ПРЕТЕНЗИИ</h1>
-          <p>AI уже проанализировал вашу ситуацию. Проверьте и дополните ключевые данные.</p>
+        <header className="claims-step-header claims-step2-header">
+          <h1 className="claims-step2-header__title">
+            <span className="claims-step2-header__title-line">УТОЧНИТЕ ДАННЫЕ</span>{' '}
+            <span className="claims-step2-header__title-line">ДЛЯ ПРЕТЕНЗИИ</span>
+          </h1>
+          <p className="claims-step2-header__subtitle">AI уже проанализировал вашу ситуацию. Проверьте и дополните ключевые данные.</p>
           <ClaimsProgressBar label="Готовность документа:" value={completionPercent} />
         </header>
 
