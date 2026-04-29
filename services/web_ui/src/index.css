@@ -2203,6 +2203,7 @@ body.is-chat-page #root {
   }
 
   .claims-page--step3 .claims-step3-contact__form button {
+    font-size: clamp(1rem, 1.3vw, 1.35rem);
     padding-left: 28px;
     padding-right: 28px;
     white-space: nowrap;
