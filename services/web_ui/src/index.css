@@ -1788,6 +1788,12 @@ body.is-chat-page #root {
     min-height: 0;
     max-height: none;
   }
+
+  .claims-page--step4 .claims-paywall-card {
+    position: sticky;
+    top: 24px;
+    align-self: start;
+  }
 }
 
 .claims-document-sheet__inner {
