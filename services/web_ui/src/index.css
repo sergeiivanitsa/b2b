@@ -1739,6 +1739,13 @@ body.is-chat-page #root {
   font-size: 0.94rem;
 }
 
+.claims-page--step4 {
+  --claims-step4-preview-width: 750px;
+  --claims-step4-a4-ratio: 210 / 297;
+  --claims-step4-gap: 16px;
+  --claims-step4-right-min: 360px;
+}
+
 .claims-step4-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
@@ -1765,6 +1772,22 @@ body.is-chat-page #root {
   border-radius: 2px;
   box-shadow: 0 18px 40px rgba(28, 36, 48, 0.16);
   overflow: hidden;
+}
+
+@media (min-width: 1280px) {
+  .claims-page--step4 .claims-step4-layout {
+    grid-template-columns:
+      var(--claims-step4-preview-width)
+      minmax(var(--claims-step4-right-min), 1fr);
+    gap: var(--claims-step4-gap);
+  }
+
+  .claims-page--step4 .claims-document-sheet {
+    width: var(--claims-step4-preview-width);
+    aspect-ratio: var(--claims-step4-a4-ratio);
+    min-height: 0;
+    max-height: none;
+  }
 }
 
 .claims-document-sheet__inner {
@@ -2303,6 +2326,14 @@ body.is-chat-page #root {
     max-width: 860px;
   }
 
+  .claims-page--step4 .claims-document-sheet {
+    width: 100%;
+    max-width: var(--claims-step4-preview-width);
+    aspect-ratio: var(--claims-step4-a4-ratio);
+    min-height: 0;
+    max-height: none;
+  }
+
   .admin-claims-header {
     flex-direction: column;
   }
@@ -2404,6 +2435,11 @@ body.is-chat-page #root {
   .claims-document-sheet {
     min-height: clamp(520px, 76vh, 760px);
     max-height: clamp(520px, 78vh, 790px);
+  }
+
+  .claims-page--step4 .claims-document-sheet {
+    min-height: 0;
+    max-height: none;
   }
 
   .claims-document-sheet__inner {
