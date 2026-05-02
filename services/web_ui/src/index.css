@@ -2037,6 +2037,7 @@ body.is-chat-page #root {
   min-width: 0;
   font-size: 90%;
   line-height: 1.35;
+  text-align: center;
   white-space: normal;
   overflow-wrap: normal;
   word-break: normal;
