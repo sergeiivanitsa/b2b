@@ -1794,6 +1794,10 @@ body.is-chat-page #root {
     top: 24px;
     align-self: start;
   }
+
+  .claims-page--step4 .claims-paywall-card__hint {
+    white-space: nowrap;
+  }
 }
 
 .claims-document-sheet__inner {
