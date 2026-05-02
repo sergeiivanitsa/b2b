@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+  echo "Ошибка: ты не внутри git-репозитория."
+  exit 1
+}
+
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+
+if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
+  echo "Ошибка: нельзя коммитить напрямую в $BRANCH."
+  echo "Сначала создай ветку через: vet"
+  exit 1
+fi
+
+if [ -z "$(git status --porcelain)" ]; then
+  echo "Нет изменений для коммита."
+  exit 0
+fi
+
+echo "Текущая ветка: $BRANCH"
+echo "Commit message будет:"
+echo "$BRANCH"
+echo
+
+git status --short
+echo
+
+read -r -p "Создать commit? [y/N]: " CONFIRM
+
+if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+  echo "Остановлено."
+  exit 0
+fi
+
+git add -A
+git commit -m "$BRANCH"

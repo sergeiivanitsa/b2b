@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+  echo "Ошибка: ты не внутри git-репозитория."
+  exit 1
+}
+
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+
+if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
+  echo "Ошибка: не пушим main этой командой."
+  exit 1
+fi
+
+git push -u origin "$BRANCH"
