@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -15,6 +15,21 @@ from .normalization import (
 )
 from .preview_header_enrichment import build_preview_header_from_normalized_data
 from .preview_header_formatter import build_preview_header_party
+
+_RUSSIAN_MONTHS_GENITIVE = {
+    1: "января",
+    2: "февраля",
+    3: "марта",
+    4: "апреля",
+    5: "мая",
+    6: "июня",
+    7: "июля",
+    8: "августа",
+    9: "сентября",
+    10: "октября",
+    11: "ноября",
+    12: "декабря",
+}
 
 
 def _isoformat(value: datetime | None) -> str | None:
@@ -205,6 +220,7 @@ def build_public_claim_preview_snapshot(claim: Claim) -> dict:
         "generated_preview_text": claim.generated_preview_text or "",
         "missing_fields": list(step2["missing_fields"]),
         "preview_header": _build_claim_preview_header(claim, normalized_data),
+        "preview_requisites": _build_preview_requisites(claim),
     }
 
 
@@ -296,6 +312,20 @@ async def apply_claim_payment_stub(
 
 
 PREVIEW_HEADER_FORMAT_VERSION = 2
+
+
+def _build_preview_requisites(claim: Claim) -> dict[str, str]:
+    outgoing_date = claim.created_at.date()
+    return {
+        "outgoing_number": "б/н",
+        "outgoing_date": outgoing_date.isoformat(),
+        "outgoing_date_text": _format_russian_document_date(outgoing_date),
+    }
+
+
+def _format_russian_document_date(value: date) -> str:
+    month = _RUSSIAN_MONTHS_GENITIVE[value.month]
+    return f"{value.day:02d} {month} {value.year} года"
 
 
 def _build_claim_preview_header(

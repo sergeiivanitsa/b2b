@@ -1,5 +1,8 @@
-﻿import pytest
+﻿from datetime import datetime, timezone
 
+import pytest
+
+from product_api.claims.repository import build_public_claim_preview_snapshot
 from product_api.claims.security import hash_claim_edit_token
 from product_api.models import Claim, ClaimEvent
 
@@ -23,6 +26,8 @@ def _base_claim(claim_id: int) -> Claim:
         input_text="OOO Vector did not pay for delivery",
         edit_token_hash=hash_claim_edit_token("valid-token"),
         case_type="supply",
+        created_at=datetime(2026, 5, 3, 12, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 12, 31, 23, 59, tzinfo=timezone.utc),
         normalized_data_json={
             "creditor_name": "OOO Alpha",
             "debtor_name": "OOO Vector",
@@ -39,6 +44,64 @@ def _base_claim(claim_id: int) -> Claim:
             "missing_fields": [],
         },
     )
+
+
+def _assert_preview_requisites(payload: dict):
+    assert payload["preview_requisites"] == {
+        "outgoing_number": "б/н",
+        "outgoing_date": "2026-05-03",
+        "outgoing_date_text": "03 мая 2026 года",
+    }
+
+
+def _assert_requisites_not_in_preview_body(payload: dict) -> None:
+    body = payload["generated_preview_text"]
+    for forbidden in (
+        "Исх. №",
+        "б/н",
+        "03 мая 2026 года",
+        "Полная версия документа",
+        "после оплаты",
+    ):
+        assert forbidden not in body
+
+
+@pytest.mark.parametrize(
+    ("created_at", "expected_date", "expected_text"),
+    [
+        (
+            datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+            "2026-01-01",
+            "01 января 2026 года",
+        ),
+        (
+            datetime(2026, 5, 3, 12, 0, tzinfo=timezone.utc),
+            "2026-05-03",
+            "03 мая 2026 года",
+        ),
+        (
+            datetime(2026, 12, 31, 12, 0, tzinfo=timezone.utc),
+            "2026-12-31",
+            "31 декабря 2026 года",
+        ),
+    ],
+)
+async def test_preview_requisites_formats_russian_document_date(
+    created_at,
+    expected_date,
+    expected_text,
+):
+    claim = _base_claim(399)
+    claim.created_at = created_at
+    claim.updated_at = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+
+    payload = build_public_claim_preview_snapshot(claim)
+
+    assert payload["preview_requisites"] == {
+        "outgoing_number": "б/н",
+        "outgoing_date": expected_date,
+        "outgoing_date_text": expected_text,
+    }
 
 
 async def test_generate_preview_success(async_client, mock_session, monkeypatch):
@@ -90,6 +153,8 @@ async def test_generate_preview_success(async_client, mock_session, monkeypatch)
     assert payload["generation_state"] == "ready"
     assert payload["manual_review_required"] is False
     assert payload["generated_preview_text"] == "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё"
+    _assert_preview_requisites(payload)
+    _assert_requisites_not_in_preview_body(payload)
     assert payload["preview_header"]["format_version"] == 2
     assert payload["preview_header"]["from_party"]["line1"] == "Руководителя OOO Alpha"
     assert payload["preview_header"]["to_party"]["line1"] == "Руководителю OOO Vector"
@@ -171,6 +236,8 @@ async def test_get_preview_success(async_client, mock_session):
     assert payload["manual_review_required"] is True
     assert payload["risk_flags"] == ["no_supporting_documents"]
     assert payload["generated_preview_text"] == "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё"
+    _assert_preview_requisites(payload)
+    _assert_requisites_not_in_preview_body(payload)
     assert payload["preview_header"]["format_version"] == 2
     assert payload["preview_header"]["from_party"]["line1"] == "Руководителя OOO Alpha"
     assert payload["preview_header"]["to_party"]["line1"] == "Руководителю OOO Vector"
@@ -243,6 +310,8 @@ async def test_get_preview_with_null_header_keeps_null_without_artificial_shape(
     payload = resp.json()
     assert payload["claim_id"] == 310
     assert payload["generated_preview_text"] == "Draft preview text"
+    _assert_preview_requisites(payload)
+    _assert_requisites_not_in_preview_body(payload)
     assert payload["preview_header"] is None
 
 

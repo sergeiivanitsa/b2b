@@ -10,6 +10,7 @@ import {
   getInsufficientDataDetail,
   payClaim,
   type ClaimPreviewHeader,
+  type ClaimPreviewRequisites,
   type ClaimPreviewSnapshot,
   type PublicClaimSnapshot,
 } from '../claims/claimsApi'
@@ -42,6 +43,9 @@ const PACKAGE_ITEMS = [
   'Инструкция по дальнейшим действиям',
 ]
 
+const CLAIMS_DOCUMENT_DEMO_TEXT =
+  'Полная версия документа будет доступна после оплаты. В неё входят правовое обоснование, расчет требований и итоговая просительная часть.'
+
 const DEFAULT_DOCUMENT_HEADER: DocumentHeader = {
   senderLine1: 'От руководителя',
   senderLine2: null,
@@ -57,6 +61,7 @@ export function ClaimStep4Page() {
   const [meta, setMeta] = useState<LoadedClaimMeta | null>(null)
   const [previewText, setPreviewText] = useState('')
   const [previewHeader, setPreviewHeader] = useState<ClaimPreviewHeader | null>(null)
+  const [previewRequisites, setPreviewRequisites] = useState<ClaimPreviewRequisites | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isPaying, setIsPaying] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -106,6 +111,7 @@ export function ClaimStep4Page() {
           setPreviewHeader(
             loadedPreview.preview_header ?? restored.claim.preview_header ?? null,
           )
+          setPreviewRequisites(loadedPreview.preview_requisites ?? null)
         }
       } catch (loadError) {
         if (isCanceled) {
@@ -146,8 +152,12 @@ export function ClaimStep4Page() {
   }, [navigate])
 
   const previewParagraphs = useMemo(
-    () => buildPreviewParagraphs(previewText),
+    () => buildPreviewParagraphs(previewText).slice(0, 2),
     [previewText],
+  )
+  const requisitesLine = useMemo(
+    () => buildPreviewRequisitesLine(previewRequisites),
+    [previewRequisites],
   )
   const documentHeader = useMemo(() => {
     const fallbackHeader = meta?.fallbackHeader ?? DEFAULT_DOCUMENT_HEADER
@@ -267,10 +277,16 @@ export function ClaimStep4Page() {
                 <h2 className="claims-document-title">
                   <span>ПРЕТЕНЗИЯ</span>
                 </h2>
+                {requisitesLine ? (
+                  <p className="claims-document-requisites">{requisitesLine}</p>
+                ) : null}
                 <section className="claims-document-body">
                   {previewParagraphs.map((paragraph, index) => (
                     <p key={`${index}-${paragraph.slice(0, 32)}`}>{paragraph}</p>
                   ))}
+                </section>
+                <section className="claims-document-demo" aria-label="Демо-зона документа">
+                  <p>{CLAIMS_DOCUMENT_DEMO_TEXT}</p>
                 </section>
               </div>
               <div className="claims-document-paywall" aria-hidden="true">
@@ -462,6 +478,17 @@ function buildPreviewParagraphs(previewText: string): string[] {
   }
 
   return [normalized]
+}
+
+function buildPreviewRequisitesLine(
+  requisites: ClaimPreviewRequisites | null,
+): string | null {
+  const outgoingNumber = normalizeTextLine(requisites?.outgoing_number)
+  const outgoingDateText = normalizeTextLine(requisites?.outgoing_date_text)
+  if (!outgoingNumber || !outgoingDateText) {
+    return null
+  }
+  return `Исх. №: ${outgoingNumber} от ${outgoingDateText}`
 }
 
 function normalizeTextLine(value: string | null | undefined): string | null {
