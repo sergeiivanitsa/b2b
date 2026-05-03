@@ -1744,6 +1744,7 @@ body.is-chat-page #root {
   --claims-step4-a4-ratio: 210 / 297;
   --claims-step4-gap: 16px;
   --claims-step4-right-min: 360px;
+  --claims-document-line-height: 1.84rem;
 }
 
 .claims-step4-layout {
@@ -1804,6 +1805,11 @@ body.is-chat-page #root {
   gap: 14px;
 }
 
+.claims-page--step4 .claims-document-sheet__inner {
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
+  gap: 0;
+}
+
 .claims-document-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1848,6 +1854,10 @@ body.is-chat-page #root {
   margin: 2px 0 12px;
 }
 
+.claims-page--step4 .claims-document-divider {
+  margin: 2px 0 0;
+}
+
 .claims-document-title {
   margin: 0;
   text-align: center;
@@ -1862,6 +1872,20 @@ body.is-chat-page #root {
   display: inline-block;
   border-bottom: 2px solid #525760;
   padding: 0 0.06em 3px;
+}
+
+.claims-page--step4 .claims-document-title {
+  margin-top: calc(var(--claims-document-line-height) * 3);
+  margin-bottom: calc(var(--claims-document-line-height) * 5);
+}
+
+.claims-document-requisites {
+  margin: 0 0 var(--claims-document-line-height);
+  text-align: left;
+  font-family: "Times New Roman", Georgia, serif;
+  font-size: 1.08rem;
+  line-height: 1.5;
+  color: #2f343c;
 }
 
 .claims-document-body {
@@ -1884,6 +1908,29 @@ body.is-chat-page #root {
 
 .claims-document-body p:first-child {
   text-indent: 0;
+}
+
+.claims-page--step4 .claims-document-body {
+  margin-top: 0;
+}
+
+.claims-page--step4 .claims-document-body p:first-child {
+  text-indent: 1.6em;
+}
+
+.claims-page--step4 .claims-document-demo {
+  align-self: end;
+  margin-top: var(--claims-document-line-height);
+  font-family: "Times New Roman", Georgia, serif;
+  font-size: 1.06rem;
+  line-height: 1.6;
+  color: #4d535d;
+}
+
+.claims-page--step4 .claims-document-demo p {
+  margin: 0;
+  text-align: justify;
+  text-indent: 1.6em;
 }
 
 .claims-document-paywall {
@@ -2481,6 +2528,14 @@ body.is-chat-page #root {
   .claims-document-sheet__inner {
     padding: 18px 16px 24px;
     gap: 12px;
+  }
+
+  .claims-page--step4 {
+    --claims-document-line-height: 1.6rem;
+  }
+
+  .claims-page--step4 .claims-document-sheet__inner {
+    gap: 0;
   }
 
   .claims-document-header {

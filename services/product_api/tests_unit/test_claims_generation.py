@@ -55,8 +55,11 @@ def _paragraphs(text: str) -> list[str]:
 def _assert_preview_body_contract(text: str):
     _assert_artifact_free(text)
     assert 1 <= len(_paragraphs(text)) <= 2
+    assert not any(line.strip().casefold() == "претензия" for line in text.splitlines())
     lowered = text.lower()
     for forbidden in (
+        "исх. №",
+        "б/н от",
         "требуем оплатить",
         "просим оплатить",
         "погасить задолженность в срок",
@@ -72,7 +75,9 @@ def _assert_preview_body_contract(text: str):
         "подпись",
         "с уважением",
         "демо-версия",
+        "полная версия документа",
         "полная версия после оплаты",
+        "доступна после оплаты",
         "оплатите доступ",
     ):
         assert forbidden not in lowered
@@ -236,6 +241,24 @@ async def test_generate_claim_preview_limits_to_first_two_valid_paragraphs(monke
     assert result["error_code"] is None
     assert result["generated_preview_text"] == f"{_VALID_PARAGRAPH_1}\n\n{_VALID_PARAGRAPH_2}"
     assert "Арбитражный суд" not in result["generated_preview_text"]
+
+
+async def test_generate_claim_preview_discards_full_document_tail_without_fallback(monkeypatch):
+    raw_response = (
+        f"{_VALID_PARAGRAPH_1}\n\n{_VALID_PARAGRAPH_2}\n\n"
+        "Исх. №: б/н от 03 мая 2026 года\n"
+        "Приложения: договор и акт сверки.\n"
+        "С уважением, директор.\n"
+        "Полная версия документа будет доступна после оплаты.\n"
+        "В случае неоплаты обратимся в Арбитражный суд."
+    )
+
+    result = await _generate_with_raw_response(monkeypatch, raw_response)
+
+    assert result["used_fallback"] is False
+    assert result["error_code"] is None
+    assert result["generated_preview_text"] == f"{_VALID_PARAGRAPH_1}\n\n{_VALID_PARAGRAPH_2}"
+    _assert_preview_body_contract(result["generated_preview_text"])
 
 
 async def test_generate_claim_preview_fallback_when_selected_paragraph_has_title(monkeypatch):

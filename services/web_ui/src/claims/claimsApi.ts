@@ -62,6 +62,12 @@ export type ClaimPreviewHeader = {
   to_party: ClaimPreviewHeaderParty
 }
 
+export type ClaimPreviewRequisites = {
+  outgoing_number: string
+  outgoing_date: string
+  outgoing_date_text: string
+}
+
 export type PublicClaimSnapshot = {
   id: number
   status: string
@@ -91,6 +97,7 @@ export type ClaimPreviewSnapshot = {
   generated_preview_text: string
   missing_fields: string[]
   preview_header?: ClaimPreviewHeader | null
+  preview_requisites?: ClaimPreviewRequisites
 }
 
 export type ClaimFileSnapshot = {

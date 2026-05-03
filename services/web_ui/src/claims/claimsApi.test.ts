@@ -152,6 +152,11 @@ describe('claimsApi', () => {
           blocked_blocks: [],
           generated_preview_text: 'preview',
           missing_fields: [],
+          preview_requisites: {
+            outgoing_number: 'б/н',
+            outgoing_date: '2026-05-03',
+            outgoing_date_text: '03 мая 2026 года',
+          },
         }),
         {
           status: 200,
@@ -165,6 +170,9 @@ describe('claimsApi', () => {
     const payload = await generateClaimPreview(12, 'edit-token')
 
     expect(payload.claim_id).toBe(12)
+    expect(payload.preview_requisites?.outgoing_number).toBe('б/н')
+    expect(payload.preview_requisites?.outgoing_date).toBe('2026-05-03')
+    expect(payload.preview_requisites?.outgoing_date_text).toBe('03 мая 2026 года')
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     const [path, options] = fetchSpy.mock.calls[0]
     expect(path).toBe('/api/claims/12/generate-preview')

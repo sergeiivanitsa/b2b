@@ -86,6 +86,12 @@ class PreviewHeaderOut(BaseModel):
     to_party: PreviewHeaderPartyOut
 
 
+class ClaimPreviewRequisitesOut(BaseModel):
+    outgoing_number: str
+    outgoing_date: str
+    outgoing_date_text: str
+
+
 class ClaimPreviewOut(BaseModel):
     claim_id: int
     generation_state: str
@@ -96,3 +102,4 @@ class ClaimPreviewOut(BaseModel):
     generated_preview_text: str
     missing_fields: list[str]
     preview_header: PreviewHeaderOut | None
+    preview_requisites: ClaimPreviewRequisitesOut
