@@ -1,5 +1,6 @@
 import re
-from typing import Any
+from datetime import date
+from typing import Any, Mapping
 
 from product_api.gateway_client import GatewayError, send_chat
 from product_api.settings import Settings
@@ -63,7 +64,7 @@ _DEMO_PAYWALL_RE = re.compile(
 _LIST_LINE_RE = re.compile(r"^\s*(?:[-*\u2022]\s+|\d+[.)]\s+)", flags=re.MULTILINE)
 _DOCUMENT_LABELS = {
     "contract": "договор",
-    "invoice": "счет",
+    "invoice": "счёт",
     "specification": "спецификацию",
     "application": "заявку",
     "заявка": "заявку",
@@ -73,6 +74,7 @@ _DOCUMENT_LABELS = {
     "waybill": "накладную",
     "ks_2": "акт КС-2",
     "ks_3": "акт КС-3",
+    "payment_order": "платёжное поручение",
 }
 
 
@@ -123,27 +125,9 @@ def build_safe_draft_preview(
     decision: dict[str, Any],
 ) -> str:
     data = normalized_data or {}
-    creditor = _optional_str(data.get("creditor_name"))
-    debtor = _optional_str(data.get("debtor_name"))
     debt_amount = _format_amount(data.get("debt_amount"))
     due_date = _format_iso_date(data.get("payment_due_date"))
-    creditor_role, debtor_role, _contract_label, creditor_action, debtor_action = _case_type_terms(
-        case_type
-    )
-    document_phrase = _relationship_document_phrase(data, case_type)
-
-    if creditor and debtor:
-        first_paragraph = (
-            f"Между {creditor} (далее — \"{creditor_role}\") и {debtor} "
-            f"(далее — \"{debtor_role}\") возникли отношения {document_phrase}, "
-            f"в рамках которых {creditor_role} обязался {creditor_action}, "
-            f"а {debtor_role} — {debtor_action}."
-        )
-    else:
-        first_paragraph = (
-            f"Между сторонами возникли отношения {document_phrase}, "
-            f"в рамках которых {creditor_role} и {debtor_role} исполняют согласованные обязательства."
-        )
+    first_paragraph = _build_relationship_opening_paragraph(data, case_type)
 
     payment_details: list[str] = []
     if debt_amount:
@@ -295,59 +279,170 @@ def _has_structural_line(lines: list[str]) -> bool:
     )
 
 
-def _case_type_terms(case_type: str | None) -> tuple[str, str, str, str, str]:
-    if case_type == "supply":
-        return (
-            "Поставщик",
-            "Покупатель",
-            "договора поставки",
-            "поставить товар",
-            "принять товар и произвести оплату",
-        )
-    if case_type == "services":
-        return (
-            "Исполнитель",
-            "Заказчик",
-            "договора оказания услуг",
-            "оказать услуги",
-            "принять и оплатить услуги",
-        )
-    if case_type == "contract_work":
-        return (
-            "Подрядчик",
-            "Заказчик",
-            "договора подряда",
-            "выполнить работы",
-            "принять результат работ и произвести оплату",
-        )
-    return (
-        "Кредитор",
-        "Должник",
-        "договора",
-        "исполнить свои обязательства",
-        "исполнить встречные обязательства",
-    )
+def _build_relationship_opening_paragraph(
+    data: Mapping[str, Any],
+    case_type: str | None,
+) -> str:
+    terms = _case_type_relationship_terms(case_type)
+    if terms is None:
+        return _build_neutral_relationship_opening(data)
 
-
-def _relationship_document_phrase(data: dict[str, Any], case_type: str | None) -> str:
-    contract_number = _optional_str(data.get("contract_number"))
-    contract_date = _format_iso_date(data.get("contract_date"))
-    contract_signed = data.get("contract_signed") is True
-    _creditor_role, _debtor_role, contract_label, _creditor_action, _debtor_action = (
-        _case_type_terms(case_type)
-    )
-    if contract_signed or contract_number or contract_date:
-        parts = [f"на основании {contract_label}"]
-        if contract_number:
-            parts.append(f"№ {contract_number}")
-        if contract_date:
-            parts.append(f"от {contract_date}")
-        return " ".join(parts)
-
+    creditor = _optional_str(data.get("creditor_name"))
+    debtor = _optional_str(data.get("debtor_name"))
+    parties = _relationship_parties_phrase(creditor=creditor, debtor=debtor)
+    contract_reference = _build_contract_reference(data, terms["contract_label"])
     document_labels = _document_labels(data.get("documents_mentioned"))
-    if document_labels:
-        return "на основании представленных документов, включая " + _join_ru_list(document_labels)
-    return "на основании достигнутого сторонами соглашения и представленных данных"
+    documents_phrase = _documents_basis_phrase(document_labels)
+
+    if contract_reference:
+        if data.get("contract_signed") is False:
+            basis = f"отношения сторон связаны с {contract_reference}"
+            if documents_phrase:
+                basis += f" и {documents_phrase}"
+            return (
+                f"{parties} возникли обязательственные отношения, связанные с "
+                f"{terms['relationship_phrase']}; {basis}. "
+                f"По представленным данным {creditor or 'сторона, заявляющая требование'} "
+                f"выступило {terms['creditor_role']} и обязалось {terms['creditor_action']}, "
+                f"тогда как {debtor or 'обязанная сторона'}, являясь {terms['debtor_role']}, "
+                f"обязалось {terms['debtor_action']} в порядке и сроки, предусмотренные "
+                "соглашением сторон."
+            )
+
+        return (
+            f"{parties} был заключён {contract_reference}, на основании которого между сторонами "
+            f"возникли взаимные обязательства, связанные с {terms['relationship_phrase']}. "
+            f"По условиям договора {creditor or 'сторона, заявляющая требование'} "
+            f"выступило {terms['creditor_role']} и обязалось {terms['creditor_action']}, "
+            f"тогда как {debtor or 'обязанная сторона'}, являясь {terms['debtor_role']}, "
+            f"обязалось {terms['debtor_action']} в порядке и сроки, предусмотренные договором."
+        )
+
+    if documents_phrase:
+        return (
+            f"{parties} возникли обязательственные отношения, связанные с "
+            f"{terms['relationship_phrase']}. Основанием возникновения обязательств являются "
+            f"{documents_phrase}, включая {_join_ru_list(document_labels)}. "
+            f"По представленным данным {creditor or 'сторона, заявляющая требование'} "
+            f"выступило {terms['creditor_role']} и обязалось {terms['creditor_action']}, "
+            f"тогда как {debtor or 'обязанная сторона'}, являясь {terms['debtor_role']}, "
+            f"обязалось {terms['debtor_action']}."
+        )
+
+    return (
+        f"{parties} возникли обязательственные отношения, связанные с "
+        f"{terms['relationship_phrase']}. По представленным данным "
+        f"{creditor or 'сторона, заявляющая требование'} выступило {terms['creditor_role']} "
+        f"и обязалось {terms['creditor_action']}, тогда как "
+        f"{debtor or 'обязанная сторона'}, являясь {terms['debtor_role']}, "
+        f"обязалось {terms['debtor_action']} в порядке и сроки, согласованные сторонами."
+    )
+
+
+def _case_type_relationship_terms(case_type: str | None) -> dict[str, str] | None:
+    if case_type == "supply":
+        return {
+            "contract_label": "договор поставки",
+            "relationship_phrase": "поставкой, приёмкой и оплатой товара",
+            "creditor_role": "поставщиком",
+            "debtor_role": "покупателем",
+            "creditor_action": "передать товар покупателю",
+            "debtor_action": "принять поставленный товар и своевременно произвести оплату его стоимости",
+        }
+    if case_type == "services":
+        return {
+            "contract_label": "договор оказания услуг",
+            "relationship_phrase": "оказанием, приёмкой и оплатой услуг",
+            "creditor_role": "исполнителем",
+            "debtor_role": "заказчиком",
+            "creditor_action": "оказать услуги заказчику",
+            "debtor_action": "принять оказанные услуги и своевременно произвести оплату их стоимости",
+        }
+    if case_type == "contract_work":
+        return {
+            "contract_label": "договор подряда",
+            "relationship_phrase": "выполнением, приёмкой и оплатой работ",
+            "creditor_role": "подрядчиком",
+            "debtor_role": "заказчиком",
+            "creditor_action": "выполнить работы для заказчика",
+            "debtor_action": "принять результат выполненных работ и своевременно произвести оплату их стоимости",
+        }
+    return None
+
+
+def _build_neutral_relationship_opening(data: Mapping[str, Any]) -> str:
+    creditor = _optional_str(data.get("creditor_name"))
+    debtor = _optional_str(data.get("debtor_name"))
+    parties = _relationship_parties_phrase(creditor=creditor, debtor=debtor)
+    document_labels = _document_labels(data.get("documents_mentioned"))
+    documents_phrase = _documents_basis_phrase(document_labels)
+
+    basis_sentence = (
+        f" Основанием возникновения обязательств являются {documents_phrase}, "
+        f"включая {_join_ru_list(document_labels)}."
+        if documents_phrase
+        else ""
+    )
+    return (
+        f"{parties} возникли обязательственные отношения, связанные с исполнением "
+        f"согласованных обязательств и последующей оплатой.{basis_sentence} "
+        "Сторона, заявляющая требование, указывает на исполнение своих обязанностей, "
+        "тогда как обязанная сторона должна была произвести оплату в порядке и сроки, "
+        "вытекающие из достигнутых договорённостей и представленных документов."
+    )
+
+
+def _relationship_parties_phrase(*, creditor: str | None, debtor: str | None) -> str:
+    if creditor and debtor:
+        return f"Между {creditor} и {debtor}"
+    return "Между сторонами"
+
+
+def _build_contract_reference(data: Mapping[str, Any], contract_label: str) -> str | None:
+    contract_number = _optional_str(data.get("contract_number"))
+    contract_date = _format_contract_reference_date(data.get("contract_date"))
+    if data.get("contract_signed") is not True and not contract_number and not contract_date:
+        return None
+
+    parts = [contract_label]
+    if contract_number:
+        parts.append(f"№{contract_number}")
+    if contract_date:
+        parts.append(f"от {contract_date}")
+    return " ".join(parts)
+
+
+def _format_contract_reference_date(value: Any) -> str | None:
+    normalized = _optional_str(value)
+    if not normalized:
+        return None
+    iso_match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", normalized)
+    if iso_match:
+        year, month, day = iso_match.groups()
+        if not _is_valid_date_parts(year=year, month=month, day=day):
+            return None
+        return f"{day}.{month}.{year}"
+    dotted_match = re.fullmatch(r"(\d{2})\.(\d{2})\.(\d{4})", normalized)
+    if dotted_match:
+        day, month, year = dotted_match.groups()
+        if not _is_valid_date_parts(year=year, month=month, day=day):
+            return None
+        return normalized
+    return None
+
+
+def _is_valid_date_parts(*, year: str, month: str, day: str) -> bool:
+    try:
+        date(int(year), int(month), int(day))
+    except ValueError:
+        return False
+    return True
+
+
+def _documents_basis_phrase(document_labels: list[str]) -> str | None:
+    if not document_labels:
+        return None
+    return "представленные документы сторон"
 
 
 def _document_labels(value: Any) -> list[str]:
