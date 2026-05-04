@@ -20,6 +20,39 @@ def test_build_preview_generation_messages_defines_body_only_contract():
     assert "только plain text тела preview" in combined
     assert "1–2 содержательных абзаца" in combined
     assert "Абзац 1 описывает основание отношений" in combined
+    assert "юридическим opening paragraph" in combined
+    assert "договор или иное основание отношений" in combined
+    assert "взаимные обязательства" in combined
+    assert "case_type=supply" in combined
+    assert "поставщик" in combined
+    assert "покупатель" in combined
+    assert "передать товар" in combined
+    assert "принять и оплатить товар" in combined
+    assert "case_type=services" in combined
+    assert "исполнитель" in combined
+    assert "заказчик" in combined
+    assert "оказать услуги" in combined
+    assert "принять и оплатить услуги" in combined
+    assert "case_type=contract_work" in combined
+    assert "подрядчик" in combined
+    assert "выполнить работы" in combined
+    assert "принять и оплатить работы" in combined
+    assert "case_type отсутствует" in combined
+    assert "нейтральные формулировки" in combined
+    assert "без специальных ролей" in combined
+    assert "contract_signed=false" in combined
+    assert "договор не подписан" in combined
+    assert "не утверждай" in combined
+    assert '"был заключён договор"' in combined
+    assert "не выдумывай номер" in combined
+    assert "не выдумывай дату" in combined
+    assert "documents_mentioned" in combined
+    assert "не копируй technical ids" in combined
+    assert "обычные русские названия" in combined
+    assert '"обязалось произвести оплату"' in combined
+    assert '"требуем оплатить"' in combined
+    assert '"просим оплатить"' in combined
+    assert '"погасить задолженность в срок"' in combined
     assert "Абзац 2 описывает исполнение и оплату" in combined
     assert "Не возвращай markdown" in combined
     assert "Не возвращай JSON" in combined

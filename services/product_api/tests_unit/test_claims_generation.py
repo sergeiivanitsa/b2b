@@ -52,6 +52,10 @@ def _paragraphs(text: str) -> list[str]:
     return [paragraph for paragraph in text.split("\n\n") if paragraph.strip()]
 
 
+def _first_paragraph(text: str) -> str:
+    return _paragraphs(text)[0]
+
+
 def _assert_preview_body_contract(text: str):
     _assert_artifact_free(text)
     assert 1 <= len(_paragraphs(text)) <= 2
@@ -341,6 +345,23 @@ async def test_generate_claim_preview_allows_normal_sentences_with_non_label_wor
     assert result["generated_preview_text"] == raw_response
 
 
+async def test_generate_claim_preview_accepts_contract_payment_duty_phrase(monkeypatch):
+    raw_response = (
+        "Между ООО «Бондюэль-Кубань» и ООО «Вектор» был заключён договор поставки "
+        "№17 от 12.01.2026, на основании которого между сторонами возникли взаимные "
+        "обязательства, связанные с поставкой, приёмкой и оплатой товара. По условиям "
+        "договора ООО «Бондюэль-Кубань» выступило поставщиком и обязалось передать "
+        "товар покупателю, тогда как ООО «Вектор», являясь покупателем, обязалось "
+        "принять поставленный товар и своевременно произвести оплату его стоимости."
+    )
+
+    result = await _generate_with_raw_response(monkeypatch, raw_response)
+
+    assert result["used_fallback"] is False
+    assert result["error_code"] is None
+    assert result["generated_preview_text"] == raw_response
+
+
 async def test_generate_claim_preview_strips_plain_text_code_fence(monkeypatch):
     async def fake_send_chat(_settings, payload):
         return ChatResponse(
@@ -385,16 +406,16 @@ async def test_safe_draft_preview_omits_artifacts_even_with_blocked_blocks():
     assert "ООО Вектор" in text
 
 
-async def test_safe_draft_preview_supply_uses_contract_and_party_roles():
+async def test_safe_draft_preview_supply_builds_mature_contract_opening():
     text = generation.build_safe_draft_preview(
         input_text="ООО Вектор не оплатило поставку",
         case_type="supply",
         normalized_data={
-            "creditor_name": "ООО Строй Керамик Сервис",
-            "debtor_name": "ООО Вектор",
+            "creditor_name": "ООО «Бондюэль-Кубань»",
+            "debtor_name": "ООО «Вектор»",
             "contract_signed": True,
-            "contract_number": "34",
-            "contract_date": "2024-08-09",
+            "contract_number": "17",
+            "contract_date": "2026-01-12",
             "debt_amount": 380000,
             "payment_due_date": "2024-09-15",
             "documents_mentioned": ["contract"],
@@ -403,14 +424,70 @@ async def test_safe_draft_preview_supply_uses_contract_and_party_roles():
     )
 
     _assert_preview_body_contract(text)
-    assert 'далее — "Поставщик"' in text
-    assert 'далее — "Покупатель"' in text
-    assert "договора поставки № 34 от 09.08.2024" in text
+    opening = _first_paragraph(text)
+    assert "Между ООО «Бондюэль-Кубань» и ООО «Вектор»" in opening
+    assert "договор поставки №17 от 12.01.2026" in opening
+    assert "возникли взаимные обязательства" in opening
+    assert "поставкой, приёмкой и оплатой товара" in opening
+    assert "ООО «Бондюэль-Кубань» выступило поставщиком" in opening
+    assert "ООО «Вектор», являясь покупателем" in opening
+    assert "принять поставленный товар" in opening
+    assert "произвести оплату его стоимости" in opening
     assert "380 000 руб." in text
     assert "15.09.2024" in text
 
 
-async def test_safe_draft_preview_unknown_uses_creditor_and_debtor_roles():
+async def test_safe_draft_preview_services_builds_mature_opening():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило услуги",
+        case_type="services",
+        normalized_data={
+            "creditor_name": "ООО «Альфа»",
+            "debtor_name": "ООО «Вектор»",
+            "contract_signed": True,
+            "contract_number": "7",
+            "contract_date": "2026-01-12",
+        },
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    opening = _first_paragraph(text)
+    assert "договор оказания услуг" in opening
+    assert "оказанием, приёмкой и оплатой услуг" in opening
+    assert "исполнителем" in opening
+    assert "заказчиком" in opening
+    assert "оказать услуги заказчику" in opening
+    assert "принять оказанные услуги" in opening
+    assert "произвести оплату их стоимости" in opening
+
+
+async def test_safe_draft_preview_contract_work_builds_mature_opening():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило работы",
+        case_type="contract_work",
+        normalized_data={
+            "creditor_name": "ООО «Альфа»",
+            "debtor_name": "ООО «Вектор»",
+            "contract_signed": True,
+            "contract_number": "11",
+            "contract_date": "2026-01-12",
+        },
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    opening = _first_paragraph(text)
+    assert "договор подряда" in opening
+    assert "выполнением, приёмкой и оплатой работ" in opening
+    assert "подрядчиком" in opening
+    assert "заказчиком" in opening
+    assert "выполнить работы для заказчика" in opening
+    assert "принять результат выполненных работ" in opening
+    assert "произвести оплату их стоимости" in opening
+
+
+async def test_safe_draft_preview_unknown_uses_neutral_opening():
     text = generation.build_safe_draft_preview(
         input_text="ООО Вектор не оплатило",
         case_type=None,
@@ -423,9 +500,130 @@ async def test_safe_draft_preview_unknown_uses_creditor_and_debtor_roles():
     )
 
     _assert_preview_body_contract(text)
-    assert 'далее — "Кредитор"' in text
-    assert 'далее — "Должник"' in text
-    assert "счет" in text
-    assert "спецификацию" in text
-    assert "УПД" in text
-    assert "заявку" in text
+    opening = _first_paragraph(text)
+    assert "обязательственные отношения" in opening
+    lowered = opening.lower()
+    assert "поставщик" not in lowered
+    assert "покупатель" not in lowered
+    assert "исполнитель" not in lowered
+    assert "подрядчик" not in lowered
+
+
+async def test_safe_draft_preview_contract_reference_with_only_number():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило поставку",
+        case_type="supply",
+        normalized_data={
+            "creditor_name": "ООО «Альфа»",
+            "debtor_name": "ООО «Вектор»",
+            "contract_number": "17",
+        },
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    opening = _first_paragraph(text)
+    assert "№17" in opening
+    assert "от None" not in opening
+
+
+async def test_safe_draft_preview_contract_reference_with_only_date():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило поставку",
+        case_type="supply",
+        normalized_data={
+            "creditor_name": "ООО «Альфа»",
+            "debtor_name": "ООО «Вектор»",
+            "contract_date": "2026-01-12",
+        },
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    opening = _first_paragraph(text)
+    assert "от 12.01.2026" in opening
+    assert "№None" not in opening
+
+
+async def test_safe_draft_preview_contract_reference_without_number_or_date():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило поставку",
+        case_type="supply",
+        normalized_data={
+            "creditor_name": "ООО «Альфа»",
+            "debtor_name": "ООО «Вектор»",
+            "contract_signed": True,
+        },
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    opening = _first_paragraph(text)
+    assert "договор поставки" in opening
+    assert "№None" not in opening
+    assert "от None" not in opening
+
+
+async def test_safe_draft_preview_contract_reference_omits_invalid_date():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило поставку",
+        case_type="supply",
+        normalized_data={
+            "creditor_name": "ООО «Альфа»",
+            "debtor_name": "ООО «Вектор»",
+            "contract_signed": True,
+            "contract_date": "2026-99-99",
+        },
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    opening = _first_paragraph(text)
+    assert "договор поставки" in opening
+    assert "2026-99-99" not in opening
+    assert "от None" not in opening
+
+
+async def test_safe_draft_preview_documents_only_uses_known_labels():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило поставку",
+        case_type="supply",
+        normalized_data={
+            "creditor_name": "ООО «Бондюэль-Кубань»",
+            "debtor_name": "ООО «Вектор»",
+            "documents_mentioned": ["invoice", "upd", "specification", "unknown_doc"],
+        },
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    opening = _first_paragraph(text)
+    assert "представленные документы" in opening
+    assert "счёт" in opening
+    assert "УПД" in opening
+    assert "спецификацию" in opening
+    assert "unknown_doc" not in opening
+    assert "№" not in opening
+    assert "от 12.01.2026" not in opening
+
+
+async def test_safe_draft_preview_cautious_when_contract_not_signed():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило поставку",
+        case_type="supply",
+        normalized_data={
+            "creditor_name": "ООО «Бондюэль-Кубань»",
+            "debtor_name": "ООО «Вектор»",
+            "contract_signed": False,
+            "contract_number": "17",
+            "contract_date": "2026-01-12",
+            "documents_mentioned": ["contract"],
+        },
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    opening = _first_paragraph(text)
+    assert "был заключён договор" not in opening
+    assert "договор поставки №17 от 12.01.2026" in opening
+    assert "отношения сторон связаны" in opening
