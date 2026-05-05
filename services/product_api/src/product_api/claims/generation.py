@@ -86,11 +86,14 @@ async def generate_claim_preview(
     case_type: str | None,
     normalized_data: dict[str, Any] | None,
     decision: dict[str, Any],
+    reference_date: date | None = None,
 ) -> dict[str, Any]:
+    data = normalized_data or {}
     messages = build_preview_generation_messages(
         input_text=input_text,
         case_type=case_type,
         normalized_data=normalized_data,
+        derived_preview_data=_build_preview_derived_data(data, reference_date),
         allowed_blocks=decision["allowed_blocks"],
         blocked_blocks=decision["blocked_blocks"],
         risk_flags=decision["risk_flags"],
@@ -109,6 +112,7 @@ async def generate_claim_preview(
             case_type=case_type,
             normalized_data=normalized_data,
             decision=decision,
+            reference_date=reference_date,
         )
         return {
             "generated_preview_text": fallback_text,
@@ -123,28 +127,15 @@ def build_safe_draft_preview(
     case_type: str | None,
     normalized_data: dict[str, Any] | None,
     decision: dict[str, Any],
+    reference_date: date | None = None,
 ) -> str:
     data = normalized_data or {}
-    debt_amount = _format_amount(data.get("debt_amount"))
-    due_date = _format_iso_date(data.get("payment_due_date"))
     first_paragraph = _build_relationship_opening_paragraph(data, case_type)
-
-    payment_details: list[str] = []
-    if debt_amount:
-        payment_details.append(f"размер задолженности указан как {debt_amount}")
-    if due_date:
-        payment_details.append(f"срок оплаты указан как {due_date}")
-
-    if payment_details:
-        second_paragraph = (
-            "По представленным данным " + ", ".join(payment_details) + ". "
-            "Условия исполнения и оплаты оцениваются по соглашению сторон и подтверждающим документам."
-        )
-    else:
-        second_paragraph = (
-            "Условия исполнения и оплаты определяются соглашением сторон и представленными документами; "
-            "размер задолженности и срок исполнения оцениваются по имеющимся материалам."
-        )
+    second_paragraph = _build_performance_and_debt_paragraph(
+        data,
+        case_type,
+        reference_date=reference_date,
+    )
 
     return f"{first_paragraph}\n\n{second_paragraph}"
 
@@ -277,6 +268,253 @@ def _has_structural_line(lines: list[str]) -> bool:
         or _LIST_LINE_RE.match(line)
         for line in lines
     )
+
+
+def _build_performance_and_debt_paragraph(
+    data: Mapping[str, Any],
+    case_type: str | None,
+    *,
+    reference_date: date | None = None,
+) -> str:
+    terms = _case_type_performance_terms(case_type)
+    if terms is None:
+        return _build_neutral_performance_and_debt_paragraph(
+            data,
+            reference_date=reference_date,
+        )
+
+    creditor = _optional_str(data.get("creditor_name"))
+    debtor = _optional_str(data.get("debtor_name"))
+    creditor_subject = creditor or "сторона, заявляющая требование"
+    debtor_subject = debtor or "обязанная сторона"
+    debtor_role = terms["debtor_role_genitive"]
+    payment_basis = "предусмотренные договором"
+    non_payment_deadline = "в установленный договором срок"
+    if data.get("contract_signed") is False:
+        payment_basis = "согласованные сторонами"
+        non_payment_deadline = "в установленный срок"
+
+    if data.get("contract_signed") is False:
+        opening = (
+            f"Исходя из представленных данных, {creditor_subject} "
+            f"{_typed_creditor_verb(creditor)} обязательства, связанные с "
+            f"{terms['performance_obligation_phrase']} {terms['performance_destination'](debtor_subject)}."
+        )
+    else:
+        opening = (
+            f"Во исполнение условий {terms['contract_label']} {creditor_subject}, "
+            f"исходя из представленных данных, {_typed_creditor_verb(creditor)} принятые на себя "
+            f"обязательства, {terms['performance_completion'](debtor_subject)}."
+        )
+
+    amount = _format_amount(data.get("debt_amount"))
+    due_date = _format_payment_due_date_strict(data.get("payment_due_date"))
+    overdue_days = _calculate_overdue_days(data.get("payment_due_date"), reference_date)
+
+    sentences = [
+        opening,
+        (
+            f"{terms['performance_fact']} и является основанием для возникновения у {debtor_role} "
+            f"встречной обязанности по оплате {terms['payment_object']} в порядке, размере и сроки, "
+            f"{payment_basis}."
+        ),
+        (
+            f"Несмотря на исполнение обязательств со стороны {terms['creditor_role_genitive']}, "
+            f"{debtor_subject} оплату {terms['non_payment_object']} {non_payment_deadline} "
+            f"{_typed_debtor_non_payment_verb(debtor)}, чем {_typed_debtor_violation_verb(debtor)} принятые на себя "
+            "обязательства по своевременному внесению оплаты."
+        ),
+        _build_debt_amount_sentence(amount=amount, creditor=creditor),
+        _build_due_date_status_sentence(due_date, overdue_days=overdue_days),
+    ]
+
+    partial_payments_sentence = _build_partial_payments_sentence(data, debtor_role)
+    if partial_payments_sentence:
+        sentences.append(partial_payments_sentence)
+
+    return " ".join(sentence for sentence in sentences if sentence)
+
+
+def _case_type_performance_terms(case_type: str | None) -> dict[str, Any] | None:
+    if case_type == "supply":
+        return {
+            "contract_label": "договора поставки",
+            "creditor_role_genitive": "поставщика",
+            "debtor_role_genitive": "покупателя",
+            "performance_obligation_phrase": "передачей товара",
+            "performance_completion": lambda debtor: f"обеспечив передачу товара в адрес {debtor}",
+            "performance_destination": lambda debtor: f"в адрес {debtor}",
+            "performance_fact": (
+                "Поставка товара свидетельствует о фактическом исполнении поставщиком "
+                "своей части договорных обязательств"
+            ),
+            "payment_object": "полученного товара",
+            "non_payment_object": "поставленного товара",
+        }
+    if case_type == "services":
+        return {
+            "contract_label": "договора оказания услуг",
+            "creditor_role_genitive": "исполнителя",
+            "debtor_role_genitive": "заказчика",
+            "performance_obligation_phrase": "оказанием услуг",
+            "performance_completion": lambda debtor: f"обеспечив оказание услуг в адрес {debtor}",
+            "performance_destination": lambda debtor: f"в адрес {debtor}",
+            "performance_fact": (
+                "Оказание услуг свидетельствует о фактическом исполнении исполнителем "
+                "своей части договорных обязательств"
+            ),
+            "payment_object": "оказанных услуг",
+            "non_payment_object": "оказанных услуг",
+        }
+    if case_type == "contract_work":
+        return {
+            "contract_label": "договора подряда",
+            "creditor_role_genitive": "подрядчика",
+            "debtor_role_genitive": "заказчика",
+            "performance_obligation_phrase": "выполнением работ",
+            "performance_completion": lambda debtor: f"обеспечив выполнение работ для {debtor}",
+            "performance_destination": lambda debtor: f"для {debtor}",
+            "performance_fact": (
+                "Выполнение работ свидетельствует о фактическом исполнении подрядчиком "
+                "своей части договорных обязательств"
+            ),
+            "payment_object": "выполненных работ",
+            "non_payment_object": "выполненных работ",
+        }
+    return None
+
+
+def _build_neutral_performance_and_debt_paragraph(
+    data: Mapping[str, Any],
+    *,
+    reference_date: date | None = None,
+) -> str:
+    creditor = _optional_str(data.get("creditor_name"))
+    debtor = _optional_str(data.get("debtor_name"))
+    creditor_subject = creditor or "сторона, заявляющая требование"
+    creditor_side = creditor or "стороны, заявляющей требование"
+    debtor_subject = debtor or "обязанная сторона"
+    amount = _format_amount(data.get("debt_amount"))
+    due_date = _format_payment_due_date_strict(data.get("payment_due_date"))
+    overdue_days = _calculate_overdue_days(data.get("payment_due_date"), reference_date)
+
+    sentences = [
+        (
+            f"Исходя из представленных данных, {creditor_subject} {_neutral_creditor_verb(creditor)} "
+            "принятые на себя обязательства, в связи с чем у обязанной стороны возникла "
+            "встречная обязанность по оплате."
+        ),
+        (
+            f"Несмотря на исполнение обязательств со стороны {creditor_side}, "
+            f"{debtor_subject} {_neutral_debtor_non_payment_verb(debtor)} денежное обязательство "
+            "в установленный срок."
+        ),
+        _build_debt_amount_sentence(amount=amount, creditor=creditor),
+        _build_due_date_status_sentence(due_date, overdue_days=overdue_days),
+    ]
+
+    partial_payments_sentence = _build_partial_payments_sentence(data, "обязанной стороны")
+    if partial_payments_sentence:
+        sentences.append(partial_payments_sentence)
+
+    return " ".join(sentence for sentence in sentences if sentence)
+
+
+def _typed_creditor_verb(creditor: str | None) -> str:
+    return "выполнило" if creditor else "исполнила"
+
+
+def _typed_debtor_non_payment_verb(debtor: str | None) -> str:
+    return "не произвело" if debtor else "не произвела"
+
+
+def _typed_debtor_violation_verb(debtor: str | None) -> str:
+    return "нарушило" if debtor else "нарушила"
+
+
+def _neutral_creditor_verb(creditor: str | None) -> str:
+    return "исполнило" if creditor else "исполнила"
+
+
+def _neutral_debtor_non_payment_verb(debtor: str | None) -> str:
+    return "не исполнило" if debtor else "не исполнила"
+
+
+def _build_debt_amount_sentence(*, amount: str | None, creditor: str | None) -> str:
+    creditor_phrase = f" перед {creditor}" if creditor else ""
+    if amount:
+        return _ensure_sentence_period(
+            f"В результате неисполнения денежного обязательства{creditor_phrase} "
+            f"образовалась задолженность в размере {amount}"
+        )
+    return f"В результате неисполнения денежного обязательства{creditor_phrase} образовалась задолженность."
+
+
+def _ensure_sentence_period(value: str) -> str:
+    return value if value.endswith(".") else f"{value}."
+
+
+def _build_due_date_status_sentence(
+    due_date: str | None,
+    *,
+    overdue_days: int | None = None,
+) -> str:
+    if due_date:
+        overdue_phrase = (
+            f", период просрочки составляет {_format_calendar_days(overdue_days)}"
+            if overdue_days is not None
+            else ""
+        )
+        return (
+            f"Срок исполнения обязанности по оплате наступил {due_date}, однако по состоянию "
+            f"на дату направления настоящего обращения задолженность остаётся непогашенной{overdue_phrase}."
+        )
+    return "По состоянию на дату направления настоящего обращения задолженность остаётся непогашенной."
+
+
+def _format_calendar_days(days: int) -> str:
+    last_two_digits = days % 100
+    last_digit = days % 10
+    if 11 <= last_two_digits <= 14:
+        suffix = "календарных дней"
+    elif last_digit == 1:
+        suffix = "календарный день"
+    elif 2 <= last_digit <= 4:
+        suffix = "календарных дня"
+    else:
+        suffix = "календарных дней"
+    return f"{days} {suffix}"
+
+
+def _build_partial_payments_sentence(
+    data: Mapping[str, Any],
+    debtor_role: str | None,
+) -> str | None:
+    partial_payments_present = data.get("partial_payments_present")
+    partial_payments = data.get("partial_payments")
+    has_partial_payments = isinstance(partial_payments, list) and bool(partial_payments)
+    debtor_role_phrase = debtor_role or "обязанной стороны"
+
+    if partial_payments_present is False and not has_partial_payments:
+        return (
+            "Информация о частичном погашении задолженности либо об ином исполнении денежного "
+            "обязательства отсутствует, в связи с чем задолженность считается сохраняющейся "
+            f"в полном размере, а нарушение обязательств со стороны {debtor_role_phrase} "
+            "является продолжающимся."
+        )
+    if partial_payments_present is None:
+        return "Сведения о частичных оплатах в представленных данных не указаны."
+    if partial_payments_present is True and has_partial_payments:
+        return (
+            "Сведения о частичных оплатах учитываются при оценке размера задолженности; "
+            "денежное обязательство в соответствующей части остаётся неисполненным."
+        )
+    if partial_payments_present is True:
+        return (
+            "В представленных данных указано на наличие частичных оплат, однако сведения, "
+            "достаточные для их учёта, отсутствуют."
+        )
+    return None
 
 
 def _build_relationship_opening_paragraph(
@@ -466,6 +704,63 @@ def _join_ru_list(items: list[str]) -> str:
     if len(items) == 2:
         return f"{items[0]} и {items[1]}"
     return ", ".join(items[:-1]) + " и " + items[-1]
+
+
+def _build_preview_derived_data(
+    data: Mapping[str, Any],
+    reference_date: date | None,
+) -> dict[str, Any] | None:
+    if reference_date is None:
+        return None
+
+    derived: dict[str, Any] = {
+        "reference_date": reference_date.isoformat(),
+    }
+    overdue_days = _calculate_overdue_days(data.get("payment_due_date"), reference_date)
+    if overdue_days is not None:
+        derived["overdue_days"] = overdue_days
+    return derived
+
+
+def _parse_payment_due_date(value: Any) -> date | None:
+    normalized = _optional_str(value)
+    if not normalized:
+        return None
+
+    iso_match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", normalized)
+    if iso_match:
+        year, month, day = (int(part) for part in iso_match.groups())
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
+
+    dotted_match = re.fullmatch(r"(\d{2})\.(\d{2})\.(\d{4})", normalized)
+    if dotted_match:
+        day, month, year = (int(part) for part in dotted_match.groups())
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
+
+    return None
+
+
+def _calculate_overdue_days(value: Any, reference_date: date | None) -> int | None:
+    if reference_date is None:
+        return None
+    due_date = _parse_payment_due_date(value)
+    if due_date is None:
+        return None
+    overdue_days = (reference_date - due_date).days
+    return overdue_days if overdue_days > 0 else None
+
+
+def _format_payment_due_date_strict(value: Any) -> str | None:
+    due_date = _parse_payment_due_date(value)
+    if due_date is None:
+        return None
+    return f"{due_date.day:02d}.{due_date.month:02d}.{due_date.year}"
 
 
 def _format_iso_date(value: Any) -> str | None:

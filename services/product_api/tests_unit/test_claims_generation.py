@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 
 from product_api.claims import generation
@@ -54,6 +56,10 @@ def _paragraphs(text: str) -> list[str]:
 
 def _first_paragraph(text: str) -> str:
     return _paragraphs(text)[0]
+
+
+def _second_paragraph(text: str) -> str:
+    return _paragraphs(text)[1]
 
 
 def _assert_preview_body_contract(text: str):
@@ -404,6 +410,334 @@ async def test_safe_draft_preview_omits_artifacts_even_with_blocked_blocks():
     _assert_preview_body_contract(text)
     assert "ООО Альфа" in text
     assert "ООО Вектор" in text
+
+
+async def test_safe_draft_preview_supply_builds_mature_debt_paragraph():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило поставку",
+        case_type="supply",
+        normalized_data={
+            "creditor_name": "ООО «Бондюэль-Кубань»",
+            "debtor_name": "ООО «Вектор»",
+            "contract_signed": True,
+            "debt_amount": 300000,
+            "payment_due_date": "2026-04-27",
+            "partial_payments_present": False,
+            "partial_payments": [],
+        },
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    second_paragraph = _second_paragraph(text)
+    assert "Во исполнение условий договора поставки" in second_paragraph
+    assert "исходя из представленных данных" in second_paragraph
+    assert "передачу товара" in second_paragraph
+    assert "свидетельствует о фактическом исполнении" in second_paragraph
+    assert "встречной обязанности по оплате" in second_paragraph
+    assert "оплату поставленного товара" in second_paragraph
+    assert "задолженность в размере 300 000 руб." in second_paragraph
+    assert "27.04.2026" in second_paragraph
+    assert "задолженность остаётся непогашенной" in second_paragraph
+    assert "частичном погашении задолженности" in second_paragraph
+    assert "в полном размере" in second_paragraph
+    assert "период просрочки" not in second_paragraph
+
+
+async def test_safe_draft_preview_debt_paragraph_is_cautious_when_contract_not_signed():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило поставку",
+        case_type="supply",
+        normalized_data={
+            "creditor_name": "ООО «Бондюэль-Кубань»",
+            "debtor_name": "ООО «Вектор»",
+            "contract_signed": False,
+            "contract_number": "17",
+            "contract_date": "2026-01-12",
+            "debt_amount": 300000,
+            "payment_due_date": "2026-04-27",
+            "partial_payments_present": False,
+            "partial_payments": [],
+        },
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    second_paragraph = _second_paragraph(text)
+    assert "Во исполнение условий договора поставки" not in second_paragraph
+    assert "Исходя из представленных данных" in second_paragraph
+    assert "обязательства, связанные с передачей товара" in second_paragraph
+    assert "в установленный срок" in second_paragraph
+
+
+async def test_safe_draft_preview_services_builds_mature_debt_paragraph():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило услуги",
+        case_type="services",
+        normalized_data={
+            "creditor_name": "ООО «Альфа»",
+            "debtor_name": "ООО «Вектор»",
+            "contract_signed": True,
+            "debt_amount": 300000,
+            "payment_due_date": "2026-04-27",
+        },
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    second_paragraph = _second_paragraph(text)
+    assert "оказание услуг" in second_paragraph
+    assert "исполнителем" in second_paragraph
+    assert "заказчика" in second_paragraph
+    assert "оплату оказанных услуг" in second_paragraph
+    assert "поставщик" not in second_paragraph.lower()
+
+
+async def test_safe_draft_preview_contract_work_builds_mature_debt_paragraph():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило работы",
+        case_type="contract_work",
+        normalized_data={
+            "creditor_name": "ООО «Альфа»",
+            "debtor_name": "ООО «Вектор»",
+            "contract_signed": True,
+            "debt_amount": 300000,
+            "payment_due_date": "2026-04-27",
+        },
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    second_paragraph = _second_paragraph(text)
+    assert "выполнение работ" in second_paragraph
+    assert "подрядчиком" in second_paragraph
+    assert "заказчика" in second_paragraph
+    assert "оплату выполненных работ" in second_paragraph
+    assert "поставщик" not in second_paragraph.lower()
+
+
+async def test_safe_draft_preview_unknown_builds_neutral_debt_paragraph():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило",
+        case_type=None,
+        normalized_data={},
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    second_paragraph = _second_paragraph(text)
+    assert "сторона, заявляющая требование" in second_paragraph
+    assert "обязанная сторона" in second_paragraph
+    lowered = second_paragraph.lower()
+    assert "поставщик" not in lowered
+    assert "покупатель" not in lowered
+    assert "исполнитель" not in lowered
+    assert "подрядчик" not in lowered
+
+
+async def test_safe_draft_preview_debt_paragraph_handles_missing_debt_amount():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило поставку",
+        case_type="supply",
+        normalized_data={
+            "creditor_name": "ООО «Бондюэль-Кубань»",
+            "debtor_name": "ООО «Вектор»",
+            "payment_due_date": "2026-04-27",
+        },
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    second_paragraph = _second_paragraph(text)
+    assert "None" not in second_paragraph
+    assert "задолженность в размере" not in second_paragraph
+    assert "образовалась задолженность" in second_paragraph
+
+
+async def test_safe_draft_preview_debt_paragraph_handles_missing_payment_due_date():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило поставку",
+        case_type="supply",
+        normalized_data={
+            "creditor_name": "ООО «Бондюэль-Кубань»",
+            "debtor_name": "ООО «Вектор»",
+            "debt_amount": 300000,
+        },
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    second_paragraph = _second_paragraph(text)
+    assert "None" not in second_paragraph
+    assert "Срок исполнения обязанности по оплате наступил None" not in second_paragraph
+    assert "задолженность остаётся непогашенной" in second_paragraph
+
+
+async def test_safe_draft_preview_debt_paragraph_omits_invalid_payment_due_date():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило поставку",
+        case_type="supply",
+        normalized_data={
+            "creditor_name": "ООО «Бондюэль-Кубань»",
+            "debtor_name": "ООО «Вектор»",
+            "debt_amount": 300000,
+            "payment_due_date": "2026-99-99",
+        },
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    second_paragraph = _second_paragraph(text)
+    assert "2026-99-99" not in second_paragraph
+    assert "99.99.2026" not in second_paragraph
+    assert "задолженность остаётся непогашенной" in second_paragraph
+
+
+async def test_safe_draft_preview_debt_paragraph_includes_stable_overdue_days():
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило поставку",
+        case_type="supply",
+        normalized_data={
+            "creditor_name": "ООО «Бондюэль-Кубань»",
+            "debtor_name": "ООО «Вектор»",
+            "debt_amount": 300000,
+            "payment_due_date": "2026-04-27",
+        },
+        decision=_decision(),
+        reference_date=date(2026, 9, 8),
+    )
+
+    _assert_preview_body_contract(text)
+    assert len(_paragraphs(text)) == 2
+    second_paragraph = _second_paragraph(text)
+    assert "27.04.2026" in second_paragraph
+    assert "период просрочки составляет 134 календарных дня" in second_paragraph
+
+
+@pytest.mark.parametrize(
+    ("payment_due_date", "reference_date"),
+    [
+        ("2026-04-27", date(2026, 4, 27)),
+        ("2026-04-28", date(2026, 4, 27)),
+        ("2026-99-99", date(2026, 9, 8)),
+        ("2026-04-27", None),
+    ],
+)
+async def test_safe_draft_preview_debt_paragraph_omits_overdue_days_when_not_positive(
+    payment_due_date,
+    reference_date,
+):
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило поставку",
+        case_type="supply",
+        normalized_data={
+            "creditor_name": "ООО «Бондюэль-Кубань»",
+            "debtor_name": "ООО «Вектор»",
+            "debt_amount": 300000,
+            "payment_due_date": payment_due_date,
+        },
+        decision=_decision(),
+        reference_date=reference_date,
+    )
+
+    _assert_preview_body_contract(text)
+    second_paragraph = _second_paragraph(text)
+    assert "период просрочки составляет" not in second_paragraph
+    assert "0 календар" not in second_paragraph
+
+
+@pytest.mark.parametrize(
+    ("normalized_data", "expected_fragments", "forbidden_fragments"),
+    [
+        (
+            {"partial_payments_present": False, "partial_payments": []},
+            ["частичном погашении задолженности", "в полном размере"],
+            ["не указаны"],
+        ),
+        (
+            {"partial_payments_present": None, "partial_payments": []},
+            ["Сведения о частичных оплатах", "не указаны"],
+            ["в полном размере"],
+        ),
+        (
+            {
+                "partial_payments_present": True,
+                "partial_payments": [{"amount": 50000, "date": "2026-04-20"}],
+            },
+            ["частичных оплатах учитываются", "соответствующей части"],
+            ["в полном размере"],
+        ),
+        (
+            {"partial_payments_present": True, "partial_payments": []},
+            ["указано на наличие частичных оплат", "достаточные для их учёта"],
+            ["в полном размере"],
+        ),
+    ],
+)
+async def test_safe_draft_preview_debt_paragraph_handles_partial_payments_states(
+    normalized_data,
+    expected_fragments,
+    forbidden_fragments,
+):
+    payload = {
+        "creditor_name": "ООО «Бондюэль-Кубань»",
+        "debtor_name": "ООО «Вектор»",
+        "debt_amount": 300000,
+        "payment_due_date": "2026-04-27",
+    }
+    payload.update(normalized_data)
+
+    text = generation.build_safe_draft_preview(
+        input_text="ООО Вектор не оплатило поставку",
+        case_type="supply",
+        normalized_data=payload,
+        decision=_decision(),
+    )
+
+    _assert_preview_body_contract(text)
+    second_paragraph = _second_paragraph(text)
+    for fragment in expected_fragments:
+        assert fragment in second_paragraph
+    for fragment in forbidden_fragments:
+        assert fragment not in second_paragraph
+
+
+async def test_generate_claim_preview_accepts_mature_debt_paragraph_phrases(monkeypatch):
+    raw_response = (
+        f"{_VALID_PARAGRAPH_1}\n\n"
+        "Поставка товара свидетельствует о фактическом исполнении поставщиком своей части "
+        "договорных обязательств и является основанием для возникновения у покупателя "
+        "встречной обязанности по оплате полученного товара. ООО «Вектор» оплату "
+        "поставленного товара не произвело, задолженность остаётся непогашенной, "
+        "период просрочки составляет 134 календарных дня, а нарушение обязательств продолжается."
+    )
+
+    result = await _generate_with_raw_response(monkeypatch, raw_response)
+
+    assert result["used_fallback"] is False
+    assert result["error_code"] is None
+    assert result["generated_preview_text"] == raw_response
+
+
+@pytest.mark.parametrize(
+    "forbidden_phrase",
+    [
+        "требуем оплатить",
+        "просим оплатить",
+    ],
+)
+async def test_generate_claim_preview_still_fallbacks_on_final_payment_demand(
+    monkeypatch,
+    forbidden_phrase,
+):
+    raw_response = f"{_VALID_PARAGRAPH_1}\n\n{forbidden_phrase} задолженность."
+
+    result = await _generate_with_raw_response(monkeypatch, raw_response)
+
+    assert result["used_fallback"] is True
+    assert result["error_code"] == "preview_fallback"
+    assert forbidden_phrase not in result["generated_preview_text"].lower()
+    _assert_preview_body_contract(result["generated_preview_text"])
 
 
 async def test_safe_draft_preview_supply_builds_mature_contract_opening():

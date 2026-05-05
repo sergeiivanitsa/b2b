@@ -311,6 +311,7 @@ async def generate_public_claim_preview(
         case_type=claim.case_type,
         normalized_data=claim.normalized_data_json if isinstance(claim.normalized_data_json, dict) else None,
         decision=decision,
+        reference_date=claim.created_at.date(),
     )
     await apply_claim_generation_preview(
         session,
