@@ -40,9 +40,6 @@ const mockedGetClaimPreview = vi.mocked(getClaimPreview)
 const mockedGetInsufficientDataDetail = vi.mocked(getInsufficientDataDetail)
 const mockedPayClaim = vi.mocked(payClaim)
 
-const CLAIMS_DOCUMENT_DEMO_TEXT =
-  'Полная версия документа будет доступна после оплаты. В неё входят правовое обоснование, расчет требований и итоговая просительная часть.'
-
 async function flushAsyncUpdates(): Promise<void> {
   await act(async () => {
     await Promise.resolve()
@@ -99,6 +96,14 @@ function getDocumentDemo(container: HTMLElement): HTMLElement {
   return demo
 }
 
+function expectArticleText(target: HTMLElement, articleNumber: string): void {
+  expect(target.textContent ?? '').toMatch(new RegExp(`(?:ст\\.|Статья) ${articleNumber} ГК РФ`))
+}
+
+function expectNoArticleText(target: HTMLElement, articleNumber: string): void {
+  expect(target.textContent ?? '').not.toMatch(new RegExp(`(?:ст\\.|Статья) ${articleNumber} ГК РФ`))
+}
+
 describe('ClaimStep4Page', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -121,6 +126,7 @@ describe('ClaimStep4Page', () => {
         price_rub: 990,
         manual_review_required: false,
         client_email: 'client@example.com',
+        case_type: 'supply',
         normalized_data: {
           creditor_name: 'Fallback Creditor',
           debtor_name: 'Fallback Debtor',
@@ -206,10 +212,10 @@ describe('ClaimStep4Page', () => {
     const body = getDocumentBody(container)
     expect(body.textContent).toContain('Preview text')
     expect(body.textContent).not.toContain('Исх. №')
-    expect(body.textContent).not.toContain(CLAIMS_DOCUMENT_DEMO_TEXT)
+    expectNoArticleText(body, '486')
     expect(body.querySelectorAll('p')).toHaveLength(1)
     const demo = getDocumentDemo(container)
-    expect(demo.textContent).toContain(CLAIMS_DOCUMENT_DEMO_TEXT)
+    expectArticleText(demo, '486')
     expect(demo.closest('.claims-document-body')).toBeNull()
     expect(container.querySelector('.claims-document-header')).not.toBeNull()
     expect(container.querySelector('.claims-document-paywall')).not.toBeNull()
@@ -230,6 +236,7 @@ describe('ClaimStep4Page', () => {
         price_rub: 990,
         manual_review_required: false,
         client_email: null,
+        case_type: 'supply',
         normalized_data: {
           creditor_name: 'Fallback Creditor',
           debtor_name: 'Fallback Debtor',
@@ -261,13 +268,88 @@ describe('ClaimStep4Page', () => {
       'Первый абзац preview body.',
       'Второй абзац preview body.',
     ])
-    expect(body.textContent).not.toContain(CLAIMS_DOCUMENT_DEMO_TEXT)
+    expectNoArticleText(body, '486')
 
     const demo = getDocumentDemo(container)
-    expect(demo.textContent).toContain(CLAIMS_DOCUMENT_DEMO_TEXT)
+    expectArticleText(demo, '486')
     expect(demo.closest('.claims-document-body')).toBeNull()
     expect(screen.getByRole('heading', { name: 'ПРЕТЕНЗИЯ' })).toBeTruthy()
     expect(screen.getByText('Исх. №: б/н от 03 мая 2026 года')).toBeTruthy()
+  })
+
+  it('renders contract work legal demo filler by case type', async () => {
+    mockedRestoreClaimFromSession.mockResolvedValue({
+      claimId: 32,
+      editToken: 'token-contract-work-demo',
+      claim: {
+        generation_state: 'ready',
+        status: 'draft',
+        price_rub: 990,
+        manual_review_required: false,
+        client_email: null,
+        case_type: 'contract_work',
+        normalized_data: {
+          creditor_name: 'Fallback Creditor',
+          debtor_name: 'Fallback Debtor',
+        },
+        preview_header: null,
+        step2: {
+          missing_fields: [],
+        },
+      },
+    } as never)
+    mockedGetClaimPreview.mockResolvedValue({
+      generated_preview_text: 'Первый абзац preview body.',
+      preview_header: null,
+    } as never)
+
+    const { container } = renderPage()
+    await flushAsyncUpdates()
+
+    const body = getDocumentBody(container)
+    const demo = getDocumentDemo(container)
+    expectArticleText(demo, '702')
+    expectNoArticleText(body, '702')
+    expect(demo.closest('.claims-document-body')).toBeNull()
+  })
+
+  it('uses default legal demo filler when case type is null', async () => {
+    mockedRestoreClaimFromSession.mockResolvedValue({
+      claimId: 33,
+      editToken: 'token-default-demo',
+      claim: {
+        generation_state: 'ready',
+        status: 'draft',
+        price_rub: 990,
+        manual_review_required: false,
+        client_email: null,
+        case_type: null,
+        normalized_data: {
+          creditor_name: 'Fallback Creditor',
+          debtor_name: 'Fallback Debtor',
+        },
+        preview_header: null,
+        step2: {
+          missing_fields: [],
+        },
+      },
+    } as never)
+    mockedGetClaimPreview.mockResolvedValue({
+      generated_preview_text: 'Первый абзац preview body.',
+      preview_header: null,
+    } as never)
+
+    const { container } = renderPage()
+    await flushAsyncUpdates()
+
+    const demo = getDocumentDemo(container)
+    expectArticleText(demo, '309')
+    expectArticleText(demo, '310')
+    expectNoArticleText(demo, '486')
+    expectNoArticleText(demo, '702')
+    expectNoArticleText(demo, '779')
+    expectNoArticleText(demo, '781')
+    expect(demo.closest('.claims-document-body')).toBeNull()
   })
 
   it('does not render extra preview paragraphs under the paywall blur', async () => {
@@ -305,7 +387,13 @@ describe('ClaimStep4Page', () => {
     expect(body.textContent).toContain('Второй абзац preview body.')
     expect(body.textContent).not.toContain('Третий абзац не должен отображаться.')
     expect(screen.queryByText('Третий абзац не должен отображаться.')).toBeNull()
-    expect(getDocumentDemo(container).textContent).toContain(CLAIMS_DOCUMENT_DEMO_TEXT)
+    const demo = getDocumentDemo(container)
+    expectArticleText(demo, '309')
+    expectArticleText(demo, '310')
+    expectNoArticleText(demo, '486')
+    expectNoArticleText(demo, '702')
+    expectNoArticleText(demo, '779')
+    expectNoArticleText(demo, '781')
     expect(container.querySelector('.claims-document-paywall')).not.toBeNull()
   })
 
@@ -319,6 +407,7 @@ describe('ClaimStep4Page', () => {
         price_rub: 990,
         manual_review_required: false,
         client_email: 'client@example.com',
+        case_type: 'services',
         normalized_data: {
           creditor_name: 'Fallback Creditor',
           debtor_name: 'Fallback Debtor',
@@ -403,11 +492,13 @@ describe('ClaimStep4Page', () => {
     ])
     expect(body.textContent).not.toContain('Третий абзац не должен попасть под blur.')
     expect(body.textContent).not.toContain('Исх. №')
-    expect(body.textContent).not.toContain(CLAIMS_DOCUMENT_DEMO_TEXT)
+    expectNoArticleText(body, '779')
+    expectNoArticleText(body, '781')
     expect(screen.queryByText('Третий абзац не должен попасть под blur.')).toBeNull()
 
     const demo = getDocumentDemo(container)
-    expect(demo.textContent).toContain(CLAIMS_DOCUMENT_DEMO_TEXT)
+    expectArticleText(demo, '779')
+    expectArticleText(demo, '781')
     expect(demo.closest('.claims-document-body')).toBeNull()
 
     expect(header.compareDocumentPosition(title[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
