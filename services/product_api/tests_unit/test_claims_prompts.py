@@ -53,7 +53,37 @@ def test_build_preview_generation_messages_defines_body_only_contract():
     assert '"требуем оплатить"' in combined
     assert '"просим оплатить"' in combined
     assert '"погасить задолженность в срок"' in combined
-    assert "Абзац 2 описывает исполнение и оплату" in combined
+    assert "Абзац 2 описывает исполнение кредитором" in combined
+    assert "логическую цепочку" in combined
+    assert "исполнение обязательств кредитором" in combined
+    assert "встречной обязанности" in combined
+    assert "неисполнение оплаты" in combined
+    assert "образование задолженности" in combined
+    assert "срок оплаты" in combined
+    assert "частичных оплат" in combined
+    assert "передача товара" in combined
+    assert "оплата поставленного товара" in combined
+    assert "оплата полученного товара" in combined
+    assert "оказание услуг" in combined
+    assert "оплата оказанных услуг" in combined
+    assert "выполнение работ" in combined
+    assert "оплата выполненных работ" in combined
+    assert "сторона, заявляющая требование" in combined
+    assert "обязанная сторона" in combined
+    assert "денежное обязательство" in combined
+    assert "normalized_data.payment_due_date" in combined
+    assert "derived_preview_data.overdue_days" in combined
+    assert "не пиши конкретное число дней" in combined
+    assert "не рассчитывай просрочку самостоятельно" in combined
+    assert "partial_payments_present=false" in combined
+    assert "partial_payments_present=null" in combined
+    assert "partial_payments_present=true" in combined
+    assert "не пересчитывай остаток самостоятельно" in combined
+    assert "не выдумывай суммы/даты частичных оплат" in combined
+    assert "normalized_data.debt_amount" in combined
+    assert "не выдумывай сумму" in combined
+    assert "не пересчитывай остаток задолженности" in combined
+    assert "не добавляй сумму прописью" in combined
     assert "Не возвращай markdown" in combined
     assert "Не возвращай JSON" in combined
     assert "Не используй списки" in combined
@@ -85,3 +115,47 @@ def test_build_preview_generation_messages_defines_body_only_contract():
     assert '"risk_flags"' not in messages[1].content
     assert "не добавлять правовой блок со ссылками на нормы права" in messages[1].content
     assert "если тип отношений неочевиден" in messages[1].content
+
+
+def test_build_preview_generation_messages_includes_derived_preview_data():
+    messages = build_preview_generation_messages(
+        input_text="ООО Вектор не оплатило поставку",
+        case_type="supply",
+        normalized_data={"payment_due_date": "2026-04-27"},
+        allowed_blocks=["facts", "demands"],
+        blocked_blocks=[],
+        risk_flags=[],
+        derived_preview_data={
+            "reference_date": "2026-09-08",
+            "overdue_days": 134,
+        },
+    )
+
+    combined = "\n".join(message.content for message in messages)
+    user_prompt = messages[1].content
+    assert "не рассчитывай просрочку самостоятельно" in combined
+    assert "derived_preview_data.overdue_days" in combined
+    assert '"derived_preview_data"' in user_prompt
+    assert '"reference_date": "2026-09-08"' in user_prompt
+    assert '"overdue_days": 134' in user_prompt
+
+
+def test_build_preview_generation_messages_omits_fake_overdue_days():
+    messages = build_preview_generation_messages(
+        input_text="ООО Вектор не оплатило поставку",
+        case_type="supply",
+        normalized_data={"payment_due_date": "2026-04-27"},
+        allowed_blocks=["facts", "demands"],
+        blocked_blocks=[],
+        risk_flags=[],
+        derived_preview_data={
+            "reference_date": "2026-09-08",
+        },
+    )
+
+    user_prompt = messages[1].content
+    assert '"derived_preview_data"' in user_prompt
+    assert '"reference_date": "2026-09-08"' in user_prompt
+    assert '"overdue_days"' not in user_prompt
+    assert "134" not in user_prompt
+    assert "0 календар" not in user_prompt

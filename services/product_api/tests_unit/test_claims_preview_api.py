@@ -125,8 +125,9 @@ async def test_generate_preview_success(async_client, mock_session, monkeypatch)
     }
 
     async def fake_generate_claim_preview(
-        _settings, *, claim_id, input_text, case_type, normalized_data, decision
+        _settings, *, claim_id, input_text, case_type, normalized_data, decision, reference_date
     ):
+        assert reference_date == claim.created_at.date()
         return {
             "generated_preview_text": "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё",
             "used_fallback": False,
@@ -557,8 +558,9 @@ async def test_generate_preview_with_null_header_keeps_null_without_artificial_s
     }
 
     async def fake_generate_claim_preview(
-        _settings, *, claim_id, input_text, case_type, normalized_data, decision
+        _settings, *, claim_id, input_text, case_type, normalized_data, decision, reference_date
     ):
+        assert reference_date == claim.created_at.date()
         return {
             "generated_preview_text": "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё",
             "used_fallback": False,
