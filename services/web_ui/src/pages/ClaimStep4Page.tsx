@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
+import { getClaimDocumentDemoText } from '../claims/claimDocumentDemoText'
 import { restoreClaimFromSession } from '../claims/claimRestore'
 import { ClaimsBrand } from '../claims/components/ClaimsBrand'
 import {
@@ -28,6 +29,7 @@ type DocumentHeader = {
 type LoadedClaimMeta = {
   claimId: number
   editToken: string
+  caseType: string | null
   priceRub: number
   manualReviewRequired: boolean
   alreadyPaid: boolean
@@ -42,9 +44,6 @@ const PACKAGE_ITEMS = [
   'Сопроводительное письмо',
   'Инструкция по дальнейшим действиям',
 ]
-
-const CLAIMS_DOCUMENT_DEMO_TEXT =
-  'Полная версия документа будет доступна после оплаты. В неё входят правовое обоснование, расчет требований и итоговая просительная часть.'
 
 const DEFAULT_DOCUMENT_HEADER: DocumentHeader = {
   senderLine1: 'От руководителя',
@@ -96,6 +95,7 @@ export function ClaimStep4Page() {
         setMeta({
           claimId: restored.claimId,
           editToken: restored.editToken,
+          caseType: restored.claim.case_type ?? null,
           priceRub: restored.claim.price_rub,
           manualReviewRequired: restored.claim.manual_review_required,
           alreadyPaid:
@@ -172,6 +172,10 @@ export function ClaimStep4Page() {
     }
     return meta.priceRub
   }, [meta])
+  const demoText = useMemo(
+    () => getClaimDocumentDemoText(meta?.caseType, meta?.claimId),
+    [meta?.caseType, meta?.claimId],
+  )
 
   async function onPayClick() {
     if (!meta) {
@@ -286,7 +290,7 @@ export function ClaimStep4Page() {
                   ))}
                 </section>
                 <section className="claims-document-demo" aria-label="Демо-зона документа">
-                  <p>{CLAIMS_DOCUMENT_DEMO_TEXT}</p>
+                  <p>{demoText}</p>
                 </section>
               </div>
               <div className="claims-document-paywall" aria-hidden="true">
