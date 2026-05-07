@@ -316,12 +316,32 @@ export function ClaimStep4Page() {
             ) : null}
 
             <section className="claims-paywall-card__trust">
-              <h3>Гарантия качества</h3>
-              <p>Если в документе будет ошибка по нашей вине, вернем деньги</p>
-              <h3>Конфиденциальность</h3>
-              <p>
-                Данные защищены шифрованием AES-256 и обрабатываются конфиденциально
-              </p>
+              <div className="claims-paywall-card__trust-item">
+                <img
+                  className="claims-paywall-card__trust-icon"
+                  src="/claims/quality-guarantee.webp"
+                  alt=""
+                  aria-hidden="true"
+                />
+                <div className="claims-paywall-card__trust-copy">
+                  <h3>Гарантия качества</h3>
+                  <p>Если в документе будет ошибка по нашей вине, вернем деньги</p>
+                </div>
+              </div>
+              <div className="claims-paywall-card__trust-item">
+                <img
+                  className="claims-paywall-card__trust-icon"
+                  src="/claims/confidentiality.webp"
+                  alt=""
+                  aria-hidden="true"
+                />
+                <div className="claims-paywall-card__trust-copy">
+                  <h3>Конфиденциальность</h3>
+                  <p>
+                    Данные защищены шифрованием AES-256 и обрабатываются конфиденциально
+                  </p>
+                </div>
+              </div>
             </section>
 
             <section className="claims-paywall-card__price">

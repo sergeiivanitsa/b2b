@@ -226,6 +226,59 @@ describe('ClaimStep4Page', () => {
     expect(screen.queryByText('Legacy Recipient Line 1')).toBeNull()
   })
 
+  it('renders decorative trust icons in the paywall card only', async () => {
+    mockedRestoreClaimFromSession.mockResolvedValue({
+      claimId: 25,
+      editToken: 'token-trust-icons',
+      claim: {
+        generation_state: 'ready',
+        status: 'draft',
+        price_rub: 990,
+        manual_review_required: false,
+        client_email: 'client@example.com',
+        case_type: 'services',
+        normalized_data: {
+          creditor_name: 'Fallback Creditor',
+          debtor_name: 'Fallback Debtor',
+        },
+        preview_header: null,
+        step2: {
+          missing_fields: [],
+        },
+      },
+    } as never)
+    mockedGetClaimPreview.mockResolvedValue({
+      generated_preview_text: 'Preview text',
+      preview_header: null,
+    } as never)
+
+    const { container } = renderPage()
+    await flushAsyncUpdates()
+
+    expect(screen.getByText('Гарантия качества')).toBeTruthy()
+    expect(screen.getByText('Конфиденциальность')).toBeTruthy()
+
+    const trust = container.querySelector<HTMLElement>('.claims-paywall-card__trust')
+    if (!trust) {
+      throw new Error('Expected trust block to be rendered')
+    }
+    const images = Array.from(trust.querySelectorAll<HTMLImageElement>('img'))
+    expect(images).toHaveLength(2)
+    expect(images[0].getAttribute('src')).toBe('/claims/quality-guarantee.webp')
+    expect(images[0].getAttribute('alt')).toBe('')
+    expect(images[0].getAttribute('aria-hidden')).toBe('true')
+    expect(images[1].getAttribute('src')).toBe('/claims/confidentiality.webp')
+    expect(images[1].getAttribute('alt')).toBe('')
+    expect(images[1].getAttribute('aria-hidden')).toBe('true')
+
+    const body = getDocumentBody(container)
+    expect(body.textContent).not.toContain('Гарантия качества')
+    expect(body.textContent).not.toContain('Конфиденциальность')
+    expect(body.querySelectorAll('img')).toHaveLength(0)
+    expect(container.querySelector('.claims-document-paywall')).not.toBeNull()
+    expect(container.querySelector('.claims-paywall-card')).not.toBeNull()
+  })
+
   it('renders preview body paragraphs separately from the frontend demo zone', async () => {
     mockedRestoreClaimFromSession.mockResolvedValue({
       claimId: 22,
