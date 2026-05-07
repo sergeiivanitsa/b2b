@@ -2027,16 +2027,38 @@ body.is-chat-page #root {
   color: #235b31;
 }
 
-.claims-paywall-card__trust h3,
-.claims-paywall-card__trust p {
-  margin: 0;
-}
-
 .claims-paywall-card__trust {
   border-top: 1px solid #eceeef;
   padding-top: 12px;
   display: grid;
-  gap: 8px;
+  gap: 14px;
+}
+
+.claims-paywall-card__trust-item {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  column-gap: 14px;
+  align-items: start;
+  min-width: 0;
+}
+
+.claims-paywall-card__trust-icon {
+  width: 52px;
+  height: 52px;
+  display: block;
+  object-fit: contain;
+  align-self: start;
+}
+
+.claims-paywall-card__trust-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.claims-paywall-card__trust-copy h3,
+.claims-paywall-card__trust-copy p {
+  margin: 0;
 }
 
 .claims-paywall-card__price {
@@ -2570,6 +2592,16 @@ body.is-chat-page #root {
   .claims-document-paywall__message {
     font-size: clamp(1.24rem, 5vw, 1.58rem);
     line-height: 1.3;
+  }
+
+  .claims-paywall-card__trust-item {
+    grid-template-columns: 42px minmax(0, 1fr);
+    column-gap: 12px;
+  }
+
+  .claims-paywall-card__trust-icon {
+    width: 42px;
+    height: 42px;
   }
 
   .claims-progress__label {
