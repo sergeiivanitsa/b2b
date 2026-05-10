@@ -2318,6 +2318,64 @@ body.is-chat-page #root {
   white-space: normal;
 }
 
+.claims-page--step4 .claims-price-card > button {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.claims-page--step4 .claims-price-card > button::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -45%;
+  width: 28%;
+  background: linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.16) 38%,
+    rgba(245, 248, 255, 0.34) 50%,
+    rgba(255, 255, 255, 0.16) 62%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  transform: skewX(-20deg) translateX(0);
+  animation: claims-step4-cta-shine 5.5s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.claims-page--step4 .claims-price-card > button > span {
+  position: relative;
+  z-index: 1;
+}
+
+.claims-page--step4 .claims-price-card > button:disabled::before {
+  content: none;
+  animation: none;
+}
+
+@keyframes claims-step4-cta-shine {
+  0% {
+    transform: skewX(-20deg) translateX(0);
+  }
+
+  18% {
+    transform: skewX(-20deg) translateX(520%);
+  }
+
+  100% {
+    transform: skewX(-20deg) translateX(520%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .claims-page--step4 .claims-price-card > button::before {
+    content: none;
+    animation: none;
+  }
+}
+
 .claims-page--step4 .claims-price-card__cta-arrow {
   display: inline-flex;
   align-items: center;
