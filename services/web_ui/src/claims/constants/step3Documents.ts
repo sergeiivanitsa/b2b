@@ -17,13 +17,13 @@ export const STEP3_DOCUMENTS: readonly Step3DocumentDefinition[] = [
     order: 2,
   },
   {
-    id: 'cover_letter',
-    label: 'сопроводительное письмо',
+    id: 'penalty_table',
+    label: 'таблица расчета неустойки',
     order: 3,
   },
   {
-    id: 'penalty_table',
-    label: 'таблица расчета неустойки',
+    id: 'cover_letter',
+    label: 'сопроводительное письмо',
     order: 4,
   },
   {
