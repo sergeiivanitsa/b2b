@@ -2202,6 +2202,8 @@ body.is-chat-page #root {
   text-align: center;
   line-height: 1.05;
   flex-shrink: 0;
+  transform: translateY(-6px) rotate(15deg);
+  transform-origin: center;
 }
 
 .claims-page--step4 .claims-price-card__saving span:first-child {
@@ -2230,6 +2232,7 @@ body.is-chat-page #root {
   flex-wrap: wrap;
   gap: 8px 10px;
   margin-top: 2px;
+  transform: translateY(-6px);
 }
 
 .claims-page--step4 .claims-price-card__badge {
