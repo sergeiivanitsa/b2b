@@ -175,6 +175,12 @@ export function ClaimStep4Page() {
     () => getClaimDocumentDemoText(meta?.caseType, meta?.claimId),
     [meta?.caseType, meta?.claimId],
   )
+  const ctaLabel = isPaying
+    ? 'ОПЛАТА...'
+    : meta?.alreadyPaid
+      ? 'Заявка уже оплачена'
+      : 'Получить пакет документов'
+  const showCtaArrow = !isPaying && !meta?.alreadyPaid
 
   async function onPayClick() {
     if (!meta) {
@@ -343,24 +349,78 @@ export function ClaimStep4Page() {
               </div>
             </section>
 
-            <section className="claims-paywall-card__price">
-              <p className="claims-paywall-card__old-price">5 100 ₽</p>
-              <p className="claims-paywall-card__new-price">{formatRub(discountPrice)}</p>
+            <section className="claims-paywall-card__price claims-price-card">
+              <div className="claims-price-card__top">
+                <span className="claims-paywall-card__old-price claims-price-card__old-price">
+                  5 100 ₽
+                </span>
+                <span className="claims-price-card__deal-badge">Сейчас выгоднее ⚡</span>
+              </div>
+
+              <div className="claims-price-card__main">
+                <p className="claims-paywall-card__new-price claims-price-card__new-price">
+                  {formatRub(discountPrice)}
+                </p>
+                <div className="claims-price-card__saving">
+                  <span>-80%</span>
+                  <span>экономия</span>
+                  <span>4 110 ₽</span>
+                </div>
+              </div>
+
+              <div className="claims-price-card__badges">
+                <span className="claims-price-card__badge claims-price-card__badge--popular">
+                  Популярно
+                </span>
+                <span className="claims-price-card__badge claims-price-card__badge--bought">
+                  Купили &gt; 3000 раз
+                </span>
+              </div>
+
+              <div className="claims-price-card__audience">
+                <svg
+                  className="claims-price-card__audience-icon"
+                  viewBox="0 0 48 48"
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <circle cx="18" cy="14" r="8" />
+                  <circle cx="34" cy="17" r="6" />
+                  <path d="M6 40c1.5-9 6.2-15 12-15s10.5 6 12 15H6Z" />
+                  <path d="M27 40c1-6.6 4.2-11 8-11s7 4.4 8 11H27Z" />
+                </svg>
+                <div className="claims-price-card__audience-copy">
+                  <strong>Выбирают для взыскания задолженности</strong>
+                  <span>Подходит для бизнеса и физлиц</span>
+                </div>
+              </div>
+
               <button
                 type="button"
                 onClick={onPayClick}
                 disabled={isPaying || Boolean(meta?.alreadyPaid)}
               >
-                {meta?.alreadyPaid
-                  ? 'Заявка уже оплачена'
-                  : isPaying
-                    ? 'ОПЛАТА...'
-                    : 'Получить комплект документов'}
+                <span>{ctaLabel}</span>
+                {showCtaArrow ? (
+                  <span className="claims-price-card__cta-arrow" aria-hidden="true">
+                    ›
+                  </span>
+                ) : null}
               </button>
+
+              <p className="claims-paywall-card__hint claims-price-card__secure-note">
+                <svg
+                  className="claims-price-card__secure-icon"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <path d="M12 3 5 6v5c0 4.8 2.9 8.8 7 10 4.1-1.2 7-5.2 7-10V6l-7-3Z" />
+                  <path d="m9.5 12 1.7 1.7 3.6-4" />
+                </svg>
+                <span>После проверки юрист отправит документы на e-mail</span>
+              </p>
             </section>
-            <p className="claims-paywall-card__hint">
-              После проверки юрист отправит документы на e-mail
-            </p>
           </aside>
         </section>
 

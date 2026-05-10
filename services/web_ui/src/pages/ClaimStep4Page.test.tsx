@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -242,8 +242,25 @@ describe('ClaimStep4Page', () => {
       'Инструкция по дальнейшим действиям',
     ])
     expect(paywall.queryByText('Перечень приложений')).toBeNull()
-    expect(paywall.getByRole('button', { name: 'Получить комплект документов' })).toBeTruthy()
-    expect(paywall.queryByRole('button', { name: 'Получить пакет документов' })).toBeNull()
+    expect(paywall.getByText('5 100 ₽')).toBeTruthy()
+    expect(paywall.getByText(/Сейчас выгоднее/)).toBeTruthy()
+    expect(paywall.getByText('-80%')).toBeTruthy()
+    expect(paywall.getByText('экономия')).toBeTruthy()
+    expect(paywall.getByText('4 110 ₽')).toBeTruthy()
+    expect(paywall.getByText('Популярно')).toBeTruthy()
+    expect(paywall.getByText('Купили > 3000 раз')).toBeTruthy()
+    expect(paywall.getByText('Выбирают для взыскания задолженности')).toBeTruthy()
+    expect(paywall.getByText('Подходит для бизнеса и физлиц')).toBeTruthy()
+    expect(paywall.getByText('После проверки юрист отправит документы на e-mail')).toBeTruthy()
+    const ctaButton = paywall.getByRole('button', {
+      name: 'Получить пакет документов',
+    })
+    expect(ctaButton).toBeTruthy()
+    const ctaArrow = ctaButton.querySelector<HTMLElement>('.claims-price-card__cta-arrow')
+    expect(ctaArrow).toBeTruthy()
+    expect(ctaArrow?.getAttribute('aria-hidden')).toBe('true')
+    expect(ctaArrow?.getAttribute('role')).toBeNull()
+    expect(ctaArrow?.getAttribute('aria-label')).toBeNull()
     expect(screen.queryByText('ОТ КОГО:')).toBeNull()
     expect(screen.queryByText('КОМУ:')).toBeNull()
     expect(screen.queryByText('Legacy Sender Line 1')).toBeNull()
@@ -295,12 +312,132 @@ describe('ClaimStep4Page', () => {
     expect(images[1].getAttribute('alt')).toBe('')
     expect(images[1].getAttribute('aria-hidden')).toBe('true')
 
+    const priceCard = container.querySelector<HTMLElement>('.claims-price-card')
+    expect(priceCard).toBeTruthy()
+    const usersIcon = priceCard?.querySelector<HTMLElement>(
+      '.claims-price-card__audience-icon',
+    )
+    const shieldIcon = priceCard?.querySelector<HTMLElement>(
+      '.claims-price-card__secure-icon',
+    )
+    expect(usersIcon).toBeTruthy()
+    expect(usersIcon?.getAttribute('aria-hidden')).toBe('true')
+    expect(usersIcon?.getAttribute('focusable')).toBe('false')
+    expect(usersIcon?.getAttribute('role')).toBeNull()
+    expect(usersIcon?.getAttribute('aria-label')).toBeNull()
+    expect(shieldIcon).toBeTruthy()
+    expect(shieldIcon?.getAttribute('aria-hidden')).toBe('true')
+    expect(shieldIcon?.getAttribute('focusable')).toBe('false')
+    expect(shieldIcon?.getAttribute('role')).toBeNull()
+    expect(shieldIcon?.getAttribute('aria-label')).toBeNull()
+
     const body = getDocumentBody(container)
     expect(body.textContent).not.toContain('Гарантия качества')
     expect(body.textContent).not.toContain('Конфиденциальность')
     expect(body.querySelectorAll('img')).toHaveLength(0)
     expect(container.querySelector('.claims-document-paywall')).not.toBeNull()
     expect(container.querySelector('.claims-paywall-card')).not.toBeNull()
+  })
+
+  it('shows disabled loading CTA without arrow while payment is pending', async () => {
+    mockedRestoreClaimFromSession.mockResolvedValue({
+      claimId: 36,
+      editToken: 'token-payment-pending',
+      claim: {
+        generation_state: 'ready',
+        status: 'draft',
+        price_rub: 990,
+        manual_review_required: false,
+        client_email: 'client@example.com',
+        case_type: 'services',
+        normalized_data: {
+          creditor_name: 'Fallback Creditor',
+          debtor_name: 'Fallback Debtor',
+        },
+        preview_header: null,
+        step2: {
+          missing_fields: [],
+        },
+      },
+    } as never)
+    mockedGetClaimPreview.mockResolvedValue({
+      generated_preview_text: 'Preview text',
+      preview_header: null,
+    } as never)
+    const paymentResolver: {
+      current?: (value: Awaited<ReturnType<typeof payClaim>>) => void
+    } = {}
+    mockedPayClaim.mockReturnValue(
+      new Promise((resolve) => {
+        paymentResolver.current = resolve
+      }) as ReturnType<typeof payClaim>,
+    )
+
+    renderPage()
+    await flushAsyncUpdates()
+
+    const button = screen.getByRole('button', {
+      name: 'Получить пакет документов',
+    }) as HTMLButtonElement
+    fireEvent.click(button)
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const loadingButton = screen.getByRole('button', {
+      name: 'ОПЛАТА...',
+    }) as HTMLButtonElement
+    expect(mockedPayClaim).toHaveBeenCalledWith(36, 'token-payment-pending')
+    expect(loadingButton.disabled).toBe(true)
+    expect(loadingButton.querySelector('.claims-price-card__cta-arrow')).toBeNull()
+
+    const completePayment = paymentResolver.current
+    if (!completePayment) {
+      throw new Error('Expected pending payment resolver to be captured')
+    }
+    await act(async () => {
+      completePayment({} as Awaited<ReturnType<typeof payClaim>>)
+      await Promise.resolve()
+    })
+    await flushAsyncUpdates()
+  })
+
+  it('renders already-paid CTA disabled without arrow for paid claims', async () => {
+    mockedRestoreClaimFromSession.mockResolvedValue({
+      claimId: 37,
+      editToken: 'token-paid',
+      claim: {
+        generation_state: 'ready',
+        status: 'paid',
+        price_rub: 990,
+        manual_review_required: false,
+        client_email: 'client@example.com',
+        case_type: 'services',
+        normalized_data: {
+          creditor_name: 'Fallback Creditor',
+          debtor_name: 'Fallback Debtor',
+        },
+        preview_header: null,
+        step2: {
+          missing_fields: [],
+        },
+      },
+    } as never)
+    mockedGetClaimPreview.mockResolvedValue({
+      generated_preview_text: 'Preview text',
+      preview_header: null,
+    } as never)
+
+    renderPage()
+    await flushAsyncUpdates()
+
+    const paidButton = screen.getByRole('button', {
+      name: 'Заявка уже оплачена',
+    }) as HTMLButtonElement
+    expect(paidButton.disabled).toBe(true)
+    expect(paidButton.querySelector('.claims-price-card__cta-arrow')).toBeNull()
+    expect(mockedPayClaim).not.toHaveBeenCalled()
   })
 
   it('renders preview body paragraphs separately from the frontend demo zone', async () => {
