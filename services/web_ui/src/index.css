@@ -2126,7 +2126,7 @@ body.is-chat-page #root {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: clamp(28px, 4vw, 48px);
+  gap: 10px;
   flex-wrap: wrap;
   min-width: 0;
 }
@@ -2677,6 +2677,7 @@ body.is-chat-page #root {
 
   .claims-page--step4 .claims-price-card__top {
     justify-content: center;
+    gap: 10px;
     flex-wrap: wrap;
   }
 
