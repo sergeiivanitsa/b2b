@@ -40,7 +40,6 @@ const PACKAGE_ITEMS = [
   'Претензия PDF, проверенная юристом',
   'Редактируемый файл DOCX',
   'Расчет долга и неустойки',
-  'Перечень приложений',
   'Сопроводительное письмо',
   'Инструкция по дальнейшим действиям',
 ]
@@ -302,7 +301,7 @@ export function ClaimStep4Page() {
           </article>
 
           <aside className="claims-paywall-card">
-            <h2>Что входит в пакет</h2>
+            <h2>Что входит в комплект</h2>
             <ul>
               {PACKAGE_ITEMS.map((item) => (
                 <li key={item}>{item}</li>
@@ -356,7 +355,7 @@ export function ClaimStep4Page() {
                   ? 'Заявка уже оплачена'
                   : isPaying
                     ? 'ОПЛАТА...'
-                    : 'Получить пакет документов'}
+                    : 'Получить комплект документов'}
               </button>
             </section>
             <p className="claims-paywall-card__hint">

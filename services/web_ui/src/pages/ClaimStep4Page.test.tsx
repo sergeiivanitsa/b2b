@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -94,6 +94,14 @@ function getDocumentDemo(container: HTMLElement): HTMLElement {
     throw new Error('Expected document demo zone to be rendered')
   }
   return demo
+}
+
+function getPaywallCard(container: HTMLElement): HTMLElement {
+  const paywallCard = container.querySelector<HTMLElement>('.claims-paywall-card')
+  if (!paywallCard) {
+    throw new Error('Expected paywall card to be rendered')
+  }
+  return paywallCard
 }
 
 function expectArticleText(target: HTMLElement, articleNumber: string): void {
@@ -219,7 +227,23 @@ describe('ClaimStep4Page', () => {
     expect(demo.closest('.claims-document-body')).toBeNull()
     expect(container.querySelector('.claims-document-header')).not.toBeNull()
     expect(container.querySelector('.claims-document-paywall')).not.toBeNull()
-    expect(container.querySelector('.claims-paywall-card')).not.toBeNull()
+    const paywallCard = getPaywallCard(container)
+    const paywall = within(paywallCard)
+    expect(paywall.getByRole('heading', { name: 'Что входит в комплект' })).toBeTruthy()
+    expect(
+      Array.from(paywallCard.querySelectorAll('ul li')).map((item) =>
+        item.textContent?.trim(),
+      ),
+    ).toEqual([
+      'Претензия PDF, проверенная юристом',
+      'Редактируемый файл DOCX',
+      'Расчет долга и неустойки',
+      'Сопроводительное письмо',
+      'Инструкция по дальнейшим действиям',
+    ])
+    expect(paywall.queryByText('Перечень приложений')).toBeNull()
+    expect(paywall.getByRole('button', { name: 'Получить комплект документов' })).toBeTruthy()
+    expect(paywall.queryByRole('button', { name: 'Получить пакет документов' })).toBeNull()
     expect(screen.queryByText('ОТ КОГО:')).toBeNull()
     expect(screen.queryByText('КОМУ:')).toBeNull()
     expect(screen.queryByText('Legacy Sender Line 1')).toBeNull()

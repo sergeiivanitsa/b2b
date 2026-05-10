@@ -48,12 +48,12 @@ const STEP3_EXPECTED_DOCUMENTS = [
     label: 'редактируемая версия досудебной претензии в формате DOCX',
   },
   {
-    id: 'cover_letter',
-    label: 'сопроводительное письмо',
-  },
-  {
     id: 'penalty_table',
     label: 'таблица расчета неустойки',
+  },
+  {
+    id: 'cover_letter',
+    label: 'сопроводительное письмо',
   },
   {
     id: 'instructions',
@@ -120,6 +120,12 @@ describe('ClaimStep3Page', () => {
 
     expect(screen.getByText('Формируем пакет документов:')).toBeTruthy()
     expect(container.querySelectorAll('li[data-doc-id]').length).toBe(5)
+    const documentLabels = Array.from(
+      container.querySelectorAll<HTMLElement>('.claims-doc-queue__label'),
+    ).map((node) => node.textContent?.trim())
+    expect(documentLabels).toEqual(
+      STEP3_EXPECTED_DOCUMENTS.map((document) => document.label),
+    )
 
     for (const document of STEP3_EXPECTED_DOCUMENTS) {
       expect(screen.getByText(document.label)).toBeTruthy()
