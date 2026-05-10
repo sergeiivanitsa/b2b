@@ -2175,6 +2175,7 @@ body.is-chat-page #root {
   justify-content: space-between;
   align-items: center;
   gap: clamp(14px, 2.6vw, 34px);
+  margin-top: -8px;
   min-width: 0;
 }
 
@@ -2686,6 +2687,7 @@ body.is-chat-page #root {
     justify-content: center;
     align-items: center;
     gap: 12px;
+    margin-top: -6px;
   }
 
   .claims-page--step4 .claims-price-card__new-price {
@@ -2890,6 +2892,7 @@ body.is-chat-page #root {
   .claims-page--step4 .claims-price-card__main {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 10px;
+    margin-top: 0;
     min-width: 0;
   }
 
