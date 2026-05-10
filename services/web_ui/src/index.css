@@ -2257,8 +2257,8 @@ body.is-chat-page #root {
 
 .claims-page--step4 .claims-price-card__audience {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 10px;
   align-items: center;
   min-width: 0;
   border-radius: 12px;
@@ -2267,8 +2267,8 @@ body.is-chat-page #root {
 }
 
 .claims-page--step4 .claims-price-card__audience-icon {
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   display: block;
   color: #00a22a;
   fill: currentColor;
@@ -2281,11 +2281,13 @@ body.is-chat-page #root {
 }
 
 .claims-page--step4 .claims-price-card__audience-copy strong {
+  max-width: 100%;
   color: #101418;
-  font-size: clamp(1.08rem, 1.25vw, 1.22rem);
+  font-size: clamp(1.02rem, 1.1vw, 1.14rem);
   font-weight: 800;
-  line-height: 1.12;
-  white-space: nowrap;
+  line-height: 1.15;
+  overflow-wrap: normal;
+  white-space: normal;
 }
 
 .claims-page--step4 .claims-price-card__audience-copy span {
@@ -2325,7 +2327,7 @@ body.is-chat-page #root {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 6px;
   margin: 0;
   color: #6b7280;
   font-size: clamp(0.86rem, 1.05vw, 0.95rem);
@@ -2928,14 +2930,14 @@ body.is-chat-page #root {
   }
 
   .claims-page--step4 .claims-price-card__audience {
-    grid-template-columns: 40px minmax(0, 1fr);
+    grid-template-columns: 36px minmax(0, 1fr);
     gap: 10px;
     padding: 10px 12px;
   }
 
   .claims-page--step4 .claims-price-card__audience-icon {
-    width: 34px;
-    height: 34px;
+    width: 32px;
+    height: 32px;
   }
 
   .claims-page--step4 .claims-price-card__audience-copy strong {
