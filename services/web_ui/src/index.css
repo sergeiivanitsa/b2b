@@ -2117,16 +2117,16 @@ body.is-chat-page #root {
   max-width: 100%;
   min-width: 0;
   border-top: 1px solid #eceeef;
-  padding-top: 14px;
+  padding-top: 18px;
   display: grid;
-  gap: 15px;
+  gap: 18px;
 }
 
 .claims-page--step4 .claims-price-card__top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-start;
+  gap: clamp(28px, 4vw, 48px);
   flex-wrap: wrap;
   min-width: 0;
 }
@@ -2171,9 +2171,10 @@ body.is-chat-page #root {
 
 .claims-page--step4 .claims-price-card__main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto auto;
+  justify-content: space-between;
   align-items: center;
-  gap: 14px;
+  gap: clamp(14px, 2.6vw, 34px);
   min-width: 0;
 }
 
@@ -2181,7 +2182,7 @@ body.is-chat-page #root {
   margin: 0;
   min-width: 0;
   color: #05070a;
-  font-size: clamp(4.5rem, 6vw, 6.6rem);
+  font-size: clamp(5.1rem, 7vw, 7.4rem);
   font-weight: 900;
   line-height: 0.9;
   letter-spacing: 0;
@@ -2189,8 +2190,8 @@ body.is-chat-page #root {
 }
 
 .claims-page--step4 .claims-price-card__saving {
-  width: clamp(108px, 10vw, 136px);
-  height: clamp(108px, 10vw, 136px);
+  width: clamp(96px, 8.5vw, 120px);
+  height: clamp(96px, 8.5vw, 120px);
   border-radius: 50%;
   background: #edf8f2;
   color: #069867;
@@ -2203,14 +2204,14 @@ body.is-chat-page #root {
 }
 
 .claims-page--step4 .claims-price-card__saving span:first-child {
-  font-size: clamp(2rem, 3.3vw, 3rem);
+  font-size: clamp(1.9rem, 2.8vw, 2.55rem);
   font-weight: 800;
   line-height: 0.95;
 }
 
 .claims-page--step4 .claims-price-card__saving span:nth-child(2) {
   margin-top: 6px;
-  font-size: 0.86rem;
+  font-size: 0.78rem;
   font-weight: 800;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -2218,7 +2219,7 @@ body.is-chat-page #root {
 
 .claims-page--step4 .claims-price-card__saving span:last-child {
   margin-top: 5px;
-  font-size: clamp(1.02rem, 1.35vw, 1.28rem);
+  font-size: clamp(0.95rem, 1.15vw, 1.12rem);
   font-weight: 800;
 }
 
@@ -2227,6 +2228,7 @@ body.is-chat-page #root {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px 10px;
+  margin-top: 2px;
 }
 
 .claims-page--step4 .claims-price-card__badge {
@@ -2255,7 +2257,7 @@ body.is-chat-page #root {
 
 .claims-page--step4 .claims-price-card__audience {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-columns: 40px minmax(0, 1fr);
   gap: 12px;
   align-items: center;
   min-width: 0;
@@ -2280,9 +2282,10 @@ body.is-chat-page #root {
 
 .claims-page--step4 .claims-price-card__audience-copy strong {
   color: #101418;
-  font-size: 1.06rem;
+  font-size: clamp(1.08rem, 1.25vw, 1.22rem);
   font-weight: 800;
-  line-height: 1.18;
+  line-height: 1.12;
+  white-space: nowrap;
 }
 
 .claims-page--step4 .claims-price-card__audience-copy span {
@@ -2301,9 +2304,10 @@ body.is-chat-page #root {
   border-radius: 14px;
   padding: 18px 20px;
   background: #00a326;
-  box-shadow: 0 12px 22px rgba(0, 134, 32, 0.2);
+  box-shadow: 0 12px 24px rgba(0, 134, 32, 0.14);
   font-size: clamp(1.1rem, 1.5vw, 1.45rem);
   line-height: 1.15;
+  margin-top: 2px;
   text-align: center;
   white-space: normal;
 }
@@ -2321,17 +2325,18 @@ body.is-chat-page #root {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 7px;
   margin: 0;
   color: #6b7280;
-  font-size: 0.95rem;
+  font-size: clamp(0.86rem, 1.05vw, 0.95rem);
   line-height: 1.3;
   text-align: center;
+  white-space: nowrap;
 }
 
 .claims-page--step4 .claims-price-card__secure-icon {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   flex: 0 0 auto;
   color: currentColor;
   fill: none;
@@ -2936,6 +2941,7 @@ body.is-chat-page #root {
   .claims-page--step4 .claims-price-card__audience-copy strong {
     font-size: 1rem;
     line-height: 1.2;
+    white-space: normal;
   }
 
   .claims-page--step4 .claims-price-card__audience-copy span {
@@ -3045,6 +3051,7 @@ body.is-chat-page #root {
   .claims-page--step4 .claims-price-card__secure-note {
     flex-wrap: wrap;
     gap: 6px;
+    white-space: normal;
   }
 
   .claims-page--step4 .claims-price-card__secure-icon {
