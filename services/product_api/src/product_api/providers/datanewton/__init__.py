@@ -1,4 +1,8 @@
-from .cache_key import CACHE_KEY_SCHEMA_VERSION, build_cache_key
+from .cache_key import (
+    CACHE_KEY_SCHEMA_VERSION,
+    build_cache_key,
+    build_datanewton_cache_key,
+)
 from .client import DataNewtonClient
 from .errors import (
     DataNewtonAuthenticationError,
@@ -10,14 +14,23 @@ from .errors import (
     DataNewtonNotFoundError,
     DataNewtonRateLimitError,
     DataNewtonServerError,
+    DataNewtonUnsupportedIdentifierError,
     DataNewtonValidationError,
 )
 from .models import (
+    ARBITRATION_CASES_ENDPOINT,
+    BANKRUPTCY_ENDPOINT,
     BATCH_CARDS_ENDPOINT,
+    FSSP_ENDPOINT,
     MAX_BATCH_IDENTIFIERS,
+    TAX_INFO_ENDPOINT,
+    ArbitrationCasesRequest,
+    BankruptcyRequest,
     BatchCardsRequest,
     DataNewtonIdentifierType,
     DataNewtonResult,
+    FsspRequest,
+    TaxInfoRequest,
     calculate_response_hash,
     identify_identifier_type,
     normalize_identifier,
@@ -25,9 +38,15 @@ from .models import (
 from .transport import DataNewtonTransport, DataNewtonTransportResponse
 
 __all__ = [
+    "ARBITRATION_CASES_ENDPOINT",
+    "BANKRUPTCY_ENDPOINT",
     "BATCH_CARDS_ENDPOINT",
     "CACHE_KEY_SCHEMA_VERSION",
+    "FSSP_ENDPOINT",
     "MAX_BATCH_IDENTIFIERS",
+    "TAX_INFO_ENDPOINT",
+    "ArbitrationCasesRequest",
+    "BankruptcyRequest",
     "BatchCardsRequest",
     "DataNewtonAuthenticationError",
     "DataNewtonClient",
@@ -43,8 +62,12 @@ __all__ = [
     "DataNewtonServerError",
     "DataNewtonTransport",
     "DataNewtonTransportResponse",
+    "DataNewtonUnsupportedIdentifierError",
     "DataNewtonValidationError",
+    "FsspRequest",
+    "TaxInfoRequest",
     "build_cache_key",
+    "build_datanewton_cache_key",
     "calculate_response_hash",
     "identify_identifier_type",
     "normalize_identifier",
