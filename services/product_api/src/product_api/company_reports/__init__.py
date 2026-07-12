@@ -1,7 +1,18 @@
 from .errors import (
+    CompanyReportInputError,
     CompanyReportNormalizationError,
     DatasetMismatchError,
     InvalidDatasetPayloadError,
+)
+from .aggregate import (
+    CompanyReport,
+    CompanyReportCompleteness,
+    CompanyReportStatus,
+    DatasetReport,
+    DatasetReportStatus,
+    ReportFreshness,
+    ReportWarning,
+    SafeDatasetError,
 )
 from .models import (
     ArbitrationCaseFacts,
@@ -30,6 +41,8 @@ from .models import (
     TaxModeInfo,
 )
 from .normalizers import normalize_arbitration, normalize_counterparty, normalize_finance
+from .orchestrator import REQUIRED_DATASETS, build_company_report
+from .provider_protocol import CompanyReportProvider
 
 __all__ = [
     "ArbitrationCaseFacts",
@@ -41,13 +54,20 @@ __all__ = [
     "ArbitrationRole",
     "ArbitrationStatus",
     "CompanyAddress",
+    "CompanyReport",
+    "CompanyReportCompleteness",
+    "CompanyReportInputError",
     "CompanyManager",
     "CompanyNames",
     "CompanyReportNormalizationError",
+    "CompanyReportProvider",
+    "CompanyReportStatus",
     "CompanyStatus",
     "CounterpartyBlockStatus",
     "CounterpartyFacts",
     "DatasetMismatchError",
+    "DatasetReport",
+    "DatasetReportStatus",
     "FinanceFacts",
     "FinanceForm",
     "FinancialIndicatorSeries",
@@ -55,10 +75,15 @@ __all__ = [
     "InvalidDatasetPayloadError",
     "NormalizationWarning",
     "ResultSummary",
+    "ReportFreshness",
+    "ReportWarning",
+    "REQUIRED_DATASETS",
+    "SafeDatasetError",
     "RoleSummary",
     "SourceMetadata",
     "StatusSummary",
     "TaxModeInfo",
+    "build_company_report",
     "normalize_arbitration",
     "normalize_counterparty",
     "normalize_finance",
