@@ -45,6 +45,26 @@ def build_cache_key(
     return f"{normalized_provider}:{normalized_dataset}:{schema_version}:{digest}"
 
 
+def build_datanewton_cache_key(
+    *,
+    dataset: str,
+    base_url: str,
+    method: str,
+    endpoint: str,
+    query_params: Mapping[str, str | int | float | bool | Sequence[str]] | None = None,
+    body: Mapping[str, Any] | None = None,
+) -> str:
+    return build_cache_key(
+        provider="datanewton",
+        dataset=dataset,
+        base_url=base_url,
+        method=method,
+        endpoint=endpoint,
+        query_params=query_params,
+        body=body,
+    )
+
+
 def _normalize_endpoint(endpoint: str) -> str:
     normalized = endpoint.strip()
     if not normalized.startswith("/"):

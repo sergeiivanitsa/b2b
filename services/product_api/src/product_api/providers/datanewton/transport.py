@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import email.utils
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -13,6 +13,8 @@ import httpx
 from .errors import DataNewtonNetworkError
 
 SleepCallable = Callable[[float], Awaitable[None]]
+QueryParameter = str | int | float | bool | Sequence[str]
+_SECRET_QUERY_NAMES = {"key", "api_key", "apikey"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +53,8 @@ class DataNewtonTransport:
         base_url: str,
         endpoint: str,
         api_key: str,
-        json_body: Mapping[str, Any],
+        query_params: Mapping[str, QueryParameter] | None = None,
+        json_body: Mapping[str, Any] | None = None,
         request_id: str | None = None,
     ) -> DataNewtonTransportResponse:
         url = f"{base_url.rstrip('/')}{endpoint}"
@@ -62,11 +65,16 @@ class DataNewtonTransport:
         while attempts <= self._retry_count:
             attempts += 1
             try:
+                safe_query_params = {
+                    name: value
+                    for name, value in (query_params or {}).items()
+                    if name.strip().lower() not in _SECRET_QUERY_NAMES
+                }
                 response = await self._client.request(
                     method,
                     url,
-                    params={"key": api_key},
-                    json=dict(json_body),
+                    params={"key": api_key, **safe_query_params},
+                    json=dict(json_body) if json_body is not None else None,
                     headers=headers,
                     timeout=self._timeout_seconds,
                 )

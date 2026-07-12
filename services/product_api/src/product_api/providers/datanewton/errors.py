@@ -13,6 +13,8 @@ class DataNewtonError(Exception):
         retryable: bool = False,
         attempts: int = 0,
         request_id: str | None = None,
+        dataset: str | None = None,
+        identifier_type: str | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
@@ -21,12 +23,15 @@ class DataNewtonError(Exception):
         self.retryable = retryable
         self.attempts = attempts
         self.request_id = request_id
+        self.dataset = dataset
+        self.identifier_type = identifier_type
 
     def __str__(self) -> str:
         return (
             f"{self.message} (endpoint={self.endpoint!r}, "
             f"status_code={self.status_code!r}, retryable={self.retryable!r}, "
-            f"attempts={self.attempts!r}, request_id={self.request_id!r})"
+            f"attempts={self.attempts!r}, request_id={self.request_id!r}, "
+            f"dataset={self.dataset!r}, identifier_type={self.identifier_type!r})"
         )
 
     def __repr__(self) -> str:
@@ -34,7 +39,8 @@ class DataNewtonError(Exception):
             f"{type(self).__name__}(message={self.message!r}, "
             f"endpoint={self.endpoint!r}, status_code={self.status_code!r}, "
             f"retryable={self.retryable!r}, attempts={self.attempts!r}, "
-            f"request_id={self.request_id!r})"
+            f"request_id={self.request_id!r}, dataset={self.dataset!r}, "
+            f"identifier_type={self.identifier_type!r})"
         )
 
 
@@ -72,4 +78,8 @@ class DataNewtonNetworkError(DataNewtonError):
 
 class DataNewtonInvalidResponseError(DataNewtonError):
     """DataNewton returned a response that cannot be safely consumed."""
+
+
+class DataNewtonUnsupportedIdentifierError(DataNewtonError):
+    """The dataset does not support this otherwise valid identifier type."""
 
