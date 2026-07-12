@@ -36,3 +36,7 @@ class DatasetMismatchError(CompanyReportNormalizationError):
 
 class InvalidDatasetPayloadError(CompanyReportNormalizationError):
     pass
+
+
+class CompanyReportInputError(CompanyReportNormalizationError):
+    """The report input cannot be normalized before provider calls."""
