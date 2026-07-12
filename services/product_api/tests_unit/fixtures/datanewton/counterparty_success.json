@@ -1,0 +1,65 @@
+{
+  "available_count": 0,
+  "demo_available_count": 0,
+  "inn": "0000000000",
+  "ogrn": "0000000000000",
+  "company": {
+    "company_names": {
+      "short_name": "ООО Синтетика Альфа",
+      "full_name": "Общество с ограниченной ответственностью Синтетика Альфа",
+      "reversed_short_name": "Синтетика Альфа ООО"
+    },
+    "status": {
+      "active_status": true,
+      "code_egr": "SYNTH_ACTIVE",
+      "status_rus_short": "Тестовый активный статус",
+      "status_egr": "Тестовый активный статус",
+      "date_end": null
+    },
+    "kpp": "000000000",
+    "opf": "Синтетическая организационная форма",
+    "registration_date": "2020-02-03",
+    "dissolved_date": null,
+    "years_from_registration": 6,
+    "charter_capital": "12345.67",
+    "address": {
+      "line_address": "000000, Тестовый регион, город Макетный, улица Примерная, дом 1",
+      "country": "Тестовая страна",
+      "region": "Тестовый регион",
+      "region_code": "00",
+      "city": "Макетный",
+      "street": "Примерная",
+      "house": "1",
+      "office": "2",
+      "zip_code": "000000",
+      "is_inaccuracy": false
+    },
+    "managers": [
+      {
+        "fio": "Тестов Тест Тестович",
+        "position": "Тестовый руководитель",
+        "innfl": "000000000000",
+        "date": "2021-04-05",
+        "is_inaccuracy": false
+      }
+    ],
+    "owners": {},
+    "okveds": [],
+    "negative_lists": null,
+    "workers_count": null,
+    "contacts": null,
+    "msp_block": null,
+    "ros_stat_codes": null,
+    "tax_mode_info": {
+      "common_mode": true,
+      "usn_sign": false,
+      "ausn_sign": false,
+      "envd_sign": false,
+      "eshn_sign": false,
+      "npd_sign": false,
+      "psn_sign": false,
+      "srp_sign": false,
+      "publication_date": "2025-01-15"
+    }
+  }
+}

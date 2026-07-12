@@ -1,0 +1,51 @@
+{
+  "available_count": 0,
+  "demo_available_count": 0,
+  "total_cases": 7,
+  "offset": 0,
+  "limit": 5,
+  "data": [
+    {
+      "id": "synthetic-internal-1",
+      "case_id": "synthetic-case-1",
+      "first_number": "SYNTH-CASE-001",
+      "date_start": "2022-01-10",
+      "date_update": "2022-02-11",
+      "updated_at": "2022-02-12",
+      "last_document_date": 1644624000000,
+      "year": 2022,
+      "sum": "100.25",
+      "currency": "RUBLES",
+      "status": 0,
+      "result_type": "SATISFIED_FULL",
+      "dispute": 10,
+      "plaintiffs": [{"name": "ООО Синтетика Альфа", "norm_name": "СИНТЕТИКА АЛЬФА", "inn": "0000000000", "ogrn": "0000000000000", "role": "PLAINTIFF"}],
+      "respondents": [{"name": "ООО Синтетика Бета", "norm_name": "СИНТЕТИКА БЕТА", "inn": "1111111111", "ogrn": "1111111111111", "role": "RESPONDENT"}],
+      "applicants": [], "creditors": [], "creditors_current_payments": [], "debtors": [], "interested_persons": [], "third_parties": [], "others": [],
+      "documents": [{"creation_date": "2022-02-12", "document_type": "SYNTH_DECISION", "instance_id": "synthetic-instance", "instance_name": "Тестовая инстанция", "instance_num": "1"}],
+      "document_types": ["SYNTH_DECISION"],
+      "kad_arbitr_link": "https://example.invalid/synthetic-case-1"
+    },
+    {
+      "id": "synthetic-internal-2", "first_number": "SYNTH-CASE-002", "date_start": "2023-03-01", "date_update": "2023-04-01", "updated_at": "2023-04-02", "last_document_date": 1680393600000, "year": 2023, "sum": 200, "currency": "RUBLES", "status": 1, "result_type": "REFUSED", "dispute": 20,
+      "plaintiffs": [], "respondents": [{"name": "ООО Синтетика Альфа", "norm_name": "СИНТЕТИКА АЛЬФА", "inn": "0000000000", "ogrn": "0000000000000", "role": "RESPONDENT"}],
+      "applicants": [], "creditors": [], "creditors_current_payments": [], "debtors": [], "interested_persons": [], "third_parties": [], "others": [], "documents": [], "document_types": [], "kad_arbitr_link": "https://example.invalid/synthetic-case-2"
+    },
+    {
+      "id": "synthetic-internal-3", "first_number": "SYNTH-CASE-003", "date_start": "2024-05-01", "date_update": "2024-05-02", "updated_at": "2024-05-03", "last_document_date": null, "year": 2024, "sum": 300, "currency": "RUBLES", "status": 1, "result_type": "RETURNED", "dispute": 30,
+      "plaintiffs": [{"name": "ООО Синтетика Альфа", "norm_name": "СИНТЕТИКА АЛЬФА", "inn": "0000000000", "ogrn": "0000000000000", "role": "PLAINTIFF"}],
+      "respondents": [{"name": "ООО Синтетика Альфа", "norm_name": "СИНТЕТИКА АЛЬФА", "inn": "0000000000", "ogrn": "0000000000000", "role": "RESPONDENT"}],
+      "applicants": [], "creditors": [], "creditors_current_payments": [], "debtors": [], "interested_persons": [], "third_parties": [], "others": [], "documents": [], "document_types": [], "kad_arbitr_link": null
+    },
+    {
+      "id": "synthetic-internal-4", "first_number": "SYNTH-CASE-004", "date_start": "2025-06-01", "date_update": "2025-06-02", "updated_at": "2025-06-03", "last_document_date": null, "year": 2025, "sum": 400, "currency": "USD", "status": 9, "result_type": "UNDEF", "dispute": "SYNTH_DISPUTE",
+      "plaintiffs": [{"name": "ООО Синтетика Гамма", "norm_name": "СИНТЕТИКА ГАММА", "inn": "2222222222", "ogrn": "2222222222222", "role": "PLAINTIFF"}],
+      "respondents": [], "applicants": [], "creditors": [], "creditors_current_payments": [], "debtors": [], "interested_persons": [], "third_parties": [], "others": [], "documents": [], "document_types": [], "kad_arbitr_link": null
+    },
+    {
+      "id": "synthetic-internal-5", "first_number": "SYNTH-CASE-005", "date_start": "2026-07-01", "date_update": "2026-07-02", "updated_at": "2026-07-03", "last_document_date": null, "year": 2026, "sum": 500, "currency": "RUBLES", "status": 0, "result_type": "SYNTH_OTHER", "dispute": 40,
+      "plaintiffs": [], "respondents": [], "applicants": [{"name": "ООО Синтетика Альфа", "norm_name": "СИНТЕТИКА АЛЬФА", "inn": "0000000000", "ogrn": "0000000000000", "role": "APPLICANT"}],
+      "creditors": [], "creditors_current_payments": [], "debtors": [], "interested_persons": [], "third_parties": [], "others": [], "documents": [], "document_types": [], "kad_arbitr_link": null
+    }
+  ]
+}
