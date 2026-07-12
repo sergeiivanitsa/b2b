@@ -59,6 +59,10 @@ def source_metadata(
         response_hash=result.response_hash,
         received_at=result.received_at,
         request_id=result.request_id,
+        status_code=result.status_code,
+        attempts=result.attempts,
+        duration_ms=result.duration_ms,
+        provider_limit_metadata=result.provider_limit_metadata,
         warnings=[*provider_warnings, *warnings],
     )
 

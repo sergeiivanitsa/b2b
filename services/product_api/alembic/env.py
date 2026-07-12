@@ -15,6 +15,7 @@ sys.path.append(str(BASE_DIR / "src"))
 
 from product_api.db.base import Base  # noqa: E402
 from product_api import models  # noqa: F401,E402
+from product_api.company_reports.persistence import models as company_report_models  # noqa: F401,E402
 
 config = context.config
 
