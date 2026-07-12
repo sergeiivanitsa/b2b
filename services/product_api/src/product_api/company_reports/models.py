@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -25,6 +25,10 @@ class SourceMetadata(FrozenDomainModel):
     response_hash: str
     received_at: datetime
     request_id: str | None = None
+    status_code: int | None = None
+    attempts: int | None = Field(default=None, ge=0)
+    duration_ms: float | None = Field(default=None, ge=0)
+    provider_limit_metadata: dict[str, Any] | None = None
     warnings: list[NormalizationWarning] = Field(default_factory=list)
 
 
