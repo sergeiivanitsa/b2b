@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from product_api.providers.datanewton import (
+    DataNewtonAccessDeniedError,
     DataNewtonAuthenticationError,
     DataNewtonClient,
     DataNewtonConfigurationError,
@@ -129,7 +130,7 @@ async def test_successful_batch_cards_preserves_raw_payload_and_request_contract
     [
         (400, DataNewtonValidationError),
         (401, DataNewtonAuthenticationError),
-        (403, DataNewtonAuthenticationError),
+        (403, DataNewtonAccessDeniedError),
         (404, DataNewtonNotFoundError),
     ],
 )

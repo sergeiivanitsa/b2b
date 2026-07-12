@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from datanewton_provider_test_helpers import API_KEY, build_client
 from product_api.providers.datanewton import (
+    DataNewtonAccessDeniedError,
     DataNewtonAuthenticationError,
     DataNewtonInvalidResponseError,
     DataNewtonNetworkError,
@@ -88,7 +89,7 @@ async def test_common_result_validation_rejects_invalid_json(response, message):
     [
         (400, DataNewtonValidationError),
         (401, DataNewtonAuthenticationError),
-        (403, DataNewtonAuthenticationError),
+        (403, DataNewtonAccessDeniedError),
         (404, DataNewtonNotFoundError),
     ],
 )

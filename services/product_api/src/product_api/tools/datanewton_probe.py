@@ -21,6 +21,8 @@ from product_api.providers.datanewton import (
     ARBITRATION_CASES_ENDPOINT,
     BANKRUPTCY_ENDPOINT,
     BATCH_CARDS_ENDPOINT,
+    COUNTERPARTY_ENDPOINT,
+    FINANCE_ENDPOINT,
     FSSP_ENDPOINT,
     TAX_INFO_ENDPOINT,
     DataNewtonClient,
@@ -36,10 +38,12 @@ from product_api.settings import Settings
 
 from .json_shape import build_json_shape
 
-PROBE_VERSION = "1"
+PROBE_VERSION = "2"
 DEFAULT_OUTPUT_DIR = Path("data/datanewton-probes")
 DEFAULT_DETAIL_LIMIT = 20
 DATASET_ORDER = (
+    "counterparty",
+    "finance",
     "batch_cards",
     "tax_info",
     "arbitration",
@@ -70,6 +74,8 @@ class ProbeConfig:
 
 
 DATASET_DEFINITIONS = {
+    "counterparty": DatasetDefinition("counterparty", "GET", COUNTERPARTY_ENDPOINT),
+    "finance": DatasetDefinition("finance", "GET", FINANCE_ENDPOINT),
     "batch_cards": DatasetDefinition("batch_cards", "POST", BATCH_CARDS_ENDPOINT),
     "tax_info": DatasetDefinition("tax_info", "GET", TAX_INFO_ENDPOINT),
     "arbitration": DatasetDefinition(
@@ -337,6 +343,7 @@ async def _run_live_probe(
                     identifier=config.identifier,
                     detail_limit=config.detail_limit,
                     request_id=request_id,
+                    counterparty_filters=settings.datanewton_counterparty_filters,
                 )
                 duration_ms = (time.perf_counter() - call_started) * 1000
                 meta = _success_meta(result)
@@ -371,6 +378,7 @@ async def _run_live_probe(
                     request_id=request_id,
                     duration_ms=(time.perf_counter() - call_started) * 1000,
                     status="unsupported",
+                    identifier_type=config.identifier_type,
                 )
                 _write_safe_json(
                     dataset_directory / "meta.json",
@@ -387,6 +395,7 @@ async def _run_live_probe(
                     request_id=request_id,
                     duration_ms=(time.perf_counter() - call_started) * 1000,
                     status="error",
+                    identifier_type=config.identifier_type,
                 )
                 _write_safe_json(
                     dataset_directory / "meta.json",
@@ -408,6 +417,7 @@ async def _run_live_probe(
                     definition,
                     request_id=request_id,
                     duration_ms=(time.perf_counter() - call_started) * 1000,
+                    identifier_type=config.identifier_type,
                 )
                 _write_safe_json(
                     dataset_directory / "meta.json",
@@ -476,7 +486,16 @@ async def _fetch_dataset(
     identifier: str,
     detail_limit: int,
     request_id: str,
+    counterparty_filters: Sequence[str],
 ) -> DataNewtonResult:
+    if dataset == "counterparty":
+        return await client.fetch_counterparty(
+            identifier,
+            filters=counterparty_filters,
+            request_id=request_id,
+        )
+    if dataset == "finance":
+        return await client.fetch_finance(identifier, request_id=request_id)
     if dataset == "batch_cards":
         return await client.fetch_batch_cards([identifier], request_id=request_id)
     if dataset == "tax_info":
@@ -531,14 +550,17 @@ def _error_meta(
     request_id: str,
     duration_ms: float,
     status: str,
+    identifier_type: DataNewtonIdentifierType,
 ) -> dict[str, Any]:
     return {
         "provider": "datanewton",
-        "dataset": definition.name,
-        "endpoint": definition.endpoint,
+        "dataset": error.dataset or definition.name,
+        "endpoint": error.endpoint,
         "status": status,
+        "status_code": error.status_code,
+        "identifier_type": error.identifier_type or identifier_type.value,
         "safe_error_type": type(error).__name__,
-        "safe_error_message": str(error),
+        "safe_error_message": error.message,
         "retryable": error.retryable,
         "attempts": error.attempts,
         "request_id": request_id,
@@ -551,12 +573,15 @@ def _unexpected_error_meta(
     *,
     request_id: str,
     duration_ms: float,
+    identifier_type: DataNewtonIdentifierType,
 ) -> dict[str, Any]:
     return {
         "provider": "datanewton",
         "dataset": definition.name,
         "endpoint": definition.endpoint,
         "status": "error",
+        "status_code": None,
+        "identifier_type": identifier_type.value,
         "safe_error_type": "UnexpectedProviderError",
         "safe_error_message": "unexpected provider client error",
         "retryable": False,
@@ -578,12 +603,14 @@ def _unsupported_meta(
         "dataset": definition.name,
         "endpoint": definition.endpoint,
         "status": "unsupported",
+        "status_code": None,
         "safe_error_type": "DataNewtonUnsupportedIdentifierError",
         "safe_error_message": reason,
         "identifier_type": identifier_type.value,
         "retryable": False,
         "attempts": 0,
         "request_id": request_id,
+        "duration_ms": 0.0,
     }
 
 

@@ -47,6 +47,8 @@ def _read_json(path: Path):
 def test_live_mock_writes_manifest_meta_raw_and_shape_for_all_datasets(tmp_path):
     requests: list[httpx.Request] = []
     payloads = {
+        "/v1/counterparty": {"company": {"inn": IDENTIFIER, "name": "Private Co"}},
+        "/v1/finance": {"balances": [{"code": "Private Code", "value": 999}]},
         "/v1/batchCards": {"cards": [{"inn": IDENTIFIER, "name": "Private Co"}]},
         "/v1/taxInfo": {"paid_taxes": [{"amount": 12345}]},
         "/v1/arbitration-cases": {"cases": [{"number": "PRIVATE-CASE"}]},
@@ -57,6 +59,8 @@ def test_live_mock_writes_manifest_meta_raw_and_shape_for_all_datasets(tmp_path)
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         assert request.url.params["key"] == API_SECRET
+        if request.url.path == "/v1/counterparty":
+            assert request.url.params["filters"] == "MANAGER_BLOCK,ADDRESS_BLOCK"
         return httpx.Response(
             200,
             json=payloads[request.url.path],
@@ -89,7 +93,7 @@ def test_live_mock_writes_manifest_meta_raw_and_shape_for_all_datasets(tmp_path)
 
     assert exit_code == 0
     assert error.getvalue() == ""
-    assert len(requests) == 5
+    assert len(requests) == 7
     assert [request.url.path for request in requests] == list(payloads)
     assert IDENTIFIER not in output.getvalue()
     assert API_SECRET not in output.getvalue()
@@ -98,13 +102,15 @@ def test_live_mock_writes_manifest_meta_raw_and_shape_for_all_datasets(tmp_path)
 
     run_directory = tmp_path / _run_id(IDENTIFIER)
     manifest = _read_json(run_directory / "manifest.json")
-    assert manifest["planned_requests"] == 5
-    assert manifest["completed_requests"] == 5
-    assert manifest["successful_requests"] == 5
+    assert manifest["planned_requests"] == 7
+    assert manifest["completed_requests"] == 7
+    assert manifest["successful_requests"] == 7
     assert manifest["failed_requests"] == 0
     assert manifest["masked_identifier"] == "********67"
 
     for dataset in (
+        "counterparty",
+        "finance",
         "batch_cards",
         "tax_info",
         "arbitration",
@@ -132,13 +138,13 @@ def test_live_mock_writes_manifest_meta_raw_and_shape_for_all_datasets(tmp_path)
     assert list(run_directory.rglob("*.tmp")) == []
 
 
-def test_provider_error_is_partial_and_other_datasets_continue(tmp_path):
+def test_access_denied_is_partial_safe_and_other_datasets_continue(tmp_path):
     requests: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request.url.path)
         if request.url.path == "/v1/taxInfo":
-            return httpx.Response(400, text="unsafe provider response body")
+            return httpx.Response(403, text="unsafe provider response body")
         return httpx.Response(200, json={"ok": True})
 
     settings = _settings()
@@ -160,19 +166,30 @@ def test_provider_error_is_partial_and_other_datasets_continue(tmp_path):
     )
 
     assert exit_code == 2
-    assert len(requests) == 5
+    assert len(requests) == 7
     run_directory = tmp_path / _run_id(IDENTIFIER)
     manifest = _read_json(run_directory / "manifest.json")
-    assert manifest["completed_requests"] == 5
-    assert manifest["successful_requests"] == 4
+    assert manifest["completed_requests"] == 7
+    assert manifest["successful_requests"] == 6
     assert manifest["failed_requests"] == 1
     tax_directory = run_directory / "tax_info"
     tax_meta = _read_json(tax_directory / "meta.json")
     assert tax_meta["status"] == "error"
-    assert tax_meta["safe_error_type"] == "DataNewtonValidationError"
+    assert tax_meta["safe_error_type"] == "DataNewtonAccessDeniedError"
+    assert tax_meta["status_code"] == 403
+    assert tax_meta["identifier_type"] == "legal_entity_inn"
+    assert tax_meta["endpoint"] == "/v1/taxInfo"
+    assert tax_meta["dataset"] == "tax_info"
+    assert tax_meta["retryable"] is False
     assert (tax_directory / "raw.json").exists() is False
     assert (tax_directory / "shape.json").exists() is False
-    assert "unsafe provider response body" not in json.dumps(tax_meta)
+    serialized_tax_meta = json.dumps(tax_meta)
+    assert "unsafe provider response body" not in serialized_tax_meta
+    assert IDENTIFIER not in serialized_tax_meta
+    assert API_SECRET not in serialized_tax_meta
+    assert tax_meta["attempts"] == 1
+    assert tax_meta["duration_ms"] >= 0
+    assert tax_meta["request_id"] == _run_id(IDENTIFIER)
     assert (run_directory / "bankruptcy" / "raw.json").is_file()
 
 
@@ -202,16 +219,16 @@ def test_fssp_unsupported_skips_http_without_failing_probe(tmp_path):
     )
 
     assert exit_code == 0
-    assert len(requests) == 4
+    assert len(requests) == 6
     assert "/v1/fssp" not in requests
     run_directory = tmp_path / _run_id(IP_IDENTIFIER)
     fssp_meta = _read_json(run_directory / "fssp" / "meta.json")
     manifest = _read_json(run_directory / "manifest.json")
     assert fssp_meta["status"] == "unsupported"
     assert (run_directory / "fssp" / "raw.json").exists() is False
-    assert manifest["planned_requests"] == 4
-    assert manifest["completed_requests"] == 4
-    assert manifest["successful_requests"] == 4
+    assert manifest["planned_requests"] == 6
+    assert manifest["completed_requests"] == 6
+    assert manifest["successful_requests"] == 6
     assert manifest["failed_requests"] == 0
 
 
@@ -280,4 +297,3 @@ def test_filesystem_error_returns_code_5_without_http(tmp_path):
 
     assert exit_code == 5
     assert called is False
-
