@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Sequence
 from datetime import date, datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
@@ -12,6 +13,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from .errors import DataNewtonValidationError
 
 BATCH_CARDS_ENDPOINT = "/v1/batchCards"
+COUNTERPARTY_ENDPOINT = "/v1/counterparty"
+FINANCE_ENDPOINT = "/v1/finance"
 TAX_INFO_ENDPOINT = "/v1/taxInfo"
 ARBITRATION_CASES_ENDPOINT = "/v1/arbitration-cases"
 FSSP_ENDPOINT = "/v1/fssp"
@@ -90,6 +93,46 @@ class SingleIdentifierRequest(BaseModel):
 
 
 class TaxInfoRequest(SingleIdentifierRequest):
+    pass
+
+
+class CounterpartyRequest(SingleIdentifierRequest):
+    filters: list[str] = Field(default_factory=list)
+    kpp: str | None = None
+
+    @field_validator("filters", mode="before")
+    @classmethod
+    def _normalize_filters(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            values: Sequence[object] = [value]
+        elif isinstance(value, Sequence):
+            values = value
+        else:
+            raise ValueError("filters must be a sequence of strings")
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in values:
+            if not isinstance(item, str):
+                raise ValueError("filters must contain strings only")
+            candidate = item.strip()
+            if candidate and candidate not in seen:
+                normalized.append(candidate)
+                seen.add(candidate)
+        return normalized
+
+    def query_params(self) -> dict[str, str]:
+        params = self.identifier_query_params()
+        if self.filters:
+            params["filters"] = ",".join(self.filters)
+        if self.kpp is not None:
+            params["kpp"] = self.kpp
+        return params
+
+
+class FinanceRequest(SingleIdentifierRequest):
     pass
 
 

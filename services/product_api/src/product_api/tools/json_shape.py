@@ -80,18 +80,16 @@ class _ShapeBuilder:
             shape["item_shapes"] = []
             return shape
 
-        unique_shapes: dict[str, dict[str, Any]] = {}
+        shape_groups: dict[str, list[dict[str, Any]]] = {}
         for item in value:
             item_shape = self.visit(item, depth=depth + 1)
-            canonical = json.dumps(
-                item_shape,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            unique_shapes[canonical] = item_shape
+            fingerprint = _structural_fingerprint(item_shape)
+            shape_groups.setdefault(fingerprint, []).append(item_shape)
 
-        sorted_shapes = [unique_shapes[key] for key in sorted(unique_shapes)]
+        sorted_shapes = [
+            _merge_structurally_equal_shapes(shape_groups[key])
+            for key in sorted(shape_groups)
+        ]
         if len(sorted_shapes) > self.max_unique_item_shapes:
             self.warnings.add("unique array item shape limit reached")
             shape["truncated"] = True
@@ -99,3 +97,72 @@ class _ShapeBuilder:
         shape["item_shapes"] = sorted_shapes
         return shape
 
+
+def _structural_fingerprint(shape: dict[str, Any]) -> str:
+    return json.dumps(
+        _structural_projection(shape),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _structural_projection(value: Any) -> Any:
+    if isinstance(value, dict):
+        ignored_keys = (
+            {"length", "observed_lengths"}
+            if value.get("type") == "array"
+            else set()
+        )
+        return {
+            key: _structural_projection(item)
+            for key, item in sorted(value.items())
+            if key not in ignored_keys
+        }
+    if isinstance(value, list):
+        return [_structural_projection(item) for item in value]
+    return value
+
+
+def _merge_structurally_equal_shapes(
+    shapes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    first = shapes[0]
+    shape_type = first["type"]
+    if shape_type == "object" and "keys" in first:
+        return {
+            "type": "object",
+            "keys": {
+                key: _merge_structurally_equal_shapes(
+                    [shape["keys"][key] for shape in shapes]
+                )
+                for key in sorted(first["keys"])
+            },
+        }
+    if shape_type == "array":
+        lengths = sorted(
+            {
+                observed
+                for shape in shapes
+                for observed in shape.get("observed_lengths", [shape.get("length", 0)])
+            }
+        )
+        item_shape_groups: dict[str, list[dict[str, Any]]] = {}
+        for shape in shapes:
+            for item_shape in shape.get("item_shapes", []):
+                fingerprint = _structural_fingerprint(item_shape)
+                item_shape_groups.setdefault(fingerprint, []).append(item_shape)
+        merged: dict[str, Any] = {
+            "type": "array",
+            "length": max(lengths, default=0),
+            "item_shapes": [
+                _merge_structurally_equal_shapes(item_shape_groups[key])
+                for key in sorted(item_shape_groups)
+            ],
+        }
+        if len(lengths) > 1:
+            merged["observed_lengths"] = lengths
+        if any(shape.get("truncated") is True for shape in shapes):
+            merged["truncated"] = True
+        return merged
+    return dict(first)

@@ -12,6 +12,7 @@ from product_api.settings import Settings
 
 from .cache_key import build_datanewton_cache_key
 from .errors import (
+    DataNewtonAccessDeniedError,
     DataNewtonAuthenticationError,
     DataNewtonConfigurationError,
     DataNewtonDisabledError,
@@ -26,14 +27,18 @@ from .models import (
     ARBITRATION_CASES_ENDPOINT,
     BANKRUPTCY_ENDPOINT,
     BATCH_CARDS_ENDPOINT,
+    COUNTERPARTY_ENDPOINT,
+    FINANCE_ENDPOINT,
     FSSP_ENDPOINT,
     TAX_INFO_ENDPOINT,
     ArbitrationCasesRequest,
     BankruptcyRequest,
     BatchCardsRequest,
+    CounterpartyRequest,
     DataNewtonIdentifierType,
     DataNewtonResult,
     FsspRequest,
+    FinanceRequest,
     SingleIdentifierRequest,
     TaxInfoRequest,
     calculate_response_hash,
@@ -46,6 +51,18 @@ RequestT = TypeVar("RequestT", bound=SingleIdentifierRequest)
 _FSSP_SUPPORTED_IDENTIFIER_TYPES = {
     DataNewtonIdentifierType.LEGAL_ENTITY_INN,
     DataNewtonIdentifierType.OGRN,
+}
+_KNOWN_COUNTERPARTY_FILTERS = {
+    "ROSSTAT_BLOCK",
+    "ADDRESS_BLOCK",
+    "MANAGER_BLOCK",
+    "OWNER_BLOCK",
+    "OKVED_BLOCK",
+    "NEGATIVE_LISTS_BLOCK",
+    "WORKERS_COUNT_BLOCK",
+    "CONTACT_BLOCK",
+    "BRANCHES_BLOCK",
+    "MSP_BLOCK",
 }
 
 
@@ -98,6 +115,75 @@ class DataNewtonClient:
             request_parameters={},
             request_body=body,
             identifier_type=None,
+            request_id=request_id,
+        )
+
+    async def fetch_counterparty(
+        self,
+        identifier: str,
+        *,
+        filters: Sequence[str] | None = None,
+        kpp: str | None = None,
+        request_id: str | None = None,
+    ) -> DataNewtonResult:
+        request = self._validate_single_request(
+            CounterpartyRequest,
+            {
+                "identifier": identifier,
+                "filters": filters if filters is not None else [],
+                "kpp": kpp,
+            },
+            dataset="counterparty",
+            endpoint=COUNTERPARTY_ENDPOINT,
+            request_id=request_id,
+        )
+        query_params = request.query_params()
+        unknown_filter_count = sum(
+            item not in _KNOWN_COUNTERPARTY_FILTERS for item in request.filters
+        )
+        warnings = (
+            [f"unknown counterparty filters passed: count={unknown_filter_count}"]
+            if unknown_filter_count
+            else []
+        )
+        return await self._execute(
+            dataset="counterparty",
+            endpoint=COUNTERPARTY_ENDPOINT,
+            method="GET",
+            query_params=query_params,
+            json_body=None,
+            requested_identifier=request.identifier,
+            request_parameters=query_params,
+            request_body=None,
+            identifier_type=request.identifier_type,
+            request_id=request_id,
+            warnings=warnings,
+        )
+
+    async def fetch_finance(
+        self,
+        identifier: str,
+        *,
+        request_id: str | None = None,
+    ) -> DataNewtonResult:
+        request = self._validate_single_request(
+            FinanceRequest,
+            {"identifier": identifier},
+            dataset="finance",
+            endpoint=FINANCE_ENDPOINT,
+            request_id=request_id,
+        )
+        query_params = request.identifier_query_params()
+        return await self._execute(
+            dataset="finance",
+            endpoint=FINANCE_ENDPOINT,
+            method="GET",
+            query_params=query_params,
+            json_body=None,
+            requested_identifier=request.identifier,
+            request_parameters=query_params,
+            request_body=None,
+            identifier_type=request.identifier_type,
             request_id=request_id,
         )
 
@@ -266,6 +352,7 @@ class DataNewtonClient:
         request_body: Mapping[str, Any] | None,
         identifier_type: DataNewtonIdentifierType | None,
         request_id: str | None,
+        warnings: Sequence[str] = (),
     ) -> DataNewtonResult:
         api_key = self._require_enabled_api_key(
             dataset=dataset,
@@ -298,6 +385,7 @@ class DataNewtonClient:
             status_code=response.status_code,
             attempts=transport_result.attempts,
             request_id=request_id,
+            identifier_type=identifier_type,
         )
         raw_payload = self._parse_payload(
             response,
@@ -324,6 +412,7 @@ class DataNewtonClient:
             provider_limit_metadata=_extract_provider_limit_metadata(
                 raw_payload, response.headers
             ),
+            warnings=list(warnings),
         )
         logger.info(
             "provider_request_completed provider=datanewton dataset=%s endpoint=%s "
@@ -419,6 +508,7 @@ class DataNewtonClient:
         status_code: int,
         attempts: int,
         request_id: str | None,
+        identifier_type: DataNewtonIdentifierType | None,
     ) -> None:
         context = {
             "dataset": dataset,
@@ -426,10 +516,17 @@ class DataNewtonClient:
             "status_code": status_code,
             "attempts": attempts,
             "request_id": request_id,
+            "identifier_type": (
+                identifier_type.value if identifier_type is not None else None
+            ),
         }
-        if status_code in {401, 403}:
+        if status_code == 401:
             raise DataNewtonAuthenticationError(
                 "DataNewton authentication failed", retryable=False, **context
+            )
+        if status_code == 403:
+            raise DataNewtonAccessDeniedError(
+                "DataNewton endpoint access denied", retryable=False, **context
             )
         if status_code == 404:
             raise DataNewtonNotFoundError(

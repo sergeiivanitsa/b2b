@@ -60,6 +60,10 @@ class DataNewtonAuthenticationError(DataNewtonError):
     """DataNewton rejected provider credentials."""
 
 
+class DataNewtonAccessDeniedError(DataNewtonError):
+    """The configured credentials cannot access this DataNewton endpoint."""
+
+
 class DataNewtonRateLimitError(DataNewtonError):
     """DataNewton rate limiting persisted after retries."""
 

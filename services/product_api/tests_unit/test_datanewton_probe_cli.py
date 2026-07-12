@@ -86,11 +86,14 @@ def test_dry_run_plan_lists_correct_methods_and_endpoints():
 
     plan = output.getvalue()
     assert exit_code == 0
+    assert "counterparty | GET | /v1/counterparty" in plan
+    assert "finance | GET | /v1/finance" in plan
     assert "batch_cards | POST | /v1/batchCards" in plan
     assert "tax_info | GET | /v1/taxInfo" in plan
     assert "arbitration | GET | /v1/arbitration-cases" in plan
     assert "fssp | POST | /v1/fssp" in plan
     assert "bankruptcy | GET | /v1/bankruptcy" in plan
+    assert "Planned HTTP requests: 7" in plan
 
 
 @pytest.mark.parametrize(
@@ -142,4 +145,3 @@ def test_missing_live_configuration_returns_code_4_without_secrets(tmp_path):
     assert secret_marker not in combined
     assert IDENTIFIER not in combined
     assert (tmp_path / "probes").exists() is False
-

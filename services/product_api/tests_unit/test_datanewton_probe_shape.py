@@ -53,6 +53,66 @@ def test_array_shape_merges_identical_item_shapes():
     ]
 
 
+def test_nested_array_lengths_do_not_split_structurally_equal_objects():
+    shape = build_json_shape(
+        [
+            {"documents": [{"name": "one"}], "status": "open"},
+            {
+                "documents": [
+                    {"name": "a"},
+                    {"name": "b"},
+                    {"name": "c"},
+                    {"name": "d"},
+                    {"name": "e"},
+                ],
+                "status": "closed",
+            },
+        ]
+    )
+
+    assert len(shape["item_shapes"]) == 1
+    documents = shape["item_shapes"][0]["keys"]["documents"]
+    assert documents["length"] == 5
+    assert documents["observed_lengths"] == [1, 5]
+    assert documents["item_shapes"] == [
+        {
+            "type": "object",
+            "keys": {"name": {"type": "string"}},
+        }
+    ]
+
+
+def test_objects_with_different_fields_remain_distinct_item_shapes():
+    shape = build_json_shape([{"a": "value"}, {"a": "value", "b": 1}])
+
+    assert len(shape["item_shapes"]) == 2
+
+
+def test_object_field_named_length_remains_part_of_structural_fingerprint():
+    shape = build_json_shape([{"length": 1}, {"other": 1}])
+
+    assert len(shape["item_shapes"]) == 2
+
+
+def test_objects_with_different_scalar_types_remain_distinct_item_shapes():
+    shape = build_json_shape([{"value": "text"}, {"value": 1}])
+
+    assert len(shape["item_shapes"]) == 2
+
+
+def test_nested_array_length_deduplication_is_deterministic():
+    first = build_json_shape(
+        [{"items": [1]}, {"items": [2, 3, 4, 5, 6]}]
+    )
+    second = build_json_shape(
+        [{"items": [2, 3, 4, 5, 6]}, {"items": [1]}]
+    )
+
+    assert first == second
+    serialized = json.dumps(first, ensure_ascii=False)
+    assert "6" not in serialized
+
+
 def test_empty_object_and_array_shapes():
     assert build_json_shape({})["keys"] == {}
     empty_array = build_json_shape([])
@@ -118,4 +178,3 @@ def test_serialized_shape_contains_no_original_scalar_values():
     assert "UNIQUE_PRIVATE_VALUE_9f7a" not in serialized
     assert "SECOND_PRIVATE_VALUE_3c1d" not in serialized
     assert "987654321" not in serialized
-
