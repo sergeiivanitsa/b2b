@@ -1,407 +1,335 @@
-# Итерация 7 — система фактических сигналов
+# Инженерная итерация 7 — signals: implementation plan
 
-## 1. Предусловия реализации
+## 1. Канонический контракт и нумерация
 
-### Спецификация выходного результата
+Этот план реализует спецификацию
+[`ITERATION_07_SIGNALS.md`](../iterations/ITERATION_07_SIGNALS.md). В случае
+расхождения каноническим является единый контракт, зафиксированный в обоих
+документах:
 
-До production-кода обновить и отдельно утвердить `ITERATION_07_SIGNALS.md`.
-
-Публичный контракт:
-
-```text
-evaluate_signals(report: CompanyReport) -> SignalEvaluationResult
+```python
+evaluate_signals(
+    report: CompanyReport,
+) -> SignalEvaluationResult
 ```
 
-```text
-SignalEvaluationResult:
-- ruleset_version: "1"
-- signals: list[Signal]
-- warnings: list[SignalWarning]
-```
+Точные публичные типы результата:
 
-`signals` остаётся упорядоченным списком из спецификации. Envelope нужен для предупреждений при нуле сигналов.
+- `SignalEvaluationResult.ruleset_version: Literal["1"]`;
+- `SignalEvaluationResult.signals: list[Signal]`;
+- `SignalEvaluationResult.warnings: list[SignalWarning]`.
 
-`SignalWarning` содержит:
+`SignalSet`, `build_signal_set(...)` и возврат только `list[Signal]` superseded
+и не используются.
 
-- стабильный `code`;
-- `rule_code`, если warning относится к конкретному правилу;
-- dataset;
-- безопасный message;
-- `evaluation_basis` для воспроизводимой причины подавления.
-
-### Evidence-gate для `finance.reporting_absent`
-
-Текущий репозиторий не подтверждает семантику успешного отсутствия отчётности:
-
-- успешные сохранённые probes содержат финансовые формы;
-- `available_count: 0` встречается вместе с заполненной отчётностью;
-- отсутствует проверенный успешный fixture «отчётности нет».
-
-До finance-этапа необходимо:
-
-1. Получить обезличенный реальный fixture или официально документированную форму успешного ответа без отчётности.
-2. Сравнить её с успешным ответом с данными, malformed `200`, `not_found`, access denied и тарифным ограничением.
-3. Прогнать успешные варианты через текущий `normalize_finance()`.
-4. Доказать, что `FinanceFacts` сохраняет однозначное различие без raw payload.
-5. Добавить проверенный fixture и normalizer-тест.
-
-Если существующий `FinanceFacts` теряет различие, `finance.reporting_absent` не реализуется: итерация блокируется до отдельно согласованного расширения normalizer-контракта. Новые DataNewton-запросы требуют отдельного разрешения.
-
-## 2. Текущая архитектура и место signals
-
-Существующий поток:
+Нумерация фиксирована:
 
 ```text
-CompanyReportProvider
-→ DataNewtonResult
-→ normalizers
-→ CounterpartyFacts / FinanceFacts / ArbitrationFacts
-→ DatasetReport
-→ completeness / freshness / warnings
-→ CompanyReport v1
-→ persistence snapshot и provider journal
+Итерация 7 — signals
+Итерация 8 — scoring
 ```
 
-Новый поток:
+Итерация 7 не содержит score, verdict, probability, recommendation или AI.
+
+## 2. Инварианты до начала production-работ
+
+- Единственный вход — `CompanyReport v1`; `CompanyReport`, его snapshot и hash
+  не меняются. Signals не входят в snapshot.
+- Provider, normalizers, persistence, ORM, migrations и API не меняются.
+- Нет HTTP, БД, raw payload, новых endpoint, UI или зависимостей.
+- Signal содержит `code`, `category`, `direction`, `strength`, `factual_basis`,
+  `source: list[SourceMetadata]`, `period`, `confidence`,
+  `warnings: list[SignalWarning]`; `source` созданного Signal непустой.
+- `SignalFactualBasis` содержит `facts`, `eligibility`, `trigger`,
+  `strength_decision`, `period_basis`, `years`, `case_ids`.
+- `SignalWarning` содержит `code`, `rule_code: str | None`,
+  `dataset: str | None`, `message`, обязательный
+  `evaluation_basis: SignalEvaluationBasis`.
+- `SignalEvaluationBasis` содержит `facts`, `eligibility`,
+  `failed_eligibility`, `years`, `case_ids`; suppression из-за качества,
+  неполноты, конфликта или отсутствующего периода всегда имеет непустой
+  `failed_eligibility` и однозначное основание.
+- `SignalFact` содержит `id`, `normalized_path`, `exact_value`; fact ID уникален
+  внутри basis, `Decimal` не превращается во `float`, `None` не превращается в
+  zero.
+- Expression tree — закрытый discriminated union только из `predicate`,
+  `all_of`, `any_of`, `not`.
+- Period models — закрытый union `NoPeriod`, `DatePeriod`, `DateRangePeriod`,
+  `YearPeriod`, `YearRangePeriod`.
+- `Decimal` не превращается во `float`; missing не превращается в ноль.
+- Повтор signal code и повтор fact id запрещены.
+- Точные sort keys: signals — category order, `code`, canonical serialized
+  representation всего Signal; facts — `id`, `normalized_path`, canonical
+  serialized representation всего SignalFact; sources — `provider`, `dataset`,
+  `received_at`, `endpoint`, `response_hash`, canonical serialized
+  representation всего SourceMetadata; warnings — `code`, `rule_code or ""`,
+  `dataset or ""`, canonical serialized representation всего SignalWarning;
+  years — numeric ascending; case IDs — lexicographic ascending; expression
+  children — canonical serialized representation всего ExpressionNode.
+- Canonical serialized representation единообразно строится через
+  `model_dump(mode="json")`, JSON object keys sorted, `separators=(",", ":")`,
+  `ensure_ascii=False`, `allow_nan=False`; `Decimal` не преобразуется во
+  `float`. Full-object tie-breaker гарантирует одинаковый JSON при перестановке
+  sources/warnings с одинаковыми primary fields.
+
+### Закрытые модели Stage 1
+
+`SignalFact.exact_value` допускает только
+`None | bool | int | str | Decimal | date | datetime`; дополнительные поля
+запрещены. Любой `predicate` ссылается на существующий fact ID.
+
+Operator contract закрыт и содержит минимум:
 
 ```text
-CompanyReport v1
-→ evaluate_signals()
-→ SignalEvaluationResult
+LiteralOperand = {kind: "literal", value: ExactValue}
+FactOperand = {kind: "fact", fact_id: str}
+ComparisonOperand = LiteralOperand | FactOperand
 ```
 
-Signals — отдельный pure-domain package `product_api/company_reports/signals/`.
+- `presence`, `absence` без правого operand;
+- `equality`, `inequality`, `greater_than`, `greater_or_equal`, `less_than`,
+  `less_or_equal` с единственным `operand: ComparisonOperand`;
+- `count` с integer fact, comparator и integer threshold;
+- exact `decimal_comparison` с единственным Decimal
+  `operand: ComparisonOperand`;
+- exact `decimal_ratio` с fact IDs числителя/знаменателя, comparator и Decimal
+  threshold; нулевой/отсутствующий знаменатель проваливает eligibility.
 
-Он:
+`all_of.children` и `any_of.children` непусты; `not` содержит ровно один
+`child`; циклы, lambda, callable и скрытые guards запрещены. Children
+`all_of`/`any_of` сортируются по canonical serialized representation. Все
+eligibility gates, triggers, period inputs и strength overrides сериализуются.
 
-- использует только нормализованные facts, dataset statuses, completeness, `SourceMetadata` и безопасные warnings;
-- не выполняет HTTP, БД, AI, чтение raw payload или текущего времени;
-- не меняет provider, normalizers, orchestrator и persistence;
-- не добавляет поле в `CompanyReport`;
-- не требует миграций, endpoints или UI.
+Period contract полностью фиксирован:
 
-## 3. Новые контракты
+- `NoPeriod`: `kind="no_period"`, `as_of: datetime`;
+- `DatePeriod`: `kind="date"`, `value: date`;
+- `DateRangePeriod`: `kind="date_range"`, `start: date`, `end: date`;
+- `YearPeriod`: `kind="year"`, `year: int`;
+- `YearRangePeriod`: `kind="year_range"`, `start_year: int`, `end_year: int`.
 
-### Signal
+Обязательные поля не nullable, extras и другие kinds запрещены; validators:
+`start <= end`, `start_year <= end_year`. `as_of` берётся только из
+`SourceMetadata.received_at`. Arbitration не использует `no_period`.
 
-Сохраняются все девять полей:
+Confidence contract: `high` означает чистое полное непротиворечивое основание;
+`medium` — достаточное основание с неблокирующими normalization warnings; `low`
+не создаёт `positive`, `negative` или `informational` Signal и вместо него даёт
+result-level `signal_confidence_insufficient` с evaluation basis. Обычный false
+trigger после выполненной eligibility warning не создаёт.
 
-- `code`;
-- `category`;
-- `direction`;
-- `strength`;
-- `factual_basis`;
-- `source`;
-- `period`;
-- `confidence`;
-- `warnings`.
+## 3. Evidence-gate для reporting absent
 
-Закрытые enums:
+Единственный заблокированный код — `finance.reporting_absent`. Gate не
+блокирует `negative_equity`, `revenue_decline`, `net_loss`, `cash_shortfall` или
+`high_accounts_payable`.
 
-- category: `legal_status`, `financial`, `arbitration`;
-- direction: `positive`, `negative`, `informational`;
-- strength: `low`, `medium`, `high`, `critical`;
-- confidence: `low`, `medium`, `high`.
+До отдельного evidence approval запрещено реализовывать `reporting_absent` или
+считать clean empty `FinanceFacts` доказанным no-reporting. Для approval нужны:
 
-`source` имеет тип `list[SourceMetadata]`.
+1. обезличенный реальный fixture либо официально документированная успешная
+   форма ответа без отчётности;
+2. сравнение с успешным response с отчётностью, malformed `200`, `not_found`,
+   access denied и тарифным ограничением;
+3. проверка всех успешных вариантов через текущий `normalize_finance()`;
+4. доказательство, что `FinanceFacts` сохраняет различие без raw payload;
+5. отдельное согласование fixture и normalizer-теста.
 
-### Полное основание правила
+Если нормализованный контракт не сохраняет различие, требуется отдельное
+разрешение на его изменение. Новые DataNewton-запросы не входят в этот план.
 
-Каждый созданный сигнал содержит:
+### Стабильные warning codes
 
-```text
-SignalFactualBasis:
-- facts
-- eligibility
-- trigger
-- strength_decision
-- period_basis
-- years
-- case_ids
-```
+Каждый warning всегда содержит `code`, безопасный `message` и
+`evaluation_basis`; `rule_code` обязателен для suppression конкретного правила,
+`dataset` — для dataset warning. Реализуется и тестируется следующий реестр:
 
-`facts` — упорядоченные `{id, normalized_path, exact_value}`.
+- `dataset_unavailable` — нужный dataset отсутствует или не `AVAILABLE`;
+- `required_fact_missing` — доступный dataset не содержит обязательный fact;
+- `required_period_unavailable` — legal-status/finance period нельзя построить;
+- `normalization_warning_present` — normalization warning: при достаточном
+  основании он signal-level, `failed_eligibility` пуст и confidence `medium`; у
+  правила, требующего clean normalization, он result-level и содержит failed
+  clean-normalization gate;
+- `status_conflict` — единственный конфликт ruleset v1
+  `is_active == true AND dissolved_date is present` подавил затронутое правило;
+- `finance_reporting_semantics_unconfirmed` — evidence-gate
+  `finance.reporting_absent` не пройден;
+- `finance_period_conflict` — затрагивающие правило financial periods одного
+  года противоречат друг другу;
+- `arbitration_incomplete` — `is_complete` не равно `true`, result-level warning
+  для каждого подавленного arbitration rule;
+- `arbitration_period_unavailable` — обязательный year отсутствует у влияющего
+  дела;
+- `arbitration_summary_conflict` — cases и summaries противоречат агрегату
+  затронутого правила;
+- `signal_confidence_insufficient` — trigger выполнен, но confidence был бы
+  `low`, поэтому Signal не создан.
 
-`eligibility` содержит все gates:
+Для каждого suppression warning `evaluation_basis` содержит доступные facts,
+полную eligibility, точные failed eligibility nodes, влияющие years и case IDs.
 
-- dataset status;
-- наличие facts;
-- completeness;
-- отсутствие блокирующего конфликта;
-- пригодность обязательных значений;
-- возможность построить корректный period;
-- подтверждённую семантику отсутствия отчётности;
-- согласованность cases и агрегатов.
+### Контракты правил для реализации
 
-`trigger` содержит бизнес-условие срабатывания.
+Для каждого правила модели и тесты отдельно фиксируют `eligibility`, `trigger`,
+`strength_decision`, `period_basis` и suppression warning codes; общая таблица
+не заменяет эти проверки.
 
-Expression tree поддерживает:
+- `counterparty.active`: eligibility — `AVAILABLE`, facts и `is_active`,
+  `source.received_at`, отсутствие status conflict; trigger — `is_active=true`
+  и отсутствие `dissolved_date`; strength `medium`; period basis — received_at,
+  `no_period`; suppression — `dataset_unavailable`, `required_fact_missing`,
+  `required_period_unavailable`, `status_conflict`,
+  `signal_confidence_insufficient`.
+- `counterparty.dissolved`: eligibility — `AVAILABLE`, пригоден хотя бы один из
+  `is_active`/`dissolved_date`, status conflict отсутствует; trigger —
+  `is_active=false` или дата присутствует; strength `critical`; period basis —
+  дата для `date`, иначе received_at для `no_period`; suppression —
+  `dataset_unavailable`, `required_fact_missing`, `required_period_unavailable`,
+  `status_conflict`, `signal_confidence_insufficient`.
+- `counterparty.long_operating_history`: eligibility — counterparty `AVAILABLE`,
+  присутствуют `CounterpartyFacts`, нормализованный
+  `CounterpartyFacts.years_from_registration`, `registration_date` и
+  `source.received_at`, причём
+  `registration_date <= source.received_at.date()`; trigger — нормализованный
+  `years_from_registration >= 5`; strength `low`; period basis —
+  `registration_date` и `source.received_at`; period —
+  `DateRangePeriod(start=registration_date,
+  end=source.received_at.date())`; Signal.source — непустой список
+  `[CounterpartyFacts.source]`; factual basis содержит normalized
+  `years_from_registration`, `registration_date`, `source.received_at`;
+  suppression — `dataset_unavailable`, `required_fact_missing`,
+  `required_period_unavailable`, `signal_confidence_insufficient`. Signals не
+  вычисляет годы заново из дат и не использует текущее время.
+- `counterparty.status_conflict`: eligibility — `AVAILABLE`,
+  `CounterpartyFacts`, `is_active`, `dissolved_date`, `source.received_at`;
+  единственный trigger ruleset v1 —
+  `is_active == true AND dissolved_date is present`; strength `high`; period
+  basis — received_at, `no_period`; suppression — `dataset_unavailable`,
+  `required_fact_missing`, `required_period_unavailable`,
+  `signal_confidence_insufficient`. Новые виды конфликтов требуют новой версии
+  ruleset.
+- `finance.reporting_absent`: eligibility — `AVAILABLE`, подтверждённая clean
+  no-reporting semantics, отсутствие structural warnings, received_at; trigger —
+  нет periods и reporting years; strength `medium`; period basis — только
+  `FinanceFacts.source.received_at`, `no_period`; suppression —
+  `dataset_unavailable`, `finance_reporting_semantics_unconfirmed`,
+  `normalization_warning_present`, `required_period_unavailable`,
+  `signal_confidence_insufficient`; реализация только в Stage 5 после approval.
+- `finance.negative_equity`: eligibility — последний пригодный
+  непротиворечивый year, exact equity и unit; trigger — equity `<0`; strength
+  `high`; period basis — выбранный year; suppression — `dataset_unavailable`,
+  `required_fact_missing`, `required_period_unavailable`,
+  `finance_period_conflict`, `signal_confidence_insufficient`.
+- `finance.revenue_decline`: eligibility — два последних пригодных
+  непротиворечивых последовательных year, exact revenue и сопоставимые units;
+  trigger — later revenue `<` previous revenue; strength `medium`; period basis
+  — оба year, `year_range`; suppression — `dataset_unavailable`,
+  `required_fact_missing`, `required_period_unavailable`,
+  `finance_period_conflict`, `signal_confidence_insufficient`.
+- `finance.net_loss`: eligibility — последний пригодный непротиворечивый year,
+  exact net_profit и unit; trigger — net_profit `<0`; strength `medium`; period
+  basis — выбранный year; suppression — `dataset_unavailable`,
+  `required_fact_missing`, `required_period_unavailable`,
+  `finance_period_conflict`, `signal_confidence_insufficient`.
+- `finance.cash_shortfall`: eligibility — последний пригодный непротиворечивый
+  year с exact `cash_and_equivalents`/`short_term_liabilities` в сопоставимых
+  units; trigger — `cash_and_equivalents < short_term_liabilities`; strength
+  default `medium`, ordered override `high` только при строгом
+  `cash_and_equivalents < short_term_liabilities * Decimal("0.25")`; period basis
+  — выбранный year; suppression — `dataset_unavailable`,
+  `required_fact_missing`, `required_period_unavailable`,
+  `finance_period_conflict`, `signal_confidence_insufficient`.
 
-- `predicate`;
-- `all_of`;
-- `any_of`;
-- `not`.
+  Strength basis содержит исходные `cash_and_equivalents` и
+  `short_term_liabilities`, коэффициент `Decimal("0.25")` как exact literal в
+  `strength_decision` и derived SignalFact:
 
-Predicate ссылается на facts и использует операторы presence, equality, comparison, count и точное Decimal-соотношение.
+  ```text
+  id: short_term_liabilities_25_percent
+  normalized_path: derived.finance.short_term_liabilities_25_percent
+  exact_value: short_term_liabilities * Decimal("0.25")
+  ```
 
-`strength_decision` содержит default strength и упорядоченные overrides `when → strength`.
+  Override сравнивает `cash_and_equivalents` с derived fact через exact
+  `decimal_comparison`. Деление, `decimal_ratio` и специальная семантика нулевого
+  знаменателя для `finance.cash_shortfall` запрещены.
+- `finance.high_accounts_payable`: eligibility — последний пригодный
+  непротиворечивый year с exact accounts_payable/current_assets и units; trigger
+  — accounts_payable `>` current_assets; strength `high`; period basis — year;
+  suppression — `dataset_unavailable`, `required_fact_missing`,
+  `required_period_unavailable`, `finance_period_conflict`,
+  `signal_confidence_insufficient`.
 
-`period_basis` перечисляет факты, из которых построен обязательный `period`.
+Все arbitration rules требуют `AVAILABLE`, `ArbitrationFacts` и
+`is_complete=true`; иначе применяются `dataset_unavailable`,
+`required_fact_missing` или `arbitration_incomplete`. Конфликт cases/summaries
+подавляет только затронутое правило с `arbitration_summary_conflict`.
 
-### Основание подавленного правила
+- `arbitration.high_respondent_case_count`: eligibility — `AVAILABLE`,
+  `ArbitrationFacts`, `is_complete=true`, year у каждого дела полного dataset и
+  согласованный агрегат; trigger — respondent count `>=10`; strength `high`;
+  period basis — все years/case IDs, один year даёт `year`, несколько
+  `year_range`; suppression — `dataset_unavailable`, `required_fact_missing`,
+  `arbitration_incomplete`, `arbitration_period_unavailable`,
+  `arbitration_summary_conflict`, `signal_confidence_insufficient`.
+- `arbitration.respondent_case_growth`: eligibility — `AVAILABLE`,
+  `ArbitrationFacts`, `is_complete=true`, year у каждого respondent case,
+  способного влиять на годовой агрегат, два последних года последовательны,
+  агрегат согласован; trigger — later `>` previous и delta `>=3`; strength
+  `medium`; period basis — выбранные years и влияющие case IDs, `year_range`;
+  suppression — `dataset_unavailable`, `required_fact_missing`,
+  `arbitration_incomplete`, `arbitration_period_unavailable`,
+  `arbitration_summary_conflict`, `signal_confidence_insufficient`.
+- `arbitration.open_cases`: eligibility — `AVAILABLE`, `ArbitrationFacts`,
+  `is_complete=true`, только открытые дела, year у каждого открытого дела,
+  агрегат согласован; открытое дело без year подавляет правило; trigger — open
+  count `>=1`; strength `medium`; period basis — только years и case IDs открытых
+  дел, закрытые дела period не расширяют, один year даёт `year`, несколько
+  `year_range`; suppression — `dataset_unavailable`, `required_fact_missing`,
+  `arbitration_incomplete`, `arbitration_period_unavailable`,
+  `arbitration_summary_conflict`, `signal_confidence_insufficient`.
+- `arbitration.frequent_plaintiff`: eligibility — `AVAILABLE`,
+  `ArbitrationFacts`, `is_complete=true`, year у каждого дела полного dataset и
+  согласованный агрегат; trigger — plaintiff count `>=10` и `>` respondent count;
+  strength `medium`; period basis — все years/case IDs, один year даёт `year`,
+  несколько `year_range`; suppression — `dataset_unavailable`,
+  `required_fact_missing`, `arbitration_incomplete`,
+  `arbitration_period_unavailable`, `arbitration_summary_conflict`,
+  `signal_confidence_insufficient`.
 
-Если eligibility не выполнен из-за качества или полноты данных, сигнал не создаётся, а result-level warning получает:
+## 4. Последовательность реализации
 
-- `code`;
-- `rule_code`;
-- dataset;
-- message;
-- `evaluation_basis` с facts и failed eligibility.
+### Stage 1 — models, expression tree, periods, legal-status signals
 
-Обычный false trigger при достаточных данных warning не создаёт.
+Результат: модели `Signal`, `SignalFactualBasis`, `SignalEvaluationResult`,
+строго сериализуемое expression tree, все period models и legal-status rules:
+`active`, `dissolved`, `long_operating_history`, `status_conflict`.
 
-## 4. Периоды
-
-### Legal status
-
-- `counterparty.active`: `no_period`, `as_of=source.received_at`.
-- `counterparty.dissolved` с датой: `date`.
-- `counterparty.dissolved` при `is_active=false` без `dissolved_date`: `no_period`, `as_of=source.received_at`.
-- `counterparty.long_operating_history`: `date_range` от регистрации до даты получения источника.
-- `counterparty.status_conflict`: `no_period`, `as_of=source.received_at`.
-
-### Finance
-
-- `finance.reporting_absent`: `no_period`, `as_of=FinanceFacts.source.received_at`.
-- `finance.negative_equity`, `net_loss`, `cash_shortfall`, `high_accounts_payable`: `year`.
-- `finance.revenue_decline`: `year_range` из двух сравниваемых последовательных лет.
-
-Для `finance.reporting_absent`:
-
-- `period_basis` содержит точный `source.received_at`;
-- текущее время не используется;
-- отсутствие отчётных лет не подменяется фиктивным годом;
-- сериализация периода детерминирована.
-
-### Arbitration
-
-`no_period` для arbitration не используется.
-
-- `high_respondent_case_count` и `frequent_plaintiff` требуют period, покрывающий полный dataset. Если хотя бы одно дело полного набора не имеет `year`, сигнал подавляется с `arbitration_period_unavailable`.
-- `respondent_case_growth` требует год у каждого respondent case, способного влиять на годовой агрегат.
-- `open_cases` использует только открытые дела. Если хотя бы одно использованное открытое дело не имеет `year`, сигнал подавляется.
-- Один известный год даёт `year`.
-- Несколько лет дают `year_range(min, max)`.
-
-Тесты с отсутствующим годом обязательны для всех четырёх arbitration-правил. Для `open_cases` отдельно проверяется, что годы закрытых дел не расширяют его период.
-
-## 5. Правила обработки данных
-
-### Eligibility и конфликты
-
-- Dataset должен иметь `AVAILABLE`, а соответствующие facts должны присутствовать.
-- `counterparty.active`:
-  - eligibility: доступный counterparty и пригодный `is_active`;
-  - trigger: `is_active=true AND dissolved_date is null`.
-- `counterparty.dissolved`:
-  - eligibility: отсутствие status conflict;
-  - trigger: `is_active=false OR dissolved_date present`.
-- `counterparty.status_conflict`:
-  - trigger: `is_active=true AND dissolved_date present`.
-- `counterparty.long_operating_history`:
-  - registration date присутствует;
-  - `years_from_registration >= 5`.
-- Все arbitration-правила включают `is_complete=true` в eligibility.
-- Finance reporting absent включает в eligibility проверенную версию контракта отсутствия отчётности, available status, clean normalized state и отсутствие structural warnings, способных объяснить потерю данных.
-
-### Missing и warnings
-
-- `None` не превращается в ноль.
-- Отсутствие обязательного факта подавляет правило с rule-specific evaluation warning, если это data-quality limitation.
-- Normalization warning при достаточном основании переносится в Signal и снижает confidence до `medium`.
-- Confidence `low` не создаёт направленный сигнал.
-- `not_found`, disabled, access/tariff failures и malformed data не означают отсутствия отчётности или дел.
-- Неполный arbitration возвращает `arbitration_incomplete`, даже если signals пуст.
-- Конфликтующие periods одного года подавляют affected finance rule.
-- Несогласованность arbitration cases и summaries подавляет затронутое aggregate rule.
-
-## 6. Составные factual basis
-
-- `cash_shortfall`:
-  - trigger: `cash < short_term_liabilities`;
-  - default strength `medium`;
-  - override `high`: `cash < liabilities × 0.25`.
-- `frequent_plaintiff`:
-  - eligibility: complete dataset и корректный полный period;
-  - trigger: `plaintiff_count >= 10 AND plaintiff_count > respondent_count`.
-- `dissolved`:
-  - eligibility: `NOT(status conflict)`;
-  - trigger: `is_active=false OR dissolved_date present`.
-- `respondent_case_growth`:
-  - eligibility: complete dataset, relevant years известны, последние два года последовательны;
-  - trigger: later count `>` previous count AND delta `>=3`.
-- `reporting_absent`:
-  - eligibility: dataset available, подтверждённая no-reporting semantics, clean normalization;
-  - trigger: отсутствуют financial periods и reporting years;
-  - period basis: `source.received_at`;
-  - period: `no_period`.
-
-Все predicates, gates, period inputs и strength overrides сериализуются; внешние неявные guards запрещены.
-
-## 7. Детерминированность и дубли
-
-- `ruleset_version="1"`.
-- Пороги v1: 5 лет, 10 дел, рост 3 дела, 25%.
-- Каждый evaluator возвращает максимум один Signal на code.
-- Повторяющиеся code запрещены валидатором.
-- Порядок: `legal_status`, `financial`, `arbitration`, затем code.
-- Facts, expressions, sources, warnings, years и case IDs сортируются стабильными ключами.
-- Структурные дубли удаляются только при полном совпадении.
-- Конфликтующие значения не разрешаются порядком входа.
-- Decimal не переводится во float.
-- `as_of` берётся из source, а не из clock.
-- Перестановка periods, cases и warnings даёт идентичный JSON.
-
-## 8. Этапы реализации
-
-### Этап 1. Спецификация, модели основания и legal-status rules
-
-Результат: утверждённый контракт, expression tree, eligibility trace и legal-status rules.
-
-Изменяемые файлы:
-
-- `docs/development/iterations/ITERATION_07_SIGNALS.md` — до production-кода и после отдельного утверждения.
-
-Новые production-файлы:
-
-- `company_reports/signals/models.py`;
-- `company_reports/signals/common.py`;
-- `company_reports/signals/counterparty.py`;
-- `company_reports/signals/__init__.py`.
-
-Новые тесты:
-
-- `company_report_signal_test_helpers.py`;
-- `test_company_report_signal_models.py`;
-- `test_company_report_counterparty_signals.py`.
-
-Тесты:
-
-- expression tree AND/OR/NOT;
-- eligibility, trigger, strength и period basis сериализуются;
-- active;
-- dissolved с датой;
-- `is_active=false` без `dissolved_date` и `no_period`;
-- status conflict и suppression basis;
-- порог 5 лет;
-- unknown registration date;
-- warning downgrade;
-- unique code/fact IDs;
-- permutation determinism;
-- отсутствие raw payload.
+Работа включает unique code/fact-id validation, stable sorting, exact Decimal,
+no raw payload, conflict suppression и source-based `as_of`. Тесты покрывают
+AND/OR/NOT, все contract fields, period variants legal status, 5-летний порог,
+warnings/confidence, дубли и permutation determinism.
 
 Проверки:
 
 ```text
 python -m pytest services/product_api/tests_unit/test_company_report_signal_models.py services/product_api/tests_unit/test_company_report_counterparty_signals.py -q
 python -m pytest services/product_api/tests_unit -q
+python -m compileall -q services/product_api/src/product_api/company_reports
 git diff --check
 ```
 
-Критерий завершения: legal-status signal полностью воспроизводится по basis; причины data-quality suppression представлены warning.
+### Stage 2 — arbitration signals
 
-Риск отката: низкий.
+Результат: `high_respondent_case_count`, `respondent_case_growth`, `open_cases`
+и `frequent_plaintiff` с обязательными completeness и period gates.
 
-### Этап 2. Finance evidence-gate и financial rules
-
-Предусловие: подтверждена provider-семантика отсутствия отчётности. Иначе этап блокируется.
-
-Изменяемые production-файлы:
-
-- `company_reports/signals/__init__.py`.
-
-Новые production-файлы:
-
-- `company_reports/signals/finance.py`.
-
-Новые/изменяемые тесты и fixtures:
-
-- проверенный обезличенный no-reporting fixture;
-- malformed fixture;
-- `test_company_report_finance_normalizer.py`;
-- `test_company_report_finance_signals.py`.
-
-Контракты:
-
-- `reporting_absent`;
-- `negative_equity`;
-- `revenue_decline`;
-- `net_loss`;
-- `cash_shortfall`;
-- `high_accounts_payable`.
-
-Тесты:
-
-- success с отчётностью и подтверждённый success без неё;
-- malformed, `not_found`, access/tariff failure;
-- `available_count` не используется;
-- reporting absence eligibility целиком входит в basis;
-- `finance.reporting_absent.period.kind == "no_period"`;
-- `finance.reporting_absent.period.as_of == FinanceFacts.source.received_at`;
-- `period_basis` содержит тот же `source.received_at`;
-- перестановка warnings не меняет `reporting_absent.period`;
-- точные финансовые границы;
-- два predicates cash shortfall и strength override;
-- последовательность revenue years;
-- missing/zero;
-- последний пригодный период;
-- conflicting duplicate year;
-- deterministic serialization.
-
-Проверки:
-
-```text
-python -m pytest services/product_api/tests_unit/test_company_report_finance_normalizer.py services/product_api/tests_unit/test_company_report_finance_signals.py -q
-python -m pytest services/product_api/tests_unit -q
-git diff --check
-```
-
-Критерий завершения: reporting absent доказан на provider → normalizer → signal цепочке и имеет воспроизводимый `no_period` с source `as_of`.
-
-Риск отката: средний для provider-семантики, низкий для остальных правил.
-
-### Этап 3. Arbitration rules и обязательный полный period
-
-Результат: arbitration rules без недоказуемых периодов.
-
-Изменяемые production-файлы:
-
-- `company_reports/signals/__init__.py`.
-
-Новые production-файлы:
-
-- `company_reports/signals/arbitration.py`.
-
-Новые тесты:
-
-- `test_company_report_arbitration_signals.py`.
-
-Тесты:
-
-- пороги 10 и 3;
-- consecutive years;
-- open cases;
-- plaintiff `>=10 AND >respondent`;
-- `is_complete=false`;
-- completeness gate в basis;
-- общий период отличается от периода открытых дел;
-- open case без year подавляет `open_cases`;
-- любое дело без year подавляет full-dataset-period rules;
-- respondent case без year подавляет growth;
-- structured suppression warnings;
-- cases/summary conflict;
-- case IDs;
-- permutation determinism.
+Тесты покрывают пороги 10 и 3, последовательные years, open cases, роли,
+`is_complete=false`, result-level `arbitration_incomplete`, case IDs,
+cases/summary conflicts, missing year suppression и перестановку cases/warnings.
+Неполный dataset не даёт aggregate signal; отсутствие обязательного года не
+подменяется `no_period`.
 
 Проверки:
 
@@ -411,43 +339,36 @@ python -m pytest services/product_api/tests_unit -q
 git diff --check
 ```
 
-Критерий завершения: ни один arbitration signal не создаётся без доказуемого обязательного period.
+### Stage 3 — financial signals, кроме reporting_absent
 
-Риск отката: низкий.
+Результат: `negative_equity`, `revenue_decline`, `net_loss`, `cash_shortfall`,
+`high_accounts_payable`. `finance.reporting_absent` намеренно отсутствует.
 
-### Этап 4. Композиция и совместимость
+Тесты покрывают строгие границы, latest eligible year по каждому правилу,
+consecutive revenue years, zero/missing values, conflicting duplicate year,
+неизвестные units, derived threshold cash shortfall, строгий exact
+`decimal_comparison` и ordered strength override, точность Decimal и permutation
+determinism. Недоступность, malformed,
+`not_found`, access/tariff failure дают warnings, а не reporting absence.
 
-Результат: публичный `evaluate_signals()` и неизменный CompanyReport v1.
+Проверки:
 
-Изменяемые production-файлы:
+```text
+python -m pytest services/product_api/tests_unit/test_company_report_finance_signals.py -q
+python -m pytest services/product_api/tests_unit -q
+git diff --check
+```
 
-- `company_reports/signals/__init__.py`;
-- `company_reports/__init__.py`.
+### Stage 4 — evaluate_signals, ordering, result-level warnings, compatibility
 
-Новые production-файлы:
+Результат: единственный публичный `evaluate_signals(report)` композирует
+legal-status, financial и arbitration signals, валидирует unique codes и
+возвращает `SignalEvaluationResult` в contract order.
 
-- `company_reports/signals/service.py`.
-
-Новые/изменяемые тесты:
-
-- `test_company_report_signal_evaluation.py`;
-- `test_company_report_persistence_serialization.py`;
-- `test_company_report_orchestrator_success.py`.
-
-Тесты:
-
-- complete, partial и failed reports;
-- warnings при `signals=[]`;
-- все eligibility gates присутствуют в созданных Signals;
-- suppression warnings содержат evaluation basis;
-- итоговый category/code ordering;
-- unique codes;
-- identical input → identical JSON;
-- permutation determinism;
-- нет score/verdict/probability/AI;
-- старые snapshots читаются;
-- CompanyReport snapshot/hash не меняются;
-- нет raw payload и циклических импортов.
+Тесты покрывают complete, partial и failed `CompanyReport`; warnings при
+`signals=[]`; category/code order; permutation-identical JSON; отсутствие score,
+verdict, probability и AI; отсутствие raw payload; неизменность snapshot/hash и
+чтение старых snapshots. Тесты и exports используют только новый public API.
 
 Проверки:
 
@@ -458,48 +379,34 @@ python -m compileall -q services/product_api/src/product_api/company_reports
 git diff --check
 ```
 
-Критерий завершения: спецификация, runtime-контракт и serialization совпадают; Product API unit suite проходит; независимое review — `approved`.
+### Stage 5 — reporting_absent после отдельного evidence approval
 
-Риск отката: низкий, миграция данных не требуется.
+Stage начинается только после approval из раздела 3. Результат:
+`finance.reporting_absent` с complete eligibility basis, clean no-reporting
+semantics, `no_period`, `as_of=FinanceFacts.source.received_at` и без
+фиктивного reporting year.
 
-## 9. Совместимость и открытые вопросы
+Тесты подтверждают distinction между approved no-reporting, normal reporting,
+malformed, `not_found`, disabled и access/tariff failures; `available_count` не
+используется. Перестановка warnings не меняет period или JSON.
 
-### Совместимость
-
-- `CompanyReport v1` не меняется.
-- Signals не входят в persistence snapshot.
-- Старые snapshots и hashes сохраняются.
-- Provider protocol, normalizers, ORM, migrations и API не меняются.
-- Новые exports additive.
-- Predicate schema, periods, ordering и ruleset version становятся стабильным контрактом.
-
-### Вопросы вне репозитория
-
-- Реальная семантика успешного finance no-reporting.
-- Хранение ruleset/signals для scoring.
-- Срок поддержки старых ruleset.
-- Пользовательские и юридические формулировки.
-- Будущая политика Tax/FSSP/Bankruptcy warnings.
-
-### Нельзя менять молча
-
-- Пороги 5 лет, 10 дел, рост 3 и 25%.
-- `is_active=false` достаточно для dissolved.
-- `finance.reporting_absent` всегда использует `no_period` с source `received_at`.
-- `frequent_plaintiff=positive` не означает успешное взыскание.
-- Неполный arbitration не создаёт агрегатные сигналы.
-- Arbitration signal без полного доказуемого period подавляется.
-- Clean no-reporting должен быть подтверждён provider evidence.
-- Неизвестные finance units запрещают абсолютные пороги.
-- Signals не являются score, рекомендацией, вердиктом или вероятностью.
-
-### Нумерация
-
-Во всех новых артефактах использовать:
+Проверки:
 
 ```text
-Итерация 7 — signals
-Итерация 8 — scoring
+python -m pytest services/product_api/tests_unit/test_company_report_finance_normalizer.py services/product_api/tests_unit/test_company_report_finance_signals.py -q
+python -m pytest services/product_api/tests_unit -q
+git diff --check
 ```
 
-Старый заголовок «6. Сигналы» считать номером главы общего плана, а не номером инженерной итерации.
+## 5. Definition of done и review
+
+Итерация готова, когда выполнены Stage 1–4, Stage 5 либо имеет отдельный
+evidence approval и выполнен, либо явно остаётся не реализованным без задержки
+остальных financial signals. Пороги v1 (5 лет, 10 дел, рост 3, 25%) не меняются
+молча. `is_active=false` остаётся достаточным условием dissolved;
+`frequent_plaintiff=positive` не означает успешное взыскание.
+
+После применимых stages проводится независимое review по
+`CODE_REVIEW_CHECKLIST.md`: scope, deterministic ordering, missing/partial
+semantics, privacy, serialization, compatibility и отсутствие незапланированных
+persistence/API изменений. Commit и push требуют отдельной команды.
