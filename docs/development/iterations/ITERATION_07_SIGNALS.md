@@ -263,6 +263,17 @@ cases и summaries подавляет затронутое правило с war
 
 #### Finance
 
+`normalize_finance()` сохраняет в `FinanceFacts.indicators` все структурно
+различающиеся варианты одного `form/code`; полностью идентичные варианты
+дедуплицируются с объединением отсортированных `source_paths`. Значение поля
+`FinancialPeriod` строится по consensus distinct non-null exact `Decimal`:
+`None` вместе с одним exact value не конфликтует, несколько разных non-null
+values дают ambiguous period field `None`. Metadata-only conflict сохраняет
+warning и снижает confidence до `medium`, но не является value conflict.
+Evaluator воспроизводит `finance_period_conflict` из indicator variants и не
+использует `required_fact_missing` для доказанного value conflict; basis
+содержит form, code, normalized field, year и все конфликтующие exact values.
+
 - `finance.reporting_absent`: eligibility — `AVAILABLE`, `FinanceFacts`,
   отдельно подтверждённая clean no-reporting semantics, отсутствие structural
   normalization warnings, `source.received_at` доступен; trigger — отсутствуют

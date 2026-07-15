@@ -216,6 +216,17 @@ trigger после выполненной eligibility warning не создаё�
   `dataset_unavailable`, `finance_reporting_semantics_unconfirmed`,
   `normalization_warning_present`, `required_period_unavailable`,
   `signal_confidence_insufficient`; реализация только в Stage 5 после approval.
+
+Finance normalizer сохраняет distinct duplicate indicator variants одного
+`form/code` отдельными `FinancialIndicatorSeries`, а полностью идентичные
+variants дедуплицирует с объединением `source_paths`. `FinancialPeriod` получает
+consensus единственного non-null exact `Decimal`: `None + exact` не конфликтует,
+metadata-only различие не является value conflict, а несколько разных non-null
+values дают `None`. Financial evaluator определяет доказанный value conflict по
+`FinanceFacts.indicators`, формирует `finance_period_conflict` с form/code/field,
+year и всеми exact values в basis и не подменяет такой конфликт
+`required_fact_missing`.
+
 - `finance.negative_equity`: eligibility — последний пригодный
   непротиворечивый year, exact equity и unit; trigger — equity `<0`; strength
   `high`; period basis — выбранный year; suppression — `dataset_unavailable`,

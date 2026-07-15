@@ -16,6 +16,10 @@ from product_api.company_reports import (
     CounterpartyFacts,
     DatasetReport,
     DatasetReportStatus,
+    FinanceFacts,
+    FinanceForm,
+    FinancialIndicatorSeries,
+    FinancialPeriod,
     NormalizationWarning,
     ReportFreshness,
     ResultSummary,
@@ -82,6 +86,68 @@ def arbitration_source(
         attempts=1,
         duration_ms=Decimal("2.50"),
         warnings=warnings or [],
+    )
+
+
+def finance_source(
+    *,
+    warnings: list[NormalizationWarning] | None = None,
+    received_at: datetime = RECEIVED_AT,
+) -> SourceMetadata:
+    return SourceMetadata(
+        provider="datanewton",
+        dataset="finance",
+        endpoint="/v1/finance",
+        response_hash="f" * 64,
+        received_at=received_at,
+        request_id="safe-finance-request",
+        status_code=200,
+        attempts=1,
+        duration_ms=Decimal("1.75"),
+        warnings=warnings or [],
+    )
+
+
+def finance_facts(
+    periods: list[FinancialPeriod] | None = None,
+    *,
+    indicators: list[FinancialIndicatorSeries] | None = None,
+    warnings: list[NormalizationWarning] | None = None,
+) -> FinanceFacts:
+    normalized_periods = periods or []
+    normalized_warnings = warnings or []
+    years = sorted({period.year for period in normalized_periods})
+    return FinanceFacts(
+        source=finance_source(warnings=normalized_warnings),
+        years=years,
+        latest_year=years[-1] if years else None,
+        indicators=indicators or [],
+        periods=normalized_periods,
+        warnings=normalized_warnings,
+    )
+
+
+def finance_indicator(
+    form: FinanceForm,
+    code: str,
+    *,
+    source_path: str | None = None,
+    source_paths: list[str] | None = None,
+    values_by_year: dict[int, Decimal | None] | None = None,
+    name: str | None = None,
+) -> FinancialIndicatorSeries:
+    return FinancialIndicatorSeries(
+        form=form,
+        code=code,
+        name=name,
+        values_by_year=values_by_year or {},
+        source_paths=(
+            source_paths
+            if source_paths is not None
+            else [source_path]
+            if source_path is not None
+            else []
+        ),
     )
 
 
@@ -349,6 +415,74 @@ def report_without_arbitration_facts() -> CompanyReport:
     report = arbitration_company_report()
     return CompanyReport.model_validate(
         {**report.model_dump(mode="python"), "arbitration": None}
+    )
+
+
+def finance_company_report(
+    *,
+    finance: FinanceFacts | None = None,
+    finance_status: DatasetReportStatus = DatasetReportStatus.AVAILABLE,
+) -> CompanyReport:
+    facts = finance if finance is not None else finance_facts()
+    if finance_status is DatasetReportStatus.AVAILABLE:
+        finance_dataset = DatasetReport(
+            dataset="finance",
+            status=finance_status,
+            source=facts.source,
+        )
+        available_count = 1
+        report_status = CompanyReportStatus.PARTIAL
+    else:
+        finance_dataset = DatasetReport(
+            dataset="finance",
+            status=finance_status,
+            error=SafeDatasetError(
+                error_type=finance_status.value,
+                message="Finance dataset is unavailable.",
+            ),
+        )
+        available_count = 0
+        report_status = CompanyReportStatus.FAILED
+    datasets = {
+        "counterparty": _unavailable_dataset("counterparty"),
+        "finance": finance_dataset,
+        "arbitration": _unavailable_dataset("arbitration"),
+    }
+    return CompanyReport(
+        report_id=UUID("00000000-0000-0000-0000-000000000003"),
+        generated_at=RECEIVED_AT,
+        target_identifier="0000000000",
+        target_identifier_type=DataNewtonIdentifierType.LEGAL_ENTITY_INN,
+        status=report_status,
+        finance=facts if finance_status is DatasetReportStatus.AVAILABLE else None,
+        datasets=datasets,
+        completeness=CompanyReportCompleteness(
+            required_datasets=("counterparty", "finance", "arbitration"),
+            available_datasets=["finance"] if available_count else [],
+            missing_datasets=["counterparty", "arbitration"],
+            unavailable_datasets=(
+                ["counterparty", "arbitration"]
+                if available_count
+                else ["counterparty", "finance", "arbitration"]
+            ),
+            available_count=available_count,
+            required_count=3,
+            ratio=Decimal(available_count) / Decimal(3),
+            percent=33 if available_count else 0,
+            identity_available=False,
+            financial_data_available=bool(available_count),
+            arbitration_data_available=False,
+        ),
+        freshness=ReportFreshness(generated_at=RECEIVED_AT),
+        usable_for_public_page=False,
+        usable_for_future_scoring=False,
+    )
+
+
+def report_without_finance_facts() -> CompanyReport:
+    report = finance_company_report()
+    return CompanyReport.model_validate(
+        {**report.model_dump(mode="python"), "finance": None}
     )
 
 
