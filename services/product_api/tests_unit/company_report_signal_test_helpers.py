@@ -5,6 +5,11 @@ from decimal import Decimal
 from uuid import UUID
 
 from product_api.company_reports import (
+    ArbitrationCaseFacts,
+    ArbitrationFacts,
+    ArbitrationResultType,
+    ArbitrationRole,
+    ArbitrationStatus,
     CompanyReport,
     CompanyReportCompleteness,
     CompanyReportStatus,
@@ -13,8 +18,11 @@ from product_api.company_reports import (
     DatasetReportStatus,
     NormalizationWarning,
     ReportFreshness,
+    ResultSummary,
+    RoleSummary,
     SafeDatasetError,
     SourceMetadata,
+    StatusSummary,
 )
 from product_api.company_reports.signals import (
     EqualityOperator,
@@ -55,6 +63,122 @@ def signal_source(
         attempts=1,
         duration_ms=Decimal("1.25"),
         warnings=warnings or [],
+    )
+
+
+def arbitration_source(
+    *,
+    warnings: list[NormalizationWarning] | None = None,
+    received_at: datetime = RECEIVED_AT,
+) -> SourceMetadata:
+    return SourceMetadata(
+        provider="datanewton",
+        dataset="arbitration_cases",
+        endpoint="/v1/arbitration-cases",
+        response_hash="c" * 64,
+        received_at=received_at,
+        request_id="safe-arbitration-request",
+        status_code=200,
+        attempts=1,
+        duration_ms=Decimal("2.50"),
+        warnings=warnings or [],
+    )
+
+
+def arbitration_case(
+    case_id: str | None,
+    *,
+    internal_id: str | None = None,
+    year: int | None = 2025,
+    roles: list[ArbitrationRole] | None = None,
+    status: ArbitrationStatus = ArbitrationStatus.COMPLETED,
+) -> ArbitrationCaseFacts:
+    return ArbitrationCaseFacts(
+        internal_id=internal_id,
+        case_number=case_id,
+        year=year,
+        normalized_status=status,
+        normalized_result_type=ArbitrationResultType.OTHER,
+        company_roles=(
+            [ArbitrationRole.RESPONDENT]
+            if roles is None
+            else roles
+        ),
+    )
+
+
+def _role_summary(cases: list[ArbitrationCaseFacts]) -> RoleSummary:
+    counts = {
+        ArbitrationRole.PLAINTIFF: 0,
+        ArbitrationRole.RESPONDENT: 0,
+        ArbitrationRole.APPLICANT: 0,
+        ArbitrationRole.CREDITOR: 0,
+        ArbitrationRole.DEBTOR: 0,
+    }
+    other_count = 0
+    unknown_count = 0
+    for case in cases:
+        roles = set(case.company_roles)
+        for role in counts:
+            if role in roles:
+                counts[role] += 1
+        if roles.intersection(
+            {
+                ArbitrationRole.THIRD_PARTY,
+                ArbitrationRole.INTERESTED_PERSON,
+                ArbitrationRole.OTHER,
+            }
+        ):
+            other_count += 1
+        if not roles or roles == {ArbitrationRole.UNKNOWN}:
+            unknown_count += 1
+    return RoleSummary(
+        plaintiff_count=counts[ArbitrationRole.PLAINTIFF],
+        respondent_count=counts[ArbitrationRole.RESPONDENT],
+        applicant_count=counts[ArbitrationRole.APPLICANT],
+        creditor_count=counts[ArbitrationRole.CREDITOR],
+        debtor_count=counts[ArbitrationRole.DEBTOR],
+        other_count=other_count,
+        unknown_count=unknown_count,
+    )
+
+
+def _status_summary(cases: list[ArbitrationCaseFacts]) -> StatusSummary:
+    return StatusSummary(
+        open_count=sum(
+            case.normalized_status is ArbitrationStatus.OPEN for case in cases
+        ),
+        completed_count=sum(
+            case.normalized_status is ArbitrationStatus.COMPLETED for case in cases
+        ),
+        unknown_count=sum(
+            case.normalized_status is ArbitrationStatus.UNKNOWN for case in cases
+        ),
+    )
+
+
+def arbitration_facts(
+    cases: list[ArbitrationCaseFacts] | None = None,
+    *,
+    is_complete: bool = True,
+    role_summary: RoleSummary | None = None,
+    status_summary: StatusSummary | None = None,
+    warnings: list[NormalizationWarning] | None = None,
+) -> ArbitrationFacts:
+    normalized_cases = cases or []
+    normalized_warnings = warnings or []
+    return ArbitrationFacts(
+        source=arbitration_source(warnings=normalized_warnings),
+        total_cases=len(normalized_cases),
+        returned_cases=len(normalized_cases),
+        offset=0,
+        limit=max(len(normalized_cases), 1),
+        is_complete=is_complete,
+        cases=normalized_cases,
+        role_summary=role_summary or _role_summary(normalized_cases),
+        status_summary=status_summary or _status_summary(normalized_cases),
+        result_summary=ResultSummary(other_count=len(normalized_cases)),
+        warnings=normalized_warnings,
     )
 
 
@@ -155,6 +279,76 @@ def report_without_counterparty_facts() -> CompanyReport:
     report = company_report()
     return CompanyReport.model_validate(
         {**report.model_dump(mode="python"), "counterparty": None}
+    )
+
+
+def arbitration_company_report(
+    *,
+    arbitration: ArbitrationFacts | None = None,
+    arbitration_status: DatasetReportStatus = DatasetReportStatus.AVAILABLE,
+) -> CompanyReport:
+    facts = arbitration if arbitration is not None else arbitration_facts()
+    if arbitration_status is DatasetReportStatus.AVAILABLE:
+        arbitration_dataset = DatasetReport(
+            dataset="arbitration",
+            status=arbitration_status,
+            source=facts.source,
+        )
+        available_count = 1
+        report_status = CompanyReportStatus.PARTIAL
+    else:
+        arbitration_dataset = DatasetReport(
+            dataset="arbitration",
+            status=arbitration_status,
+            error=SafeDatasetError(
+                error_type=arbitration_status.value,
+                message="Arbitration dataset is unavailable.",
+            ),
+        )
+        available_count = 0
+        report_status = CompanyReportStatus.FAILED
+    datasets = {
+        "counterparty": _unavailable_dataset("counterparty"),
+        "finance": _unavailable_dataset("finance"),
+        "arbitration": arbitration_dataset,
+    }
+    return CompanyReport(
+        report_id=UUID("00000000-0000-0000-0000-000000000002"),
+        generated_at=RECEIVED_AT,
+        target_identifier="0000000000",
+        target_identifier_type=DataNewtonIdentifierType.LEGAL_ENTITY_INN,
+        status=report_status,
+        arbitration=(
+            facts if arbitration_status is DatasetReportStatus.AVAILABLE else None
+        ),
+        datasets=datasets,
+        completeness=CompanyReportCompleteness(
+            required_datasets=("counterparty", "finance", "arbitration"),
+            available_datasets=["arbitration"] if available_count else [],
+            missing_datasets=["counterparty", "finance"],
+            unavailable_datasets=(
+                ["counterparty", "finance"]
+                if available_count
+                else ["counterparty", "finance", "arbitration"]
+            ),
+            available_count=available_count,
+            required_count=3,
+            ratio=Decimal(available_count) / Decimal(3),
+            percent=33 if available_count else 0,
+            identity_available=False,
+            financial_data_available=False,
+            arbitration_data_available=bool(available_count),
+        ),
+        freshness=ReportFreshness(generated_at=RECEIVED_AT),
+        usable_for_public_page=False,
+        usable_for_future_scoring=False,
+    )
+
+
+def report_without_arbitration_facts() -> CompanyReport:
+    report = arbitration_company_report()
+    return CompanyReport.model_validate(
+        {**report.model_dump(mode="python"), "arbitration": None}
     )
 
 
