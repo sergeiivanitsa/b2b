@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -57,12 +58,7 @@ class _Candidate:
     code: str
     name: str | None
     values: dict[int, Decimal | None]
-    chosen_path: str
     source_paths: list[str]
-
-    @property
-    def rank(self) -> tuple[int, str]:
-        return (_path_depth(self.chosen_path), self.chosen_path)
 
 
 def normalize_finance(result: DataNewtonResult) -> FinanceFacts:
@@ -72,7 +68,7 @@ def normalize_finance(result: DataNewtonResult) -> FinanceFacts:
         expected_endpoint=FINANCE_ENDPOINT,
     )
     warnings: list[NormalizationWarning] = []
-    candidates: dict[tuple[FinanceForm, str], _Candidate] = {}
+    candidates: dict[tuple[FinanceForm, str], list[_Candidate]] = {}
     years: set[int] = set()
     okud: dict[FinanceForm, str | None] = {}
 
@@ -107,22 +103,55 @@ def normalize_finance(result: DataNewtonResult) -> FinanceFacts:
             warnings=warnings,
         )
 
-    series = [
-        FinancialIndicatorSeries(
-            form=candidate.form,
-            code=candidate.code,
-            name=candidate.name,
-            values_by_year=dict(sorted(candidate.values.items())),
-            source_paths=sorted(set(candidate.source_paths)),
+    series: list[FinancialIndicatorSeries] = []
+    duplicate_warnings: list[NormalizationWarning] = []
+    for key, variants in candidates.items():
+        all_paths = sorted(
+            {
+                path
+                for variant in variants
+                for path in variant.source_paths
+            }
         )
-        for _, candidate in sorted(
-            candidates.items(),
-            key=lambda item: (_form_order(item[0][0]), item[0][1]),
+        if len(variants) > 1:
+            duplicate_warnings.append(
+                warning(
+                    "finance_duplicate_conflict",
+                    all_paths[0],
+                    "duplicate financial indicator has conflicting metadata or values",
+                )
+            )
+        series.extend(
+            FinancialIndicatorSeries(
+                form=variant.form,
+                code=variant.code,
+                name=variant.name,
+                values_by_year=dict(sorted(variant.values.items())),
+                source_paths=all_paths,
+            )
+            for variant in variants
         )
-    ]
+    series.sort(
+        key=lambda item: (
+            _form_order(item.form),
+            item.code,
+            _canonical_series(item),
+        )
+    )
     sorted_years = sorted(years)
-    lookup = {(item.form, item.code): item.values_by_year for item in series}
+    lookup: dict[
+        tuple[FinanceForm, str],
+        list[dict[int, Decimal | None]],
+    ] = {}
+    for item in series:
+        lookup.setdefault((item.form, item.code), []).append(item.values_by_year)
     periods = [_period(year, lookup) for year in sorted_years]
+    warnings.extend(
+        sorted(
+            duplicate_warnings,
+            key=lambda item: (item.code, item.path, item.message),
+        )
+    )
     source = source_metadata(result, warnings)
     return FinanceFacts(
         source=source,
@@ -143,7 +172,7 @@ def _walk_form(
     form: FinanceForm,
     path: str,
     years: set[int],
-    candidates: dict[tuple[FinanceForm, str], _Candidate],
+    candidates: dict[tuple[FinanceForm, str], list[_Candidate]],
     warnings: list[NormalizationWarning],
 ) -> None:
     if isinstance(value, dict):
@@ -183,7 +212,7 @@ def _collect_indicator(
     form: FinanceForm,
     path: str,
     years: set[int],
-    candidates: dict[tuple[FinanceForm, str], _Candidate],
+    candidates: dict[tuple[FinanceForm, str], list[_Candidate]],
     warnings: list[NormalizationWarning],
 ) -> None:
     code = optional_string(value.get("code"))
@@ -221,31 +250,17 @@ def _collect_indicator(
         code=code,
         name=optional_string(value.get("name")),
         values=values,
-        chosen_path=path,
         source_paths=[path],
     )
     key = (form, code)
-    existing = candidates.get(key)
-    if existing is None:
-        candidates[key] = candidate
-        return
-    all_paths = sorted(set([*existing.source_paths, path]))
-    if existing.name == candidate.name and existing.values == candidate.values:
-        existing.source_paths = all_paths
-        return
-
-    warnings.append(
-        warning(
-            "finance_duplicate_conflict",
-            path,
-            "duplicate financial indicator has conflicting metadata or values",
-        )
-    )
-    if candidate.rank < existing.rank:
-        candidate.source_paths = all_paths
-        candidates[key] = candidate
-    else:
-        existing.source_paths = all_paths
+    variants = candidates.setdefault(key, [])
+    for existing in variants:
+        if existing.name == candidate.name and existing.values == candidate.values:
+            existing.source_paths = sorted(
+                set([*existing.source_paths, *candidate.source_paths])
+            )
+            return
+    variants.append(candidate)
 
 
 def _collect_declared_years(
@@ -291,16 +306,30 @@ def _parse_year(value: object) -> int | None:
 
 def _period(
     year: int,
-    lookup: dict[tuple[FinanceForm, str], dict[int, Decimal | None]],
+    lookup: dict[
+        tuple[FinanceForm, str],
+        list[dict[int, Decimal | None]],
+    ],
 ) -> FinancialPeriod:
     values: dict[str, object] = {"year": year}
     for indicator_key, field_name in _PERIOD_FIELDS.items():
-        values[field_name] = lookup.get(indicator_key, {}).get(year)
+        exact_values = {
+            value
+            for series_values in lookup.get(indicator_key, [])
+            if (value := series_values.get(year)) is not None
+        }
+        values[field_name] = next(iter(exact_values)) if len(exact_values) == 1 else None
     return FinancialPeriod(**values)
 
 
-def _path_depth(path: str) -> int:
-    return path.count(".") + path.count("[")
+def _canonical_series(series: FinancialIndicatorSeries) -> str:
+    return json.dumps(
+        series.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
 
 
 def _form_order(form: FinanceForm) -> int:
