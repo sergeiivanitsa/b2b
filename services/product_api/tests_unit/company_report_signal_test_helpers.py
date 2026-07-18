@@ -479,6 +479,106 @@ def finance_company_report(
     )
 
 
+def complete_company_report(
+    *,
+    counterparty: CounterpartyFacts | None = None,
+    finance: FinanceFacts | None = None,
+    arbitration: ArbitrationFacts | None = None,
+) -> CompanyReport:
+    normalized_counterparty = counterparty or counterparty_facts()
+    normalized_finance = finance or finance_facts(
+        [
+            FinancialPeriod(
+                year=2024,
+                revenue=Decimal("200"),
+            ),
+            FinancialPeriod(
+                year=2025,
+                current_assets=Decimal("100"),
+                cash_and_equivalents=Decimal("10"),
+                equity=Decimal("-1"),
+                short_term_liabilities=Decimal("100"),
+                accounts_payable=Decimal("200"),
+                revenue=Decimal("100"),
+                net_profit=Decimal("-1"),
+            ),
+        ]
+    )
+    arbitration_cases = [
+        *[
+            arbitration_case(f"R-2024-{index}", year=2024)
+            for index in range(3)
+        ],
+        *[
+            arbitration_case(
+                f"R-2025-{index}",
+                year=2025,
+                status=(
+                    ArbitrationStatus.OPEN
+                    if index == 0
+                    else ArbitrationStatus.COMPLETED
+                ),
+            )
+            for index in range(7)
+        ],
+    ]
+    normalized_arbitration = arbitration or arbitration_facts(arbitration_cases)
+    datasets = {
+        "counterparty": DatasetReport(
+            dataset="counterparty",
+            status=DatasetReportStatus.AVAILABLE,
+            source=normalized_counterparty.source,
+        ),
+        "finance": DatasetReport(
+            dataset="finance",
+            status=DatasetReportStatus.AVAILABLE,
+            source=normalized_finance.source,
+        ),
+        "arbitration": DatasetReport(
+            dataset="arbitration",
+            status=DatasetReportStatus.AVAILABLE,
+            source=normalized_arbitration.source,
+        ),
+    }
+    return CompanyReport(
+        report_id=UUID("00000000-0000-0000-0000-000000000004"),
+        generated_at=RECEIVED_AT,
+        target_identifier="0000000000",
+        target_identifier_type=DataNewtonIdentifierType.LEGAL_ENTITY_INN,
+        status=CompanyReportStatus.COMPLETE,
+        counterparty=normalized_counterparty,
+        finance=normalized_finance,
+        arbitration=normalized_arbitration,
+        datasets=datasets,
+        completeness=CompanyReportCompleteness(
+            required_datasets=("counterparty", "finance", "arbitration"),
+            available_datasets=["counterparty", "finance", "arbitration"],
+            missing_datasets=[],
+            unavailable_datasets=[],
+            available_count=3,
+            required_count=3,
+            ratio=Decimal("1"),
+            percent=100,
+            identity_available=True,
+            financial_data_available=True,
+            arbitration_data_available=True,
+        ),
+        freshness=ReportFreshness(
+            oldest_received_at=RECEIVED_AT,
+            newest_received_at=RECEIVED_AT,
+            datasets_received_at={
+                "counterparty": normalized_counterparty.source.received_at,
+                "finance": normalized_finance.source.received_at,
+                "arbitration": normalized_arbitration.source.received_at,
+            },
+            generated_at=RECEIVED_AT,
+            age_seconds_at_generation=Decimal("0"),
+        ),
+        usable_for_public_page=True,
+        usable_for_future_scoring=True,
+    )
+
+
 def report_without_finance_facts() -> CompanyReport:
     report = finance_company_report()
     return CompanyReport.model_validate(

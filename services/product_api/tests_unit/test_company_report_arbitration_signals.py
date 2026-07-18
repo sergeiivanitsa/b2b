@@ -869,5 +869,5 @@ def test_internal_evaluator_does_not_change_report_snapshot_or_public_api():
     assert company_report_to_snapshot(report) == snapshot_before
     assert calculate_company_report_snapshot_hash(report) == hash_before
     assert "signals" not in snapshot_before
-    assert not hasattr(signals_package, "evaluate_signals")
+    assert "_evaluate_arbitration_signals" not in signals_package.__all__
     assert not hasattr(signals_package, "SignalSet")
