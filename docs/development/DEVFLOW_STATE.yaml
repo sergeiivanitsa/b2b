@@ -1,0 +1,105 @@
+iterations:
+  - id: 1
+    slug: provider-foundation
+    title: "Основа DataNewton provider"
+    status: merged
+    branch: feature/company-reports-provider-foundation
+    commit: c01e9ae7fada8b3307ec08c44d9b0ca66c94b611
+    merged_at: "2026-07-12T14:37:44+10:00"
+    block_reason: null
+  - id: 2
+    slug: provider-datasets
+    title: "Методы DataNewton для CompanyReport"
+    status: merged
+    branch: feature/company-reports-provider-datasets
+    commit: 2fed7123ab1d7abbc28654f1d79f8eb3d4567a4f
+    merged_at: "2026-07-12T15:15:53+10:00"
+    block_reason: null
+  - id: 3
+    slug: provider-probe
+    title: "Безопасный DataNewton probe"
+    status: merged
+    branch: feature/datanewton-response-probe
+    commit: df4dfb99ff393b18abaa63742dff250ada181a81
+    merged_at: "2026-07-12T17:37:46+10:00"
+    block_reason: null
+  - id: 4
+    slug: normalizers
+    title: "Нормализация данных CompanyReport"
+    status: merged
+    branch: feature/company-report-normalizers-v1
+    commit: 2f97f9027f5c10fe7be2b28f3821394b15c668b2
+    merged_at: "2026-07-12T18:04:41+10:00"
+    block_reason: null
+  - id: 5
+    slug: company-report
+    title: "CompanyReport и orchestration"
+    status: merged
+    branch: feature/company-report-aggregate-v1
+    commit: 0f0546fd103f7789fa57e26a2d54f2c92e7f0580
+    merged_at: "2026-07-12T19:57:46+10:00"
+    block_reason: null
+  - id: 6
+    slug: persistence
+    title: "Persistence CompanyReport"
+    status: merged
+    branch: feature/iter6
+    commit: 7beb434f800f4b44d6e76b2445f528dc63c93e09
+    merged_at: "2026-07-12T20:59:04+10:00"
+    block_reason: null
+  - id: 7
+    slug: signals
+    title: "Система фактических сигналов"
+    status: merged
+    branch: feat/iteration-07-evaluate-signals
+    commit: 782ea039992741105780d60d9a75bb2240009711
+    merged_at: "2026-07-18T20:32:09+10:00"
+    block_reason: null
+  - id: 8
+    slug: scoring
+    title: "Детерминированный скоринг взыскуемости"
+    status: planned
+    branch: null
+    commit: null
+    merged_at: null
+    block_reason: null
+  - id: 9
+    slug: ai-explanation
+    title: "AI-объяснение результата"
+    status: planned
+    branch: null
+    commit: null
+    merged_at: null
+    block_reason: null
+  - id: 10
+    slug: company-reports-api
+    title: "Интеграция CompanyReport с Product API"
+    status: planned
+    branch: null
+    commit: null
+    merged_at: null
+    block_reason: null
+  - id: 11
+    slug: company-page
+    title: "Страница компании"
+    status: planned
+    branch: null
+    commit: null
+    merged_at: null
+    block_reason: null
+  - id: 12
+    slug: seo-publishing
+    title: "SEO и массовая публикация страниц"
+    status: planned
+    branch: null
+    commit: null
+    merged_at: null
+    block_reason: null
+  - id: 13
+    slug: claims-handoff
+    title: "Переход к конкретному долгу и claims-flow"
+    status: planned
+    branch: null
+    commit: null
+    merged_at: null
+    block_reason: null
