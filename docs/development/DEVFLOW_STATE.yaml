@@ -58,9 +58,9 @@ iterations:
   - id: 8
     slug: scoring
     title: "Детерминированный скоринг взыскуемости"
-    status: planned
-    branch: null
-    commit: null
+    status: ready_for_merge
+    branch: feat/iteration-8-scoring
+    commit: pending
     merged_at: null
     block_reason: null
   - id: 9
