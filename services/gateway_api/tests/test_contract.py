@@ -61,3 +61,20 @@ def test_contract_error_normalization(client, monkeypatch):
     assert payload["error"]["code"] == "rate_limit"
     assert payload["error"]["type"] == "rate_limit_error"
     assert payload["error"]["retryable"] is True
+
+
+def test_legacy_timeout_is_forwarded_unchanged(client, monkeypatch):
+    received = {}
+
+    async def fake_create(_settings, _model, _messages, timeout):
+        received["timeout"] = timeout
+        return ("ok", None)
+
+    monkeypatch.setattr(gateway_main, "create_chat_completion", fake_create)
+    body = _chat_body()
+    body["timeout"] = 17
+    raw = json.dumps(body, separators=(",", ":")).encode()
+    headers = sign_headers("test-shared-secret", "POST", "/v1/chat", raw)
+    headers["Content-Type"] = "application/json"
+    assert client.post("/v1/chat", headers=headers, data=raw).status_code == 200
+    assert received["timeout"] == 17

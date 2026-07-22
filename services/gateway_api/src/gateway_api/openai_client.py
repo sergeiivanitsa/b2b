@@ -46,6 +46,8 @@ async def create_chat_completion(
     model: str,
     messages: list[dict],
     timeout_seconds: int | None = None,
+    response_format: dict | None = None,
+    max_output_tokens: int | None = None,
 ) -> tuple[str, dict | None]:
     if not settings.openai_api_key:
         raise OpenAIError(
@@ -64,6 +66,10 @@ async def create_chat_completion(
         "model": model,
         "messages": messages,
     }
+    if response_format is not None:
+        payload["response_format"] = response_format
+    if max_output_tokens is not None:
+        payload["max_completion_tokens"] = max_output_tokens
 
     try:
         timeout = timeout_seconds or settings.openai_timeout_seconds
@@ -96,7 +102,7 @@ async def create_chat_completion(
             if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
                 err_message = payload["error"].get("message") or err_message
         except ValueError:
-            logger.warning("non-json upstream error: %s", resp.text)
+            logger.warning("non-json upstream error")
         raise OpenAIError(
             status_code=resp.status_code,
             message=err_message,
@@ -170,7 +176,7 @@ async def stream_chat_completion(
                         if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
                             err_message = payload["error"].get("message") or err_message
                     except json.JSONDecodeError:
-                        logger.warning("non-json upstream error: %s", raw)
+                        logger.warning("non-json upstream error")
                     raise OpenAIError(
                         status_code=resp.status_code,
                         message=err_message,

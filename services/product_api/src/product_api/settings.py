@@ -4,6 +4,7 @@ from typing import Annotated
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from shared.constants import AI_EXPLANATION_MODEL_PROFILE
 
 _PROMPT_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")
 
@@ -97,6 +98,30 @@ class Settings(BaseSettings):
         default=300,
         validation_alias="CLAIMS_FIO_AI_NEGATIVE_CACHE_TTL_SECONDS",
     )
+    ai_explanation_enabled: bool = Field(
+        default=False,
+        validation_alias="AI_EXPLANATION_ENABLED",
+    )
+    ai_explanation_model_profile: str = Field(
+        default=AI_EXPLANATION_MODEL_PROFILE,
+        validation_alias="AI_EXPLANATION_MODEL_PROFILE",
+    )
+    ai_explanation_prompt_version: str = Field(
+        default="v1",
+        validation_alias="AI_EXPLANATION_PROMPT_VERSION",
+    )
+    ai_explanation_max_input_tokens: int = Field(
+        default=4096,
+        validation_alias="AI_EXPLANATION_MAX_INPUT_TOKENS",
+    )
+    ai_explanation_max_output_tokens: int = Field(
+        default=600,
+        validation_alias="AI_EXPLANATION_MAX_OUTPUT_TOKENS",
+    )
+    ai_explanation_timeout_seconds: int = Field(
+        default=20,
+        validation_alias="AI_EXPLANATION_TIMEOUT_SECONDS",
+    )
     datanewton_enabled: bool = Field(default=False, validation_alias="DATANEWTON_ENABLED")
     datanewton_base_url: str = Field(
         default="https://api.datanewton.ru",
@@ -181,6 +206,35 @@ class Settings(BaseSettings):
     def _validate_claims_fio_ai_negative_cache_ttl_seconds(cls, value: int) -> int:
         if value < 0:
             raise ValueError("CLAIMS_FIO_AI_NEGATIVE_CACHE_TTL_SECONDS must be >= 0")
+        return value
+
+    @field_validator("ai_explanation_model_profile")
+    @classmethod
+    def _validate_ai_explanation_model_profile(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized != AI_EXPLANATION_MODEL_PROFILE:
+            raise ValueError("AI_EXPLANATION_MODEL_PROFILE is not supported")
+        return normalized
+
+    @field_validator("ai_explanation_prompt_version")
+    @classmethod
+    def _validate_ai_explanation_prompt_version(cls, value: str) -> str:
+        normalized = value.strip()
+        if not _PROMPT_VERSION_PATTERN.fullmatch(normalized):
+            raise ValueError(
+                "AI_EXPLANATION_PROMPT_VERSION must match [A-Za-z0-9_.-]{1,32}"
+            )
+        return normalized
+
+    @field_validator(
+        "ai_explanation_max_input_tokens",
+        "ai_explanation_max_output_tokens",
+        "ai_explanation_timeout_seconds",
+    )
+    @classmethod
+    def _validate_ai_explanation_positive(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("AI explanation budgets and timeout must be > 0")
         return value
 
     @field_validator("claims_price_rub")
