@@ -43,9 +43,24 @@ from .models import (
 from .normalizers import normalize_arbitration, normalize_counterparty, normalize_finance
 from .orchestrator import REQUIRED_DATASETS, build_company_report
 from .provider_protocol import CompanyReportProvider
+from .explanation import (
+    AIExplanation,
+    AIExplanationFailure,
+    AIExplanationResult,
+    AIExplanationStatus,
+    AllowedStatementCatalog,
+    ExplanationInputEnvelope,
+    ExplanationSelection,
+    explain_scoring_result,
+)
 
 __all__ = [
     "ArbitrationCaseFacts",
+    "AIExplanation",
+    "AIExplanationFailure",
+    "AIExplanationResult",
+    "AIExplanationStatus",
+    "AllowedStatementCatalog",
     "ArbitrationClaimAmounts",
     "ArbitrationDocumentSummary",
     "ArbitrationFacts",
@@ -61,6 +76,8 @@ __all__ = [
     "CompanyNames",
     "CompanyReportNormalizationError",
     "CompanyReportProvider",
+    "ExplanationInputEnvelope",
+    "ExplanationSelection",
     "CompanyReportStatus",
     "CompanyStatus",
     "CounterpartyBlockStatus",
@@ -84,6 +101,7 @@ __all__ = [
     "StatusSummary",
     "TaxModeInfo",
     "build_company_report",
+    "explain_scoring_result",
     "normalize_arbitration",
     "normalize_counterparty",
     "normalize_finance",

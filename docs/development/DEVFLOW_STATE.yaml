@@ -58,17 +58,17 @@ iterations:
   - id: 8
     slug: scoring
     title: "Детерминированный скоринг взыскуемости"
-    status: ready_for_merge
+    status: merged
     branch: feat/iteration-8-scoring
-    commit: pending
-    merged_at: null
+    commit: ffde24c04433fc6703e7217b0dbd3a2df8a8e088
+    merged_at: "2026-07-22T06:55:09+10:00"
     block_reason: null
   - id: 9
     slug: ai-explanation
     title: "AI-объяснение результата"
-    status: planned
-    branch: null
-    commit: null
+    status: ready_for_merge
+    branch: feat/iteration-9-ai-explanation
+    commit: pending
     merged_at: null
     block_reason: null
   - id: 10

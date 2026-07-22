@@ -10,7 +10,7 @@ from gateway_api.openai_client import OpenAIError, create_chat_completion, strea
 from gateway_api.request_id import REQUEST_ID_HEADER, set_request_id
 from gateway_api.security import verify_gateway_signature
 from gateway_api.settings import get_settings
-from shared.constants import MODEL_GPT_5_2
+from shared.constants import AI_EXPLANATION_MODEL_PROFILE, MODEL_GPT_5_2
 from shared.schemas import ChatRequest, ChatResponse
 
 settings = get_settings()
@@ -54,20 +54,58 @@ async def internal_ping():
 
 @app.post("/v1/chat")
 async def chat(payload: ChatRequest):
-    if payload.model != MODEL_GPT_5_2:
-        raise HTTPException(status_code=400, detail="unsupported model")
-
-    logger.info(
-        "chat request metadata company_id=%s user_id=%s conversation_id=%s message_id=%s",
-        payload.metadata.company_id,
-        payload.metadata.user_id,
-        payload.metadata.conversation_id,
-        payload.metadata.message_id,
-    )
-
     def _format_sse(event: str, data: dict) -> str:
         return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
+    if payload.model is not None:
+        if payload.model != MODEL_GPT_5_2:
+            raise HTTPException(status_code=400, detail="unsupported model")
+        # The request validator guarantees legacy metadata is present here.
+        logger.info(
+            "chat request metadata company_id=%s user_id=%s conversation_id=%s message_id=%s",
+            payload.metadata.company_id,
+            payload.metadata.user_id,
+            payload.metadata.conversation_id,
+            payload.metadata.message_id,
+        )
+        return await _legacy_chat(payload, _format_sse)
+
+    if payload.model_profile != AI_EXPLANATION_MODEL_PROFILE:
+        raise HTTPException(status_code=400, detail="unsupported model profile")
+    # The logging formatter adds request_id. Do not log structured metadata,
+    # prompt, schema, model response, or resolved model.
+    logger.info("structured chat request model_profile=%s", payload.model_profile)
+    try:
+        text, usage = await create_chat_completion(
+            settings,
+            settings.ai_explanation_model,
+            [msg.model_dump() for msg in payload.messages],
+            payload.timeout,
+            response_format=payload.response_format.model_dump(by_alias=True),
+            max_output_tokens=payload.max_output_tokens,
+        )
+    except OpenAIError as exc:
+        logger.warning("openai error code=%s status=%s", exc.code, exc.status_code)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "error": {
+                    "type": exc.err_type,
+                    "code": exc.code,
+                    "message": exc.message,
+                    "retryable": exc.retryable,
+                }
+            },
+        )
+    return ChatResponse(
+        text=text,
+        usage=usage,
+        model_profile=payload.model_profile,
+        resolved_model=settings.ai_explanation_model,
+    )
+
+
+async def _legacy_chat(payload: ChatRequest, _format_sse):
     if payload.stream:
         async def event_stream():
             try:

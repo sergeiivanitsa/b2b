@@ -17,7 +17,23 @@ BODY_HASH_HEADER = "X-Body-SHA256"
 
 
 class GatewayError(Exception):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        code: str | None = None,
+        retryable: bool = False,
+        is_transport_failure: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.retryable = retryable
+        # This is intentionally narrower than an upstream retryable hint.
+        # Only a local Product-to-Gateway httpx failure may be retried by the
+        # explanation service.
+        self.is_transport_failure = is_transport_failure
 
 
 def _body_sha256(body: bytes) -> str:
@@ -49,29 +65,59 @@ def _sign_headers(secret: str, method: str, path: str, body: bytes) -> dict[str,
 async def send_chat(settings: Settings, payload: ChatRequest) -> ChatResponse:
     path = "/v1/chat"
     url = f"{settings.gateway_url}{path}"
-    body = json.dumps(payload.model_dump(), separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    body = json.dumps(
+        payload.model_dump(by_alias=True), separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
     headers = _sign_headers(settings.gateway_shared_secret, "POST", path, body)
     headers.update(get_request_id_header())
     headers["Content-Type"] = "application/json"
 
-    async with httpx.AsyncClient(timeout=settings.gateway_timeout_seconds) as client:
-        resp = await client.post(url, content=body, headers=headers)
+    timeout_seconds = payload.timeout or settings.gateway_timeout_seconds
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            resp = await client.post(url, content=body, headers=headers)
+    except httpx.RequestError as exc:
+        raise GatewayError(
+            "gateway transport failure",
+            retryable=True,
+            is_transport_failure=True,
+        ) from exc
 
     if resp.status_code != 200:
-        raise GatewayError(f"gateway status {resp.status_code}")
+        safe_code = None
+        retryable = False
+        try:
+            error = resp.json().get("error", {})
+            if isinstance(error, dict):
+                safe_code = error.get("code") if isinstance(error.get("code"), str) else None
+                retryable = bool(error.get("retryable"))
+        except (ValueError, AttributeError):
+            pass
+        raise GatewayError(
+            f"gateway status {resp.status_code}",
+            status_code=resp.status_code,
+            code=safe_code,
+            retryable=retryable,
+        )
 
-    return ChatResponse.model_validate(resp.json())
+    try:
+        return ChatResponse.model_validate(resp.json())
+    except ValueError as exc:
+        raise GatewayError("gateway response contract failure") from exc
 
 
 async def stream_chat(settings: Settings, payload: ChatRequest):
     path = "/v1/chat"
     url = f"{settings.gateway_url}{path}"
-    body = json.dumps(payload.model_dump(), separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    body = json.dumps(
+        payload.model_dump(by_alias=True), separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
     headers = _sign_headers(settings.gateway_shared_secret, "POST", path, body)
     headers.update(get_request_id_header())
     headers["Content-Type"] = "application/json"
 
-    async with httpx.AsyncClient(timeout=settings.gateway_timeout_seconds) as client:
+    timeout_seconds = payload.timeout or settings.gateway_timeout_seconds
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
         async with client.stream("POST", url, content=body, headers=headers) as resp:
             if resp.status_code != 200:
                 text = await resp.aread()
