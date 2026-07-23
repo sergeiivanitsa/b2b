@@ -2,12 +2,13 @@ version: "3.9"
 
 services:
   product_api:
+    image: b2b-product-api:local
     build:
       context: .
       dockerfile: services/product_api/Dockerfile
     ports:
       - "8000:8000"
-    environment:
+    environment: &product_api_environment
       APP_ENV: dev
       LOG_LEVEL: INFO
       DATABASE_URL: postgresql+asyncpg://app:app@postgres:5432/app
@@ -41,6 +42,17 @@ services:
       RATE_LIMIT_COMPANY_RPM: "60"
       RATE_LIMIT_USER_RPM: "30"
       RATE_LIMIT_IP_RPM: "120"
+      DATANEWTON_ENABLED: ${DATANEWTON_ENABLED:-false}
+      DATANEWTON_BASE_URL: ${DATANEWTON_BASE_URL:-https://api.datanewton.ru}
+      DATANEWTON_API_KEY: ${DATANEWTON_API_KEY:-}
+      DATANEWTON_TIMEOUT_SECONDS: ${DATANEWTON_TIMEOUT_SECONDS:-10}
+      DATANEWTON_RETRY_COUNT: ${DATANEWTON_RETRY_COUNT:-1}
+      DATANEWTON_COUNTERPARTY_FILTERS: ${DATANEWTON_COUNTERPARTY_FILTERS:-MANAGER_BLOCK,ADDRESS_BLOCK}
+      DATANEWTON_CACHE_TTL_SECONDS: ${DATANEWTON_CACHE_TTL_SECONDS:-300}
+      COMPANY_REPORT_WORKER_POLL_INTERVAL_SECONDS: ${COMPANY_REPORT_WORKER_POLL_INTERVAL_SECONDS:-1}
+      COMPANY_REPORT_WORKER_LEASE_SECONDS: ${COMPANY_REPORT_WORKER_LEASE_SECONDS:-60}
+      COMPANY_REPORT_WORKER_HEARTBEAT_INTERVAL_SECONDS: ${COMPANY_REPORT_WORKER_HEARTBEAT_INTERVAL_SECONDS:-10}
+      COMPANY_REPORT_WORKER_SHUTDOWN_GRACE_SECONDS: ${COMPANY_REPORT_WORKER_SHUTDOWN_GRACE_SECONDS:-30}
     volumes:
       - claims_uploads:/var/lib/product_api/claims_uploads
     depends_on:
@@ -54,6 +66,24 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+
+  company_report_worker:
+    image: b2b-product-api:local
+    command:
+      - python
+      - -m
+      - product_api.company_reports.worker
+    restart: unless-stopped
+    stop_grace_period: 40s
+    environment: *product_api_environment
+    volumes:
+      - claims_uploads:/var/lib/product_api/claims_uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app_net
+      - db_net
 
   gateway_api:
     build:

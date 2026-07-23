@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -55,6 +56,11 @@ from product_api.db.session import get_session
 from product_api.main import app
 
 TABLES = [
+    "company_report_jobs",
+    "company_report_provider_requests",
+    "company_report_datasets",
+    "company_reports",
+    "company_report_subjects",
     "claim_events",
     "claim_files",
     "claims",
@@ -79,11 +85,17 @@ def db_url() -> str:
 
 
 @pytest.fixture()
-async def engine(db_url: str):
+async def engine(db_url: str, request):
+    if request.node.name == "test_company_report_jobs_upgrade_inspect_and_downgrade":
+        yield None
+        return
     engine = create_async_engine(db_url, future=True)
     try:
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
+        async def _probe():
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+
+        await asyncio.wait_for(_probe(), timeout=3)
     except Exception:
         await engine.dispose()
         pytest.skip("Database not available")
@@ -115,13 +127,38 @@ async def async_client(engine):
 
 
 @pytest.fixture(autouse=True)
-async def _clean_db(engine):
+async def _clean_db(engine, request):
+    if request.node.name == "test_company_report_jobs_upgrade_inspect_and_downgrade":
+        yield
+        return
     async with engine.begin() as conn:
-        await conn.execute(
-            text(f"TRUNCATE {', '.join(TABLES)} RESTART IDENTITY CASCADE")
-        )
+        existing = (
+            await conn.execute(
+                text(
+                    "SELECT tablename FROM pg_tables "
+                    "WHERE schemaname = current_schema() "
+                    "AND tablename = ANY(CAST(:tables AS text[]))"
+                ),
+                {"tables": TABLES},
+            )
+        ).scalars().all()
+        if existing:
+            await conn.execute(
+                text(f"TRUNCATE {', '.join(existing)} RESTART IDENTITY CASCADE")
+            )
     yield
     async with engine.begin() as conn:
-        await conn.execute(
-            text(f"TRUNCATE {', '.join(TABLES)} RESTART IDENTITY CASCADE")
-        )
+        existing = (
+            await conn.execute(
+                text(
+                    "SELECT tablename FROM pg_tables "
+                    "WHERE schemaname = current_schema() "
+                    "AND tablename = ANY(CAST(:tables AS text[]))"
+                ),
+                {"tables": TABLES},
+            )
+        ).scalars().all()
+        if existing:
+            await conn.execute(
+                text(f"TRUNCATE {', '.join(existing)} RESTART IDENTITY CASCADE")
+            )

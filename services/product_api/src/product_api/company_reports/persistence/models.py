@@ -26,6 +26,10 @@ from product_api.db.base import Base
 
 REPORT_PENDING_STATUS = "pending"
 REPORT_FINAL_STATUSES = ("complete", "partial", "failed")
+JOB_QUEUED_STATE = "queued"
+JOB_RUNNING_STATE = "running"
+JOB_SUCCEEDED_STATE = "succeeded"
+JOB_FAILED_STATE = "failed"
 DATASET_STATUSES = (
     "available",
     "not_found",
@@ -131,6 +135,110 @@ class CompanyReportRecord(Base):
 
     def __repr__(self) -> str:
         return f"<CompanyReportRecord id={self.id!s} status={self.lifecycle_status!r}>"
+
+
+class CompanyReportJob(Base):
+    __tablename__ = "company_report_jobs"
+    __table_args__ = (
+        UniqueConstraint(
+            "report_id",
+            name="uq_company_report_jobs_report_id",
+        ),
+        CheckConstraint(
+            "state IN ('queued', 'running', 'succeeded', 'failed')",
+            name="company_report_job_state",
+        ),
+        CheckConstraint(
+            "attempt_count IN (0, 1)",
+            name="company_report_job_attempt_count",
+        ),
+        CheckConstraint(
+            "("
+            "state = 'queued' AND attempt_count = 0 "
+            "AND worker_token IS NULL AND claimed_at IS NULL "
+            "AND heartbeat_at IS NULL AND lease_expires_at IS NULL "
+            "AND finished_at IS NULL AND safe_failure_code IS NULL"
+            ") OR ("
+            "state = 'running' AND attempt_count = 1 "
+            "AND worker_token IS NOT NULL AND claimed_at IS NOT NULL "
+            "AND heartbeat_at IS NOT NULL AND lease_expires_at IS NOT NULL "
+            "AND finished_at IS NULL AND safe_failure_code IS NULL"
+            ") OR ("
+            "state = 'succeeded' AND attempt_count = 1 "
+            "AND worker_token IS NOT NULL AND claimed_at IS NOT NULL "
+            "AND heartbeat_at IS NOT NULL AND lease_expires_at IS NOT NULL "
+            "AND finished_at IS NOT NULL AND safe_failure_code IS NULL"
+            ") OR ("
+            "state = 'failed' AND finished_at IS NOT NULL "
+            "AND safe_failure_code IS NOT NULL AND ("
+            "  (attempt_count = 0 AND worker_token IS NULL "
+            "   AND claimed_at IS NULL AND heartbeat_at IS NULL "
+            "   AND lease_expires_at IS NULL)"
+            "  OR "
+            "  (attempt_count = 1 AND worker_token IS NOT NULL "
+            "   AND claimed_at IS NOT NULL AND heartbeat_at IS NOT NULL "
+            "   AND lease_expires_at IS NOT NULL)"
+            ")"
+            ")",
+            name="company_report_job_state_shape",
+        ),
+        Index(
+            "uq_company_report_jobs_active_subject",
+            "subject_id",
+            unique=True,
+            postgresql_where=text("state IN ('queued', 'running')"),
+        ),
+        Index(
+            "ix_company_report_jobs_queued_claim",
+            "state",
+            "created_at",
+            "id",
+            postgresql_where=text("state = 'queued'"),
+        ),
+        Index(
+            "ix_company_report_jobs_running_lease",
+            "state",
+            "lease_expires_at",
+            postgresql_where=text("state = 'running'"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    report_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("company_reports.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    subject_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("company_report_subjects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    worker_token: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    safe_failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<CompanyReportJob id={self.id!s} "
+            f"state={self.state!r} attempt_count={self.attempt_count}>"
+        )
 
 
 class CompanyReportDataset(Base):

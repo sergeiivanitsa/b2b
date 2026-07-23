@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(BASE_DIR / "src"))
+sys.path.append(str(BASE_DIR.parents[1]))
 
 from product_api.db.base import Base  # noqa: E402
 from product_api import models  # noqa: F401,E402

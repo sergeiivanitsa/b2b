@@ -66,17 +66,17 @@ iterations:
   - id: 9
     slug: ai-explanation
     title: "AI-объяснение результата"
-    status: ready_for_merge
+    status: merged
     branch: feat/iteration-9-ai-explanation
-    commit: pending
-    merged_at: null
+    commit: 5a0bb11c16fe817aa01996f7f35e059f42f35ac2
+    merged_at: "2026-07-23T00:36:51+10:00"
     block_reason: null
   - id: 10
     slug: company-reports-api
     title: "Интеграция CompanyReport с Product API"
-    status: planned
-    branch: null
-    commit: null
+    status: ready_for_merge
+    branch: feat/iteration-10-company-reports-api
+    commit: pending
     merged_at: null
     block_reason: null
   - id: 11

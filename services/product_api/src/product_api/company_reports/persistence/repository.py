@@ -6,6 +6,8 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import desc, select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,6 +54,7 @@ class SafePersistenceError:
     retryable: bool = False
     request_id: str | None = None
     failed_at: datetime | None = None
+    code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -75,23 +78,40 @@ async def get_or_create_subject(
     identifier: str,
 ) -> SubjectRecord:
     normalized, identifier_type = _normalize_identifier(identifier)
+    await _insert_subject_if_missing(
+        session,
+        normalized_identifier=normalized,
+        identifier_type=identifier_type.value,
+    )
     result = await session.execute(
         select(CompanyReportSubject).where(
             CompanyReportSubject.normalized_identifier == normalized
         )
     )
     subject = result.scalar_one_or_none()
-    if subject is not None:
-        return subject
-    subject = CompanyReportSubject(
+    if subject is None:
+        raise CompanyReportPersistenceError("company report subject is unavailable")
+    return subject
+
+
+async def lock_or_create_subject_for_update(
+    session: AsyncSession,
+    identifier: str,
+) -> SubjectRecord:
+    normalized, identifier_type = _normalize_identifier(identifier)
+    await _insert_subject_if_missing(
+        session,
         normalized_identifier=normalized,
         identifier_type=identifier_type.value,
     )
-    session.add(subject)
-    try:
-        await session.flush()
-    except IntegrityError as exc:
-        raise CompanyReportPersistenceError("subject creation conflicted") from exc
+    result = await session.execute(
+        select(CompanyReportSubject)
+        .where(CompanyReportSubject.normalized_identifier == normalized)
+        .with_for_update()
+    )
+    subject = result.scalar_one_or_none()
+    if subject is None:
+        raise CompanyReportPersistenceError("company report subject is unavailable")
     return subject
 
 
@@ -146,6 +166,7 @@ async def finalize_report(
     report: CompanyReport,
     *,
     fresh_until: datetime | None = None,
+    finished_at: datetime | None = None,
 ) -> StoredReportRecord:
     snapshot = company_report_to_snapshot(report)
     snapshot_hash = calculate_company_report_snapshot_hash(snapshot)
@@ -166,7 +187,7 @@ async def finalize_report(
 
     record.lifecycle_status = report.status.value
     record.generated_at = _as_utc(report.generated_at)
-    record.finished_at = _utc_now()
+    record.finished_at = _as_utc(finished_at or _utc_now())
     record.fresh_until = _as_utc(fresh_until) if fresh_until is not None else None
     record.normalized_snapshot = snapshot
     record.snapshot_hash = snapshot_hash
@@ -205,13 +226,16 @@ async def mark_report_failed(
     record.completeness_snapshot = None
     record.freshness_snapshot = None
     record.warnings_snapshot = []
-    record.safe_error_snapshot = {
+    safe_error_snapshot: dict[str, Any] = {
         "error_type": safe_error.error_type,
         "message": safe_error.message,
         "retryable": safe_error.retryable,
         "request_id": safe_error.request_id,
         "failed_at": failed_at.isoformat(),
     }
+    if safe_error.code is not None:
+        safe_error_snapshot["code"] = safe_error.code
+    record.safe_error_snapshot = safe_error_snapshot
     record.usable_for_public_page = False
     record.usable_for_future_scoring = False
     await session.flush()
@@ -454,6 +478,69 @@ async def _get_subject(
         select(CompanyReportSubject).where(CompanyReportSubject.id == subject_id)
     )
     return result.scalar_one_or_none()
+
+
+async def _insert_subject_if_missing(
+    session: AsyncSession,
+    *,
+    normalized_identifier: str,
+    identifier_type: str,
+) -> None:
+    values = {
+        "id": uuid4(),
+        "normalized_identifier": normalized_identifier,
+        "identifier_type": identifier_type,
+    }
+    get_bind = getattr(session, "get_bind", None)
+    if callable(get_bind):
+        dialect_name = get_bind().dialect.name
+        if dialect_name == "postgresql":
+            statement = postgresql_insert(CompanyReportSubject).values(**values)
+            await session.execute(
+                statement.on_conflict_do_nothing(
+                    index_elements=[
+                        CompanyReportSubject.normalized_identifier
+                    ]
+                )
+            )
+            return
+        if dialect_name == "sqlite":
+            statement = sqlite_insert(CompanyReportSubject).values(**values)
+            await session.execute(
+                statement.on_conflict_do_nothing(
+                    index_elements=[
+                        CompanyReportSubject.normalized_identifier
+                    ]
+                )
+            )
+            return
+
+    existing_result = await session.execute(
+        select(CompanyReportSubject).where(
+            CompanyReportSubject.normalized_identifier == normalized_identifier
+        )
+    )
+    if existing_result.scalar_one_or_none() is not None:
+        return
+    subject = CompanyReportSubject(**values)
+    begin_nested = getattr(session, "begin_nested", None)
+    if callable(begin_nested):
+        try:
+            async with begin_nested():
+                session.add(subject)
+                await session.flush()
+        except IntegrityError:
+            # The savepoint rollback leaves the outer transaction usable; the
+            # caller immediately reselects the winning subject row.
+            return
+        return
+    session.add(subject)
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        # Lightweight unit-session fallback: fail rather than continue a
+        # potentially aborted transaction.
+        raise CompanyReportPersistenceError("subject creation conflicted") from exc
 
 
 def _normalize_identifier(identifier: str) -> tuple[str, DataNewtonIdentifierType]:

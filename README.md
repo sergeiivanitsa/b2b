@@ -5,14 +5,29 @@ This repo contains two FastAPI services:
 - gateway_api (US/EU)
 
 ## Local run (Docker)
-1. docker compose up --build
-2. curl http://localhost:8000/health
-3. curl http://localhost:8001/health
+1. Apply migrations: `docker compose run --rm --build product_api sh -lc "cd /app/services/product_api && alembic -c alembic.ini upgrade head"`
+2. Start API, CompanyReport worker, Gateway, and PostgreSQL: `docker compose up --build`
+3. `curl http://localhost:8000/health`
+4. `curl http://localhost:8001/health`
 
 Ports:
 - 8000: product_api
 - 8001: gateway_api
 - 5432: postgres
+
+The CompanyReport worker is a separate process from the Product API and can
+also be started with:
+
+```text
+python -m product_api.company_reports.worker
+```
+
+`POST /company-reports` only enqueues durable work and returns `202`.
+Poll `GET /company-reports/{inn}/status`, then read the latest finalized
+snapshot with `GET /company-reports/{inn}`. AI explanation is disabled unless
+the read explicitly uses `?include_ai_explanation=true`. An interrupted
+running job is safely failed after its lease expires and is never
+automatically replayed; a new run requires another explicit POST.
 
 Env examples:
 - services/product_api/.env.example
