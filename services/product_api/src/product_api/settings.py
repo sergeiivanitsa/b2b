@@ -141,6 +141,22 @@ class Settings(BaseSettings):
         default=300,
         validation_alias="DATANEWTON_CACHE_TTL_SECONDS",
     )
+    company_report_worker_poll_interval_seconds: float = Field(
+        default=1,
+        validation_alias="COMPANY_REPORT_WORKER_POLL_INTERVAL_SECONDS",
+    )
+    company_report_worker_lease_seconds: int = Field(
+        default=60,
+        validation_alias="COMPANY_REPORT_WORKER_LEASE_SECONDS",
+    )
+    company_report_worker_heartbeat_interval_seconds: float = Field(
+        default=10,
+        validation_alias="COMPANY_REPORT_WORKER_HEARTBEAT_INTERVAL_SECONDS",
+    )
+    company_report_worker_shutdown_grace_seconds: float = Field(
+        default=30,
+        validation_alias="COMPANY_REPORT_WORKER_SHUTDOWN_GRACE_SECONDS",
+    )
     max_message_chars: int = Field(default=4000, validation_alias="MAX_MESSAGE_CHARS")
     rate_limit_company_rpm: int = Field(default=60, validation_alias="RATE_LIMIT_COMPANY_RPM")
     rate_limit_user_rpm: int = Field(default=30, validation_alias="RATE_LIMIT_USER_RPM")
@@ -150,6 +166,32 @@ class Settings(BaseSettings):
     def _no_openai_key_in_product_api(self) -> "Settings":
         if self.openai_api_key:
             raise ValueError("OPENAI_API_KEY must not be set in product_api")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_company_report_worker_timing(self) -> "Settings":
+        if self.company_report_worker_poll_interval_seconds <= 0:
+            raise ValueError(
+                "COMPANY_REPORT_WORKER_POLL_INTERVAL_SECONDS must be > 0"
+            )
+        if self.company_report_worker_lease_seconds <= 0:
+            raise ValueError("COMPANY_REPORT_WORKER_LEASE_SECONDS must be > 0")
+        if self.company_report_worker_heartbeat_interval_seconds <= 0:
+            raise ValueError(
+                "COMPANY_REPORT_WORKER_HEARTBEAT_INTERVAL_SECONDS must be > 0"
+            )
+        if (
+            self.company_report_worker_heartbeat_interval_seconds
+            >= self.company_report_worker_lease_seconds
+        ):
+            raise ValueError(
+                "COMPANY_REPORT_WORKER_HEARTBEAT_INTERVAL_SECONDS must be "
+                "less than COMPANY_REPORT_WORKER_LEASE_SECONDS"
+            )
+        if self.company_report_worker_shutdown_grace_seconds < 0:
+            raise ValueError(
+                "COMPANY_REPORT_WORKER_SHUTDOWN_GRACE_SECONDS must be >= 0"
+            )
         return self
 
     @field_validator("superadmin_email")

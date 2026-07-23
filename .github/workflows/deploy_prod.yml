@@ -47,16 +47,23 @@ jobs:
           ssh -o StrictHostKeyChecking=yes "${{ secrets.RU_USER }}@${{ secrets.RU_HOST }}" <<'EOF'
           set -euo pipefail
           cd /opt/b2b
+          DEPLOY_COMMIT='${{ github.sha }}'
           git fetch origin
           git checkout main
-          git reset --hard origin/main
+          git reset --hard "$DEPLOY_COMMIT"
+          export PRODUCT_IMAGE_TAG="$DEPLOY_COMMIT"
 
-          # Apply DB migrations before starting API (prevents "column does not exist" crashes)
-          docker compose -f docker-compose.product.yml --env-file .env.product run --rm --no-deps --build product_api sh -lc "cd /app/services/product_api && alembic -c alembic.ini upgrade head"
+          # Stop the old worker before changing schema or code. Queued jobs stay queued.
+          docker compose -f docker-compose.product.yml --env-file .env.product stop -t 40 company_report_worker || true
 
+          # Build the exact deployed Product image once. The migration, API and
+          # worker all reference this same commit-tagged image.
           docker compose -f docker-compose.product.yml --env-file .env.product build product_api
-          docker compose -f docker-compose.product.yml --env-file .env.product up -d --force-recreate --no-deps product_api
-          docker inspect -f 'NAME={{.Name}} CREATED={{.Created}} STARTED={{.State.StartedAt}} IMAGE={{.Image}}' b2b-product_api-1
+
+          # A migration failure stops this shell before either new process starts.
+          docker compose -f docker-compose.product.yml --env-file .env.product run --rm --no-deps product_api sh -lc "cd /app/services/product_api && alembic -c alembic.ini upgrade head"
+
+          docker compose -f docker-compose.product.yml --env-file .env.product up -d --force-recreate --no-deps product_api company_report_worker
           # health retry ~60s (12*5s)
           ok=0
           for i in $(seq 1 12); do
@@ -76,6 +83,30 @@ jobs:
             docker logs --tail 200 b2b-product_api-1 || true
             exit 1
           fi
+
+          api_id="$(docker compose -f docker-compose.product.yml --env-file .env.product ps -q product_api)"
+          worker_id="$(docker compose -f docker-compose.product.yml --env-file .env.product ps -q company_report_worker)"
+          if [ -z "$api_id" ] || [ -z "$worker_id" ]; then
+            echo "Product API or CompanyReport worker container is missing"
+            exit 1
+          fi
+
+          worker_running="$(docker inspect -f '{{.State.Running}}' "$worker_id")"
+          worker_restarting="$(docker inspect -f '{{.State.Restarting}}' "$worker_id")"
+          if [ "$worker_running" != "true" ] || [ "$worker_restarting" != "false" ]; then
+            echo "CompanyReport worker is not stably running"
+            docker inspect -f 'NAME={{.Name}} STATUS={{.State.Status}} RESTARTING={{.State.Restarting}} IMAGE={{.Image}}' "$worker_id"
+            exit 1
+          fi
+
+          expected_image_id="$(docker image inspect -f '{{.Id}}' "b2b-product-api:${PRODUCT_IMAGE_TAG}")"
+          api_image_id="$(docker inspect -f '{{.Image}}' "$api_id")"
+          worker_image_id="$(docker inspect -f '{{.Image}}' "$worker_id")"
+          if [ "$api_image_id" != "$worker_image_id" ] || [ "$api_image_id" != "$expected_image_id" ]; then
+            echo "Product API and worker image IDs do not match the deployed commit tag"
+            exit 1
+          fi
+          docker inspect -f 'NAME={{.Name}} CREATED={{.Created}} STARTED={{.State.StartedAt}} IMAGE={{.Image}}' "$api_id" "$worker_id"
           EOF
 
       - name: Deploy US

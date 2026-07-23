@@ -19,3 +19,15 @@ class CompanyReportSnapshotError(CompanyReportPersistenceError):
 
 class PendingCompanyReportAlreadyExistsError(CompanyReportPersistenceError):
     pass
+
+
+class CompanyReportJobStateConflictError(CompanyReportPersistenceError):
+    """Stored report/job lifecycle invariants do not match."""
+
+
+class CompanyReportJobFencingError(CompanyReportPersistenceError):
+    """The caller no longer owns a live running job."""
+
+
+class CompanyReportJobNotFoundError(CompanyReportPersistenceError):
+    """The durable job does not exist."""
