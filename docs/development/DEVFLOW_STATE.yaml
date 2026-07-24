@@ -74,17 +74,17 @@ iterations:
   - id: 10
     slug: company-reports-api
     title: "Интеграция CompanyReport с Product API"
-    status: ready_for_merge
+    status: merged
     branch: feat/iteration-10-company-reports-api
-    commit: pending
-    merged_at: null
+    commit: 256cdbf094217d594747cd2664123f95d9c9349b
+    merged_at: "2026-07-24T06:53:00+10:00"
     block_reason: null
   - id: 11
     slug: company-page
     title: "Страница компании"
-    status: planned
-    branch: null
-    commit: null
+    status: ready_for_merge
+    branch: feat/iteration-11-company-page
+    commit: pending
     merged_at: null
     block_reason: null
   - id: 12

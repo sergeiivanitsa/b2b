@@ -3126,3 +3126,26 @@ body.is-chat-page #root {
     height: 20px;
   }
 }
+
+.company-report-page { max-width: 1160px; margin: 0 auto; padding: 32px 20px 56px; color: #182033; }
+.company-report-hero, .company-report-section, .company-report-cta, .company-report-state { background: #fff; border: 1px solid #dce2ea; border-radius: 14px; padding: 24px; margin-bottom: 18px; }
+.company-report-hero h1 { margin: 0 0 10px; overflow-wrap: anywhere; }
+.company-report-eyebrow { color: #415b9a; font-weight: 700; margin: 0 0 8px; }
+.company-report-status, .company-report-notice { border-left: 4px solid #415b9a; padding: 10px 12px; background: #f3f6fc; }
+.company-report-notice { margin: 0 0 18px; }
+.company-report-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.company-report-section h2, .company-report-cta h2 { margin-top: 0; }
+.company-report-section dl { margin: 0; }
+.company-report-section dl > div { display: grid; grid-template-columns: minmax(150px, 40%) 1fr; gap: 12px; padding: 7px 0; border-bottom: 1px solid #edf0f4; }
+.company-report-section dd { margin: 0; overflow-wrap: anywhere; }
+.company-report-table-wrap { overflow-x: auto; }
+.company-report-section table { border-collapse: collapse; min-width: 640px; width: 100%; }
+.company-report-section th, .company-report-section td { padding: 9px; text-align: left; border: 1px solid #dce2ea; vertical-align: top; }
+.company-report-machine { border-color: #8ba1d2; }
+.company-report-ai { border-color: #a789c6; }
+.company-report-cta button, .company-report-state button, .company-report-ai button { min-height: 44px; padding: 10px 16px; border: 0; border-radius: 8px; background: #283d73; color: #fff; font-weight: 700; cursor: pointer; }
+.company-report-page button:focus-visible { outline: 3px solid #ffb000; outline-offset: 3px; }
+.company-report-page button:disabled { opacity: .65; cursor: wait; }
+@media (max-width: 1024px) { .company-report-grid { grid-template-columns: 1fr; } }
+@media (max-width: 480px) { .company-report-page { padding: 16px 12px 36px; } .company-report-hero, .company-report-section, .company-report-cta, .company-report-state { padding: 16px; } .company-report-cta button { width: 100%; } .company-report-section dl > div { grid-template-columns: 1fr; gap: 3px; } }
+@media (prefers-reduced-motion: reduce) { .company-report-page * { scroll-behavior: auto; transition: none !important; } }

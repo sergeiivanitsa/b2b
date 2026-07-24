@@ -8,6 +8,7 @@ import { AdminClaimDetailPage } from '../pages/AdminClaimDetailPage'
 import { AdminClaimsListPage } from '../pages/AdminClaimsListPage'
 import { AdminLoginPage } from '../pages/AdminLoginPage'
 import { ChatPage } from '../pages/ChatPage'
+import { CompanyReportPage } from '../pages/CompanyReportPage'
 import { ClaimStep1Page } from '../pages/ClaimStep1Page'
 import { ClaimStep2Page } from '../pages/ClaimStep2Page'
 import { ClaimStep3Page } from '../pages/ClaimStep3Page'
@@ -45,6 +46,7 @@ export function AppRouter() {
       <Route path="/invites/accept" element={<InviteAcceptPage />} />
       <Route element={<RequireAuth />}>
         <Route path="/chat" element={<ChatPage />} />
+        <Route path="/company/:companyKey" element={<CompanyReportPage />} />
       </Route>
       <Route element={<RequireAuth />}>
         <Route element={<RequireOnboarding />}>
