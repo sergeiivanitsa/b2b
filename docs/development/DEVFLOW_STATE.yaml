@@ -90,16 +90,75 @@ iterations:
   - id: 12
     slug: seo-publishing
     title: "SEO и массовая публикация страниц"
-    status: ready_for_merge
+    status: merged
     branch: feat/iteration-12-seo-publishing
-    commit: pending
-    merged_at: null
+    commit: 03224d455dae01ff7358b9f9a1c1126cff4e9d5a
+    merged_at: "2026-07-26T11:33:32+10:00"
     block_reason: null
   - id: 13
     slug: claims-handoff
     title: "Переход к конкретному долгу и claims-flow"
-    status: planned
-    branch: null
-    commit: null
+    status: ready_for_merge
+    branch: feat/iteration-13-claims-handoff
+    commit: pending
     merged_at: null
     block_reason: null
+    baseline_verification:
+      owner_approved: true
+      base_commit: db06e3dffc8ff597297693b610c71ad16f8028a0
+      postgres_image: "postgres:16-alpine"
+      command: "python -m pytest services/product_api/tests -q"
+      base_result:
+        passed: 107
+        failed: 30
+        skipped: 0
+        warnings: 97
+        duration_seconds: 203.15
+      feature_result:
+        passed: 113
+        failed: 30
+        skipped: 0
+        warnings: 112
+        duration_seconds: 207.89
+      failed_node_ids_match: true
+      normalized_failure_signatures_match: true
+      normalized_nondeterministic_fields:
+        - timestamps
+      setup_or_fixture_failures: 0
+      new_feature_failures: []
+      failure_reasons:
+        - "existing HTTP status expectation mismatches"
+        - "existing users role/company check-constraint violations"
+        - "existing Claims preview mocks reject reference_date"
+        - "existing legacy JSON/text persistence mismatches"
+      failed_node_ids:
+        - "tests/test_admin_claims.py::test_admin_claim_status_transition_send_and_files"
+        - "tests/test_company_admin_detach.py::test_detach_admin_can_detach_member"
+        - "tests/test_company_admin_detach.py::test_detach_email_can_be_invited_to_another_company"
+        - "tests/test_company_admin_detach.py::test_detach_owner_success_user_hidden_from_stats_and_history_kept"
+        - "tests/test_company_admin_summary.py::test_company_summary_contract_and_math"
+        - "tests/test_company_admin_summary.py::test_company_summary_rbac_owner_admin_allowed_member_forbidden"
+        - "tests/test_invite_invariants.py::test_company_invite_reject_active_invite_other_org"
+        - "tests/test_invite_invariants.py::test_company_invite_reject_user_with_company"
+        - "tests/test_invite_invariants.py::test_company_invite_saves_profile_fields_and_list_returns_them"
+        - "tests/test_invite_invariants.py::test_invite_accept_creates_user_with_profile_and_joined_company_at"
+        - "tests/test_invite_invariants.py::test_invite_accept_updates_existing_user_without_company_profile"
+        - "tests/test_last_n.py::test_last_n_trimming"
+        - "tests/test_public_claims_preview.py::test_generate_and_get_preview_ip_ai_keeps_line2_consistent_and_line3_none"
+        - "tests/test_public_claims_preview.py::test_generate_and_get_preview_keep_line3_consistent_with_write_path_contract[all_caps_female_structured_inflect]"
+        - "tests/test_public_claims_preview.py::test_generate_and_get_preview_keep_line3_consistent_with_write_path_contract[all_caps_male_structured_inflect]"
+        - "tests/test_public_claims_preview.py::test_generate_and_get_preview_keep_line3_consistent_with_write_path_contract[all_caps_structured_normalize_only]"
+        - "tests/test_public_claims_preview.py::test_generate_and_get_preview_keep_line3_consistent_with_write_path_contract[hyphen_raw_fallback]"
+        - "tests/test_public_claims_preview.py::test_generate_and_get_preview_keep_line3_consistent_with_write_path_contract[initials_raw_fallback]"
+        - "tests/test_public_claims_preview.py::test_generate_and_get_preview_keep_line3_consistent_with_write_path_contract[ivanitsa_female_all_caps_override]"
+        - "tests/test_public_claims_preview.py::test_generate_and_get_preview_keep_line3_consistent_with_write_path_contract[ivanitsa_male_all_caps_override]"
+        - "tests/test_public_claims_preview.py::test_generate_and_get_preview_keep_line3_consistent_with_write_path_contract[latin_raw_fallback]"
+        - "tests/test_public_claims_preview.py::test_generate_and_get_preview_keep_line3_consistent_with_write_path_contract[not_three_words_raw_fallback]"
+        - "tests/test_public_claims_preview.py::test_generate_and_get_preview_legal_entity_ai_keeps_line3_consistent"
+        - "tests/test_public_claims_preview.py::test_generate_preview_and_get_preview"
+        - "tests/test_public_claims_preview.py::test_get_preview_upgrades_legacy_broken_header_with_emergency_bridge_without_mutation"
+        - "tests/test_public_claims_preview.py::test_get_preview_upgrades_legacy_header_full_raw_without_mutating_stored_payload"
+        - "tests/test_public_claims_preview.py::test_get_preview_upgrades_legacy_header_with_normalized_fallback_without_mutation"
+        - "tests/test_rbac.py::test_rbac_roles"
+        - "tests/test_superadmin_hardening.py::test_admin_company_admins_conflict_active_invite_409"
+        - "tests/test_superadmin_hardening.py::test_admin_company_admins_missing_company_404_not_500"

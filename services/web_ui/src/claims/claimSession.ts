@@ -4,11 +4,15 @@ export type ClaimSession = {
   claimId: number
   editToken: string
   savedAt: string
+  sourceCompanyReportId?: string
+  handoffCommandKey?: string
 }
 
 export type ClaimSessionInput = {
   claimId: number
   editToken: string
+  sourceCompanyReportId?: string
+  handoffCommandKey?: string
 }
 
 export function readClaimSession(): ClaimSession | null {
@@ -48,6 +52,8 @@ export function writeClaimSession(input: ClaimSessionInput): void {
     editToken,
     savedAt: new Date().toISOString(),
   }
+  if (input.sourceCompanyReportId) nextValue.sourceCompanyReportId = input.sourceCompanyReportId
+  if (input.handoffCommandKey) nextValue.handoffCommandKey = input.handoffCommandKey
   storage.setItem(CLAIM_SESSION_STORAGE_KEY, JSON.stringify(nextValue))
 }
 
@@ -89,7 +95,9 @@ function isClaimSession(value: unknown): value is ClaimSession {
     typeof record.editToken === 'string' &&
     record.editToken.trim().length > 0 &&
     typeof record.savedAt === 'string' &&
-    record.savedAt.length > 0
+    record.savedAt.length > 0 &&
+    (record.sourceCompanyReportId === undefined || typeof record.sourceCompanyReportId === 'string') &&
+    (record.handoffCommandKey === undefined || typeof record.handoffCommandKey === 'string')
   )
 }
 

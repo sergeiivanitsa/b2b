@@ -1,6 +1,7 @@
-from typing import Any
+from typing import Any, Literal
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PartialPaymentIn(BaseModel):
@@ -36,6 +37,22 @@ class ClaimPatchIn(BaseModel):
     client_phone: Any | None = None
     case_type: Any | None = None
     normalized_data: NormalizedDataPatchIn | None = None
+
+
+class ClaimHandoffCreateIn(BaseModel):
+    """Facts of the claim only; debtor identity is resolved server-side."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    input_text: str
+
+
+class CompanyReportHandoffPreflightOut(BaseModel):
+    report_id: UUID
+    availability: Literal["available", "manual_required"]
+    reason: str | None = None
+    prefill: dict[str, str | None] = Field(default_factory=dict)
+    prefilled_fields: list[str] = Field(default_factory=list)
 
 
 class ClaimContactIn(BaseModel):

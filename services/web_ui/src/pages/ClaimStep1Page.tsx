@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
 import { ClaimsBrand } from '../claims/components/ClaimsBrand'
-import { createClaim, extractClaim, getApiHttpErrorDetail } from '../claims/claimsApi'
+import { createClaim, createClaimFromCompanyReport, extractClaim, getApiHttpErrorDetail, preflightCompanyReportHandoff, type CompanyReportHandoffPreflight } from '../claims/claimsApi'
 import { hasClaimSession, readClaimSession, writeClaimSession } from '../claims/claimSession'
+import { clearHandoffCommandKey, readOrCreateHandoffCommandKey, reportIdFromSearch } from '../claims/companyReportHandoff'
 import { ApiHttpError } from '../lib/api'
 
 type Step1LocationState = {
@@ -19,34 +20,75 @@ export function ClaimStep1Page() {
   const navigate = useNavigate()
   const location = useLocation()
   const state = (location.state || {}) as Step1LocationState
+  const reportId = useMemo(() => reportIdFromSearch(location.search), [location.search])
 
   const [inputText, setInputText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [handoff, setHandoff] = useState<CompanyReportHandoffPreflight | null>(null)
+  const [handoffLoading, setHandoffLoading] = useState(Boolean(reportId))
+  const submitGuard = useRef(false)
+  const handoffKey = useRef<string | null>(null)
 
   const hasDraftSession = useMemo(() => hasClaimSession(), [])
+  const matchingDraftSession = useMemo(() => {
+    const session = readClaimSession()
+    return Boolean(reportId && session?.sourceCompanyReportId === reportId)
+  }, [reportId])
   const missingFieldsHint =
     state.missingFields && state.missingFields.length > 0
       ? `Нужно заполнить поля: ${state.missingFields.join(', ')}`
       : null
 
+  useEffect(() => {
+    let cancelled = false
+    handoffKey.current = null
+    if (!reportId) {
+      setHandoff(null)
+      setHandoffLoading(false)
+      return
+    }
+    setHandoffLoading(true)
+    setHandoff(null)
+    void preflightCompanyReportHandoff(reportId)
+      .then((result) => {
+        if (!cancelled) setHandoff(result)
+      })
+      .catch(() => {
+        if (!cancelled) setHandoff({ report_id: reportId, availability: 'manual_required', reason: 'prefill_unavailable', prefill: {}, prefilled_fields: [] })
+      })
+      .finally(() => {
+        if (!cancelled) setHandoffLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [reportId])
+
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (submitGuard.current) return
     const normalizedText = inputText.trim()
     if (!normalizedText) {
       setError('Опишите ситуацию в свободной форме, чтобы продолжить.')
       return
     }
 
+    submitGuard.current = true
     setIsSubmitting(true)
     setError(null)
 
     try {
-      const created = await createClaim(normalizedText)
+      const canUseHandoff = Boolean(reportId && handoff?.availability === 'available')
+      if (canUseHandoff && !handoffKey.current) handoffKey.current = readOrCreateHandoffCommandKey(reportId!)
+      const created = canUseHandoff
+        ? await createClaimFromCompanyReport(reportId!, normalizedText, handoffKey.current!)
+        : await createClaim(normalizedText)
       writeClaimSession({
         claimId: created.claim_id,
         editToken: created.edit_token,
+        sourceCompanyReportId: canUseHandoff ? reportId! : undefined,
+        handoffCommandKey: canUseHandoff ? handoffKey.current! : undefined,
       })
+      if (canUseHandoff) clearHandoffCommandKey(reportId!)
 
       try {
         await extractClaim(created.claim_id, created.edit_token)
@@ -67,6 +109,7 @@ export function ClaimStep1Page() {
       const detail = getApiHttpErrorDetail(submitError)
       setError(detail ?? 'Не удалось создать заявку. Повторите попытку.')
     } finally {
+      submitGuard.current = false
       setIsSubmitting(false)
     }
   }
@@ -112,6 +155,9 @@ export function ClaimStep1Page() {
 
           <div className="claims-hero__right claims-step1-first-screen__form-area">
             <form className="claims-step1-form claims-step1-first-screen__form" onSubmit={onSubmit}>
+              {handoffLoading ? <p role="status">Проверяем реквизиты должника…</p> : null}
+              {handoff?.availability === 'available' ? <p className="claims-alert claims-alert--info" role="status">Реквизиты должника заполнены из отчёта: {handoff.prefill.debtor_name || handoff.prefill.debtor_inn}.</p> : null}
+              {reportId && !handoffLoading && handoff?.availability !== 'available' ? <p className="claims-alert claims-alert--info" role="status">Не удалось автоматически заполнить реквизиты. Вы можете продолжить вручную.</p> : null}
               <textarea
                 id="claim-input-text"
                 className="claims-step1-first-screen__textarea"
@@ -133,7 +179,7 @@ export function ClaimStep1Page() {
 
         {hasDraftSession ? (
           <aside className="claims-alert claims-alert--info">
-            <p>Найден сохранённый черновик заявки. Можно продолжить с шага 2.</p>
+            <p>{matchingDraftSession ? 'Найден черновик этой компании. Продолжите его, чтобы не создать дубликат.' : 'Найден сохранённый черновик заявки. Можно продолжить с шага 2.'}</p>
             <button type="button" onClick={handleContinueDraft}>
               Продолжить черновик
             </button>
