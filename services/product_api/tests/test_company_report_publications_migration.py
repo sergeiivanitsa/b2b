@@ -114,9 +114,6 @@ def test_company_report_publications_upgrade_inspect_and_downgrade(monkeypatch):
     try:
         monkeypatch.setenv("DATABASE_URL", target_url)
         config = _alembic_config(target_url)
-        # Existing test setup uses 128 only to prepare the historical chain to
-        # 0013; it does not claim a successful fresh upgrade through 0007.
-        asyncio.run(_prepare_version_table(target_url))
         command.upgrade(config, "0013_company_report_jobs")
         command.upgrade(config, "0014_company_report_publications")
         asyncio.run(_assert_live_schema_contract(target_url))
@@ -273,15 +270,6 @@ async def _create_database(admin_url: str, database_name: str) -> None:
     try:
         async with engine.connect() as connection:
             await connection.execute(text(f'CREATE DATABASE "{database_name}"'))
-    finally:
-        await engine.dispose()
-
-
-async def _prepare_version_table(target_url: str) -> None:
-    engine = create_async_engine(target_url)
-    try:
-        async with engine.begin() as connection:
-            await connection.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(128) NOT NULL, CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"))
     finally:
         await engine.dispose()
 
