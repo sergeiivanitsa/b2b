@@ -80,6 +80,13 @@ TABLES = [
     "companies",
 ]
 
+SELF_MANAGED_DATABASE_TESTS = {
+    "test_company_report_jobs_upgrade_inspect_and_downgrade",
+    "test_company_report_publications_upgrade_inspect_and_downgrade",
+    "test_fresh_database_bootstrap_upgrade_current_idempotency_and_round_trip",
+    "test_existing_varchar_32_preserves_revision_and_application_state",
+}
+
 
 @pytest.fixture(scope="session")
 def db_url() -> str:
@@ -91,10 +98,7 @@ def db_url() -> str:
 
 @pytest.fixture()
 async def engine(db_url: str, request):
-    if request.node.name in {
-        "test_company_report_jobs_upgrade_inspect_and_downgrade",
-        "test_company_report_publications_upgrade_inspect_and_downgrade",
-    }:
+    if request.node.name in SELF_MANAGED_DATABASE_TESTS:
         yield None
         return
     engine = create_async_engine(db_url, future=True)
@@ -136,10 +140,7 @@ async def async_client(engine):
 
 @pytest.fixture(autouse=True)
 async def _clean_db(engine, request):
-    if request.node.name in {
-        "test_company_report_jobs_upgrade_inspect_and_downgrade",
-        "test_company_report_publications_upgrade_inspect_and_downgrade",
-    }:
+    if request.node.name in SELF_MANAGED_DATABASE_TESTS:
         yield
         return
     async with engine.begin() as conn:

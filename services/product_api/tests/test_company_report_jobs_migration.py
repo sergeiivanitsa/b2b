@@ -36,7 +36,6 @@ def test_company_report_jobs_upgrade_inspect_and_downgrade(monkeypatch):
     try:
         monkeypatch.setenv("DATABASE_URL", target_connection_url)
         config = _alembic_config(target_connection_url)
-        asyncio.run(_prepare_disposable_version_table(target_connection_url))
         command.upgrade(config, "0013_company_report_jobs")
 
         upgraded = asyncio.run(_inspect_database(target_connection_url))
@@ -127,24 +126,6 @@ async def _create_database(admin_url: str, database_name: str) -> None:
     try:
         async with engine.connect() as connection:
             await connection.execute(text(f'CREATE DATABASE "{database_name}"'))
-    finally:
-        await engine.dispose()
-
-
-async def _prepare_disposable_version_table(target_url: str) -> None:
-    """Allow the immutable baseline revision IDs to be exercised from scratch."""
-
-    engine = create_async_engine(target_url)
-    try:
-        async with engine.begin() as connection:
-            await connection.execute(
-                text(
-                    "CREATE TABLE alembic_version ("
-                    "version_num VARCHAR(128) NOT NULL, "
-                    "CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)"
-                    ")"
-                )
-            )
     finally:
         await engine.dispose()
 
