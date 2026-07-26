@@ -17,13 +17,15 @@ describe('claimSession', () => {
   })
 
   it('writes and reads claim session', () => {
-    writeClaimSession({ claimId: 101, editToken: 'token-abc' })
+    writeClaimSession({ claimId: 101, editToken: 'token-abc', sourceCompanyReportId: '2e7e9d9f-5f3a-4d43-a8e8-2bb3c2adf6b1', handoffCommandKey: 'retry-1' })
 
     const value = readClaimSession()
     expect(value).not.toBeNull()
     expect(value?.claimId).toBe(101)
     expect(value?.editToken).toBe('token-abc')
     expect(typeof value?.savedAt).toBe('string')
+    expect(value?.sourceCompanyReportId).toBe('2e7e9d9f-5f3a-4d43-a8e8-2bb3c2adf6b1')
+    expect(value?.handoffCommandKey).toBe('retry-1')
     expect(hasClaimSession()).toBe(true)
   })
 

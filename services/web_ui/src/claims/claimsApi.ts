@@ -77,6 +77,7 @@ export type PublicClaimSnapshot = {
   input_text: string
   client_email: string | null
   case_type: ClaimCaseType | null
+  source_company_report_id?: string | null
   normalized_data: ClaimNormalizedData | null
   preview_header?: ClaimPreviewHeader | null
   step2: PublicClaimStep2
@@ -127,6 +128,15 @@ export type CreateClaimResponse = {
   claim_id: number
   edit_token: string
   claim: PublicClaimSnapshot
+  reused?: boolean
+}
+
+export type CompanyReportHandoffPreflight = {
+  report_id: string
+  availability: 'available' | 'manual_required'
+  reason: string | null
+  prefill: { debtor_name?: string | null; debtor_inn?: string | null }
+  prefilled_fields: string[]
 }
 
 export async function createClaim(inputText: string): Promise<CreateClaimResponse> {
@@ -140,6 +150,27 @@ export async function createClaim(inputText: string): Promise<CreateClaimRespons
     body: {
       input_text: normalizedInputText,
     },
+  })
+}
+
+export async function preflightCompanyReportHandoff(
+  reportId: string,
+): Promise<CompanyReportHandoffPreflight> {
+  return apiFetchJson<CompanyReportHandoffPreflight>(`/claims/handoff/company-reports/${encodeURIComponent(reportId)}`)
+}
+
+export async function createClaimFromCompanyReport(
+  reportId: string,
+  inputText: string,
+  idempotencyKey: string,
+): Promise<CreateClaimResponse> {
+  const normalizedInputText = inputText.trim()
+  if (!normalizedInputText) throw new Error('inputText is required')
+  if (!idempotencyKey.trim()) throw new Error('idempotencyKey is required')
+  return apiFetchJson<CreateClaimResponse>(`/claims/handoff/company-reports/${encodeURIComponent(reportId)}`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey.trim() },
+    body: { input_text: normalizedInputText },
   })
 }
 

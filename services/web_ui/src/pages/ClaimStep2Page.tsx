@@ -3,6 +3,7 @@ import type { ChangeEvent, FormEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
 import { restoreClaimFromSession } from '../claims/claimRestore'
+import { companyReportPath } from '../claims/companyReportHandoff'
 import { ClaimsBrand } from '../claims/components/ClaimsBrand'
 import { ClaimsProgressBar } from '../claims/components/ClaimsProgressBar'
 import {
@@ -11,6 +12,7 @@ import {
   getApiHttpErrorStatus,
   listClaimFiles,
   patchClaim,
+  preflightCompanyReportHandoff,
   type ClaimCaseType,
   type ClaimFileSnapshot,
   type ClaimNormalizedData,
@@ -106,6 +108,8 @@ export function ClaimStep2Page() {
 
   const [claimId, setClaimId] = useState<number | null>(null)
   const [editToken, setEditToken] = useState<string>('')
+  const [sourceCompanyReportId, setSourceCompanyReportId] = useState<string | null>(null)
+  const [trustedSourceInn, setTrustedSourceInn] = useState<string | null>(null)
   const [formState, setFormState] = useState<Step2FormState>(() => buildInitialFormState(null))
   const [missingFields, setMissingFields] = useState<string[]>(locationState.missingFields ?? [])
   const [files, setFiles] = useState<ClaimFileSnapshot[]>([])
@@ -136,6 +140,17 @@ export function ClaimStep2Page() {
 
         setClaimId(restored.claimId)
         setEditToken(restored.editToken)
+        setSourceCompanyReportId(restored.claim.source_company_report_id ?? null)
+        if (restored.claim.source_company_report_id) {
+          try {
+            const source = await preflightCompanyReportHandoff(restored.claim.source_company_report_id)
+            if (!isCanceled && source.availability === 'available') {
+              setTrustedSourceInn(source.prefill.debtor_inn ?? null)
+            }
+          } catch {
+            if (!isCanceled) setTrustedSourceInn(null)
+          }
+        }
         setMissingFields(restored.claim.step2.missing_fields)
         setFormState(buildInitialFormState(restored.claim.normalized_data, restored.claim.case_type))
         setFiles(loadedFiles)
@@ -167,6 +182,10 @@ export function ClaimStep2Page() {
     [formState, missingFields],
   )
   const missingFieldSet = useMemo(() => new Set(missingFields), [missingFields])
+  const companyBacklink = useMemo(
+    () => companyReportPath(sourceCompanyReportId, trustedSourceInn),
+    [sourceCompanyReportId, trustedSourceInn],
+  )
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -360,6 +379,7 @@ export function ClaimStep2Page() {
           <ClaimsProgressBar label="Готовность документа:" value={completionPercent} />
         </header>
 
+        {sourceCompanyReportId ? <p className="claims-alert claims-alert--info">Реквизиты должника перенесены из отчёта. Проверьте и при необходимости исправьте их.{companyBacklink ? <> <a href={companyBacklink}>Вернуться к отчёту о компании</a></> : null}</p> : null}
         <form className="claims-step2-form" onSubmit={onSubmit}>
           <section className="claims-step2-card">
             <h2>Стороны спора</h2>
@@ -827,7 +847,7 @@ function parseAmount(value: string): number | null {
     .trim()
     .replace(/\s+/g, '')
     .replace(',', '.')
-    .replace(/[^\d.\-]/g, '')
+    .replace(/[^\d.-]/g, '')
   if (!normalized) {
     return null
   }

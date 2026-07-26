@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import UUID
 
 from sqlalchemy import (
     CheckConstraint,
@@ -272,6 +273,12 @@ class Claim(Base):
     )
     price_rub: Mapped[int] = mapped_column(nullable=False)
     edit_token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    source_company_report_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("company_reports.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    handoff_idempotency_key_hash: Mapped[str | None] = mapped_column(
+        String(64), unique=True, nullable=True
+    )
     client_email: Mapped[str | None] = mapped_column(String(320))
     client_phone: Mapped[str | None] = mapped_column(String(32))
     case_type: Mapped[str | None] = mapped_column(String(32))

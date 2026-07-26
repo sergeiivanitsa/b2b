@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -8,6 +8,7 @@ import {
   getApiHttpErrorDetail,
   getApiHttpErrorStatus,
   listClaimFiles,
+  preflightCompanyReportHandoff,
   uploadClaimFile,
 } from '../claims/claimsApi'
 import { ClaimStep2Page } from './ClaimStep2Page'
@@ -20,6 +21,7 @@ vi.mock('../claims/claimsApi', () => ({
   deleteClaimFile: vi.fn(),
   listClaimFiles: vi.fn(),
   patchClaim: vi.fn(),
+  preflightCompanyReportHandoff: vi.fn(),
   uploadClaimFile: vi.fn(),
   getApiHttpErrorDetail: vi.fn(() => null),
   getApiHttpErrorStatus: vi.fn(() => null),
@@ -30,6 +32,7 @@ const mockedDeleteClaimFile = vi.mocked(deleteClaimFile)
 const mockedGetApiHttpErrorDetail = vi.mocked(getApiHttpErrorDetail)
 const mockedGetApiHttpErrorStatus = vi.mocked(getApiHttpErrorStatus)
 const mockedListClaimFiles = vi.mocked(listClaimFiles)
+const mockedPreflightCompanyReportHandoff = vi.mocked(preflightCompanyReportHandoff)
 const mockedUploadClaimFile = vi.mocked(uploadClaimFile)
 
 describe('ClaimStep2Page', () => {
@@ -99,6 +102,53 @@ describe('ClaimStep2Page', () => {
       expect(container.querySelectorAll('input#creditor-inn')).toHaveLength(1)
       expect(container.querySelectorAll('input#debtor-inn')).toHaveLength(1)
     })
+  })
+
+  it('keeps the company backlink bound to trusted preflight after manual INN edits', async () => {
+    mockedRestoreClaimFromSession.mockResolvedValue({
+      claimId: 12,
+      editToken: 'token-1',
+      claim: {
+        source_company_report_id: '2e7e9d9f-5f3a-4d43-a8e8-2bb3c2adf6b1',
+        case_type: 'supply',
+        normalized_data: {
+          creditor_name: 'ООО Истец',
+          creditor_inn: '2721245963',
+          debtor_name: 'ООО Вектор',
+          debtor_inn: '1834049911',
+          missing_fields: [],
+        },
+        step2: {
+          always_visible_fields: [],
+          conditional_visibility: {
+            show_partial_payments: false,
+            show_penalty_rate: false,
+          },
+          missing_fields: [],
+          derived: {
+            total_paid_amount: 0,
+            remaining_debt_amount: null,
+            overdue_days: null,
+            is_overdue: null,
+          },
+        },
+      },
+    } as never)
+    mockedPreflightCompanyReportHandoff.mockResolvedValue({
+      report_id: '2e7e9d9f-5f3a-4d43-a8e8-2bb3c2adf6b1',
+      availability: 'available',
+      reason: null,
+      prefill: { debtor_name: 'ООО Вектор', debtor_inn: '7700000000' },
+      prefilled_fields: ['debtor_name', 'debtor_inn'],
+    })
+
+    render(<MemoryRouter><ClaimStep2Page /></MemoryRouter>)
+    const backlink = await screen.findByRole('link', { name: /Вернуться к отчёту о компании/i })
+    expect(backlink.getAttribute('href')).toBe('/company/7700000000')
+    fireEvent.change(await screen.findByLabelText(/ИНН должника/i), {
+      target: { value: '7800000000' },
+    })
+    expect(backlink.getAttribute('href')).toBe('/company/7700000000')
   })
 
   it('starts upload immediately after file selection', async () => {

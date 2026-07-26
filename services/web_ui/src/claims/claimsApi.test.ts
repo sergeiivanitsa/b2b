@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiHttpError } from '../lib/api'
 import {
   createClaim,
+  createClaimFromCompanyReport,
   deleteClaimFile,
   getApiHttpErrorStatus,
   generateClaimPreview,
@@ -76,6 +77,17 @@ describe('claimsApi', () => {
     expect(options?.method).toBe('POST')
     expect(options?.credentials).toBe('include')
     expect(options?.body).toBe(JSON.stringify({ input_text: 'Text' }))
+  })
+
+  it('linked create sends no client-side debtor identity', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ claim_id: 12, edit_token: 'token', claim: {} }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    )
+    await createClaimFromCompanyReport('2e7e9d9f-5f3a-4d43-a8e8-2bb3c2adf6b1', ' facts ', 'retry-1')
+    const [path, options] = fetchSpy.mock.calls[0]
+    expect(path).toBe('/api/claims/handoff/company-reports/2e7e9d9f-5f3a-4d43-a8e8-2bb3c2adf6b1')
+    expect(options?.body).toBe(JSON.stringify({ input_text: 'facts' }))
+    expect(new Headers(options?.headers).get('Idempotency-Key')).toBe('retry-1')
   })
 
   it('GET /claims/{id} sends claim edit token header', async () => {

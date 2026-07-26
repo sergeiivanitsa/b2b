@@ -1,12 +1,17 @@
 import re
+from hmac import compare_digest
+from uuid import UUID
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Response, UploadFile
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from product_api.auth import generate_raw_token
+from product_api.auth import generate_raw_token, hmac_sha256
+from product_api.claims.company_report_handoff import resolve_company_report_handoff
 from product_api.claims.extraction import build_extraction_event_payload, run_claim_extraction
+from product_api.claims.extraction import build_empty_normalized_data, build_missing_fields
 from product_api.claims.generation import generate_claim_preview
 from product_api.claims.notifications import (
     NotificationSendError,
@@ -16,6 +21,8 @@ from product_api.claims.preview_header_enrichment import rebuild_claim_preview_h
 from product_api.claims.rules import evaluate_claim_rules
 from product_api.claims.schemas import (
     ClaimContactIn,
+    ClaimHandoffCreateIn,
+    CompanyReportHandoffPreflightOut,
     ClaimPatchIn,
     ClaimPreviewOut,
     PreviewHeaderOut,
@@ -24,7 +31,8 @@ from product_api.claims.schemas import (
 from product_api.claims.storage import delete_claim_upload, save_claim_upload
 from product_api.db.session import get_session
 from product_api.gateway_client import GatewayError
-from product_api.models import Claim
+from product_api.models import Claim, User
+from product_api.rbac import ROLE_ADMIN, ROLE_MEMBER, ROLE_OWNER, require_role
 from product_api.settings import get_settings
 
 from product_api.claims.repository import (
@@ -40,6 +48,7 @@ from product_api.claims.repository import (
     create_claim,
     create_claim_file,
     get_claim_file,
+    get_claim_by_handoff_idempotency_hash,
     list_claim_files,
     remove_claim_file,
 )
@@ -62,6 +71,7 @@ class PublicClaimOut(BaseModel):
     input_text: str
     client_email: str | None
     case_type: str | None
+    source_company_report_id: UUID | None = None
     normalized_data: dict[str, Any] | None
     preview_header: PreviewHeaderOut
     step2: Step2Out
@@ -76,6 +86,7 @@ class ClaimCreateOut(BaseModel):
     claim_id: int
     edit_token: str
     claim: PublicClaimOut
+    reused: bool = False
 
 
 class ClaimFileOut(BaseModel):
@@ -84,6 +95,12 @@ class ClaimFileOut(BaseModel):
     mime_type: str
     file_role: str
     uploaded_at: str | None
+
+
+require_claim_handoff_member = require_role(ROLE_OWNER, ROLE_ADMIN, ROLE_MEMBER)
+_IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9._~-]{1,128}$")
+_HANDOFF_COMMAND_DOMAIN = "claims-handoff-command-v1"
+_HANDOFF_EDIT_DOMAIN = "claims-handoff-edit-v1"
 
 
 def _normalize_input_text(raw_value: str) -> str:
@@ -104,6 +121,30 @@ def _normalize_file_role(raw_value: str) -> str:
     if not re.fullmatch(r"[a-z0-9_]+", normalized):
         raise HTTPException(status_code=400, detail="invalid file_role")
     return normalized
+
+
+def normalize_handoff_idempotency_key(raw_value: str | None) -> str:
+    value = raw_value.strip() if raw_value else ""
+    if not _IDEMPOTENCY_KEY_RE.fullmatch(value):
+        raise HTTPException(status_code=400, detail="valid Idempotency-Key is required")
+    return value
+
+
+def derive_handoff_capabilities(*, actor_user_id: int, report_id: UUID, idempotency_key: str) -> tuple[str, str]:
+    """Return separately domain-separated command and edit capability digests."""
+    common = f"{actor_user_id}\x1f{report_id}\x1f{idempotency_key}"
+    return (
+        hmac_sha256(settings.claim_edit_token_secret, f"{_HANDOFF_COMMAND_DOMAIN}\x1f{common}"),
+        hmac_sha256(settings.claim_edit_token_secret, f"{_HANDOFF_EDIT_DOMAIN}\x1f{common}"),
+    )
+
+
+def _handoff_reuse_matches(claim: Claim, *, report_id: UUID, input_text: str, edit_capability: str) -> bool:
+    return (
+        claim.source_company_report_id == report_id
+        and claim.input_text == input_text
+        and compare_digest(claim.edit_token_hash, hash_claim_edit_token(edit_capability))
+    )
 
 
 @router.post("/claims", response_model=ClaimCreateOut)
@@ -137,6 +178,112 @@ async def create_public_claim(
         "claim_id": claim.id,
         "edit_token": raw_token,
         "claim": build_public_claim_snapshot(claim),
+    }
+
+
+@router.get(
+    "/claims/handoff/company-reports/{report_id}",
+    response_model=CompanyReportHandoffPreflightOut,
+)
+async def preflight_claim_handoff(
+    report_id: UUID,
+    session: AsyncSession = Depends(get_session),
+    _current_user: User = Depends(require_claim_handoff_member),
+):
+    resolution = await resolve_company_report_handoff(session, report_id)
+    if resolution.reason == "report_not_found":
+        raise HTTPException(status_code=404, detail={"code": "company_report_not_found"})
+    if not resolution.available:
+        return {"report_id": report_id, "availability": "manual_required", "reason": resolution.reason, "prefill": {}, "prefilled_fields": []}
+    handoff = resolution.handoff
+    assert handoff is not None
+    return {
+        "report_id": handoff.report_id,
+        "availability": "available",
+        "prefill": handoff.debtor_fields(),
+        "prefilled_fields": [key for key, value in handoff.debtor_fields().items() if value is not None],
+    }
+
+
+@router.post("/claims/handoff/company-reports/{report_id}", response_model=ClaimCreateOut)
+async def create_claim_from_company_report(
+    report_id: UUID,
+    payload: ClaimHandoffCreateIn,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_claim_handoff_member),
+):
+    """Create an explicit, actor-scoped handoff draft; navigation creates nothing."""
+    input_text = _normalize_input_text(payload.input_text)
+    canonical_key = normalize_handoff_idempotency_key(idempotency_key)
+    resolution = await resolve_company_report_handoff(session, report_id)
+    if not resolution.available:
+        raise HTTPException(status_code=409, detail={"code": resolution.reason or "prefill_unavailable"})
+    handoff = resolution.handoff
+    assert handoff is not None
+
+    command_digest, edit_capability = derive_handoff_capabilities(
+        actor_user_id=current_user.id,
+        report_id=report_id,
+        idempotency_key=canonical_key,
+    )
+    existing = await get_claim_by_handoff_idempotency_hash(session, command_digest)
+    if existing is not None:
+        if not _handoff_reuse_matches(
+            existing, report_id=report_id, input_text=input_text, edit_capability=edit_capability
+        ):
+            raise HTTPException(status_code=409, detail="idempotency key conflict")
+        return {
+            "claim_id": existing.id,
+            "edit_token": edit_capability,
+            "claim": build_public_claim_snapshot(existing),
+            "reused": True,
+        }
+
+    normalized_data = build_empty_normalized_data()
+    normalized_data.update(handoff.debtor_fields())
+    normalized_data["missing_fields"] = build_missing_fields(normalized_data)
+    try:
+        async with session.begin_nested():
+            claim = await create_claim(
+                session,
+                price_rub=settings.claims_price_rub,
+                input_text=input_text,
+                edit_token_hash=hash_claim_edit_token(edit_capability),
+                source_company_report_id=report_id,
+                handoff_idempotency_key_hash=command_digest,
+                normalized_data=normalized_data,
+            )
+            await append_claim_event(
+                session,
+                claim_id=claim.id,
+                event_type="claim.company_report_handoff_created",
+                payload_json={
+                    "report_id": str(report_id),
+                    "prefilled_fields": ["debtor_name", "debtor_inn"],
+                    "report_status": "available",
+                },
+            )
+    except IntegrityError:
+        # A concurrent command may have won the unique digest race.  Re-read
+        # only this authenticated actor's digest, never a raw client key.
+        existing = await get_claim_by_handoff_idempotency_hash(session, command_digest)
+        if existing is None or not _handoff_reuse_matches(
+            existing, report_id=report_id, input_text=input_text, edit_capability=edit_capability
+        ):
+            raise HTTPException(status_code=409, detail="idempotency key conflict") from None
+        return {
+            "claim_id": existing.id,
+            "edit_token": edit_capability,
+            "claim": build_public_claim_snapshot(existing),
+            "reused": True,
+        }
+    await session.commit()
+    return {
+        "claim_id": claim.id,
+        "edit_token": edit_capability,
+        "claim": build_public_claim_snapshot(claim),
+        "reused": False,
     }
 
 

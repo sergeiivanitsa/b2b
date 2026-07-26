@@ -6,7 +6,7 @@ import type { CompanyReportResponse, PublicSignal } from '../../companyReport/co
 import { CompanyReportContent } from './CompanyReportContent'
 
 const response: CompanyReportResponse = {
-  report_id: 'report-1', status: 'complete', started_at: '2026-01-01T00:00:00Z',
+  report_id: '2e7e9d9f-5f3a-4d43-a8e8-2bb3c2adf6b1', status: 'complete', started_at: '2026-01-01T00:00:00Z',
   report: {
     status: 'complete', datasets: {}, usable_for_public_page: true, usable_for_future_scoring: true,
     completeness: { available_count: 3, required_count: 3, percent: 100, missing_datasets: [], unavailable_datasets: [] }, freshness: { generated_at: '2026-01-01T00:00:00Z' }, warnings: [],
@@ -18,7 +18,7 @@ const response: CompanyReportResponse = {
   scoring: { level: 'insufficient_data', score_points: null, confidence: {}, reasons: [], domain_breakdown: [] },
 }
 
-function LocationProbe() { const location = useLocation(); return <pre>{JSON.stringify(location.state)}</pre> }
+function LocationProbe() { const location = useLocation(); return <pre>{location.search}</pre> }
 
 describe('CompanyReportContent', () => {
   afterEach(cleanup)
@@ -74,11 +74,10 @@ describe('CompanyReportContent', () => {
     expect(screen.queryByText('не показывать')).toBeNull()
     expect(screen.queryByText('evaluation_basis')).toBeNull()
   })
-  it('passes only minimal context to the Claims route', () => {
+  it('passes only a minimal report identifier to the Claims route', () => {
     render(<MemoryRouter initialEntries={['/company/1234567890-test']}><Routes><Route path="/company/:key" element={<CompanyReportContent inn="1234567890" response={response} />} /><Route path="/claims" element={<LocationProbe />} /></Routes></MemoryRouter>)
-    fireEvent.click(screen.getByRole('button', { name: 'Оценить конкретный долг' }))
-    const state = screen.getByText(/companyReportContext/).textContent ?? ''
-    expect(state).toContain('1234567890'); expect(state).toContain('ООО Тест'); expect(state).toContain('report-1')
-    expect(state).not.toContain('scoring')
+    fireEvent.click(screen.getByRole('button', { name: 'Перейти к взысканию' }))
+    expect(screen.getByText(/report_id=2e7e9d9f-5f3a-4d43-a8e8-2bb3c2adf6b1/)).toBeTruthy()
+    expect(screen.queryByText(/companyReportContext/)).toBeNull()
   })
 })

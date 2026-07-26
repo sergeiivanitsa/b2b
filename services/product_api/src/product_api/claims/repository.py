@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,7 @@ from .normalization import (
     normalize_case_type,
     normalize_client_email,
 )
+from .extraction import build_missing_fields
 from .preview_header_enrichment import build_preview_header_from_normalized_data
 from .preview_header_formatter import build_preview_header_party
 
@@ -47,6 +49,9 @@ def build_public_claim_snapshot(claim: Claim) -> dict:
         "input_text": claim.input_text,
         "client_email": claim.client_email,
         "case_type": claim.case_type,
+        "source_company_report_id": str(claim.source_company_report_id)
+        if claim.source_company_report_id is not None
+        else None,
         "normalized_data": normalized_data,
         "preview_header": _build_claim_preview_header(claim, normalized_data),
         "step2": build_step2_contract(normalized_data),
@@ -64,6 +69,9 @@ async def create_claim(
     price_rub: int,
     input_text: str,
     edit_token_hash: str,
+    source_company_report_id: UUID | None = None,
+    handoff_idempotency_key_hash: str | None = None,
+    normalized_data: dict[str, Any] | None = None,
 ) -> Claim:
     now = utcnow()
     claim = Claim(
@@ -72,6 +80,9 @@ async def create_claim(
         price_rub=price_rub,
         input_text=input_text,
         edit_token_hash=edit_token_hash,
+        source_company_report_id=source_company_report_id,
+        handoff_idempotency_key_hash=handoff_idempotency_key_hash,
+        normalized_data_json=normalized_data,
         created_at=now,
         updated_at=now,
     )
@@ -82,6 +93,15 @@ async def create_claim(
 
 async def get_claim_by_id(session: AsyncSession, claim_id: int) -> Claim | None:
     result = await session.execute(select(Claim).where(Claim.id == claim_id))
+    return result.scalar_one_or_none()
+
+
+async def get_claim_by_handoff_idempotency_hash(
+    session: AsyncSession, handoff_idempotency_key_hash: str
+) -> Claim | None:
+    result = await session.execute(
+        select(Claim).where(Claim.handoff_idempotency_key_hash == handoff_idempotency_key_hash)
+    )
     return result.scalar_one_or_none()
 
 
@@ -120,6 +140,14 @@ async def apply_claim_extraction_result(
     case_type: str | None,
     normalized_data: dict[str, Any],
 ) -> Claim:
+    # Extraction is allowed to fill claim facts, but it must not overwrite the
+    # server-trusted debtor identity copied by the explicit report handoff.
+    if claim.source_company_report_id is not None:
+        current = claim.normalized_data_json if isinstance(claim.normalized_data_json, dict) else {}
+        normalized_data = dict(normalized_data)
+        normalized_data["debtor_name"] = current.get("debtor_name")
+        normalized_data["debtor_inn"] = current.get("debtor_inn")
+        normalized_data["missing_fields"] = build_missing_fields(normalized_data)
     claim.case_type = case_type
     claim.normalized_data_json = normalized_data
     if claim.generation_state != "manual_review_required":
