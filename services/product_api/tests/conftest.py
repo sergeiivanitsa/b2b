@@ -56,6 +56,11 @@ from product_api.db.session import get_session
 from product_api.main import app
 
 TABLES = [
+    "company_report_publication_journal",
+    "company_report_publication_batch_items",
+    "company_report_publication_batches",
+    "company_report_publications",
+    "company_report_publication_control",
     "company_report_jobs",
     "company_report_provider_requests",
     "company_report_datasets",
@@ -86,7 +91,10 @@ def db_url() -> str:
 
 @pytest.fixture()
 async def engine(db_url: str, request):
-    if request.node.name == "test_company_report_jobs_upgrade_inspect_and_downgrade":
+    if request.node.name in {
+        "test_company_report_jobs_upgrade_inspect_and_downgrade",
+        "test_company_report_publications_upgrade_inspect_and_downgrade",
+    }:
         yield None
         return
     engine = create_async_engine(db_url, future=True)
@@ -128,7 +136,10 @@ async def async_client(engine):
 
 @pytest.fixture(autouse=True)
 async def _clean_db(engine, request):
-    if request.node.name == "test_company_report_jobs_upgrade_inspect_and_downgrade":
+    if request.node.name in {
+        "test_company_report_jobs_upgrade_inspect_and_downgrade",
+        "test_company_report_publications_upgrade_inspect_and_downgrade",
+    }:
         yield
         return
     async with engine.begin() as conn:
@@ -146,6 +157,14 @@ async def _clean_db(engine, request):
             await conn.execute(
                 text(f"TRUNCATE {', '.join(existing)} RESTART IDENTITY CASCADE")
             )
+            if "company_report_publication_control" in existing:
+                await conn.execute(
+                    text(
+                        "INSERT INTO company_report_publication_control "
+                        "(id, state, policy_version) VALUES "
+                        "(1, 'paused', 'publication_sufficiency_v1')"
+                    )
+                )
     yield
     async with engine.begin() as conn:
         existing = (
@@ -162,3 +181,11 @@ async def _clean_db(engine, request):
             await conn.execute(
                 text(f"TRUNCATE {', '.join(existing)} RESTART IDENTITY CASCADE")
             )
+            if "company_report_publication_control" in existing:
+                await conn.execute(
+                    text(
+                        "INSERT INTO company_report_publication_control "
+                        "(id, state, policy_version) VALUES "
+                        "(1, 'paused', 'publication_sufficiency_v1')"
+                    )
+                )

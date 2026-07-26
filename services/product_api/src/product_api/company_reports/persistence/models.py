@@ -7,11 +7,13 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     JSON,
     Boolean,
+    BigInteger,
     CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
     Integer,
+    Identity,
     Numeric,
     String,
     UniqueConstraint,
@@ -44,6 +46,7 @@ DATASET_STATUSES = (
     "unexpected_error",
 )
 REQUEST_OUTCOMES = ("success", "error", "not_executed")
+PUBLICATION_POLICY_VERSION = "publication_sufficiency_v1"
 
 
 class CompanyReportSubject(Base):
@@ -285,6 +288,132 @@ class CompanyReportDataset(Base):
 
     def __repr__(self) -> str:
         return f"<CompanyReportDataset id={self.id!s} dataset={self.dataset!r} status={self.status!r}>"
+
+
+class CompanyReportPublicationControl(Base):
+    __tablename__ = "company_report_publication_control"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="company_report_publication_control_singleton"),
+        CheckConstraint("state IN ('paused', 'active')", name="company_report_publication_control_state"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="paused")
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class CompanyReportPublication(Base):
+    __tablename__ = "company_report_publications"
+    __table_args__ = (
+        UniqueConstraint("subject_id", name="uq_company_report_publications_subject_id"),
+        UniqueConstraint("report_id", name="uq_company_report_publications_report_id"),
+        UniqueConstraint("canonical_path", name="uq_company_report_publications_canonical_path"),
+        CheckConstraint("status IN ('active', 'paused', 'disabled')", name="company_report_publication_status"),
+        CheckConstraint("canonical_path ~ '^/company/([0-9]{10}|[0-9]{12})-[a-z0-9]+(-[a-z0-9]+)*$'", name="company_report_publication_path"),
+        CheckConstraint("(status = 'active' AND snapshot_hash IS NOT NULL AND published_lastmod IS NOT NULL) OR status != 'active'", name="company_report_publication_active_shape"),
+        CheckConstraint("status = 'active' OR indexable = false", name="company_report_publication_inactive_noindex"),
+        CheckConstraint("batch_generation > 0", name="company_report_publication_batch_generation"),
+        Index("ix_company_report_publications_sitemap", "status", "indexable", "canonical_path"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    subject_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_subjects.id"), nullable=False)
+    report_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_reports.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    canonical_slug: Mapped[str] = mapped_column(String(200), nullable=False)
+    canonical_path: Mapped[str] = mapped_column(String(240), nullable=False)
+    snapshot_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    batch_generation: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("company_report_publication_batches.generation"),
+        nullable=False,
+    )
+    indexable: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    sufficiency_status: Mapped[str] = mapped_column(String(64), nullable=False)
+    published_lastmod: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    audited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CompanyReportPublicationBatch(Base):
+    __tablename__ = "company_report_publication_batches"
+    __table_args__ = (
+        CheckConstraint("state IN ('running', 'paused', 'completed', 'failed')", name="company_report_publication_batch_state"),
+        CheckConstraint("requested_limit >= 1", name="company_report_publication_batch_requested_limit"),
+        CheckConstraint("candidate_count >= 0 AND candidate_count <= requested_limit", name="company_report_publication_batch_candidate_count"),
+        CheckConstraint("next_ordinal >= 0 AND next_ordinal <= candidate_count", name="company_report_publication_batch_cursor"),
+        CheckConstraint("(candidate_count = 0 AND state = 'completed' AND next_ordinal = 0 AND claimed_ordinal IS NULL) OR candidate_count > 0", name="company_report_publication_batch_empty_shape"),
+        UniqueConstraint("generation", name="uq_company_report_publication_batches_generation"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    generation: Mapped[int] = mapped_column(
+        BigInteger, Identity(always=True), nullable=False
+    )
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    requested_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+    candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    next_ordinal: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    claimed_ordinal: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    safe_failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CompanyReportPublicationBatchItem(Base):
+    __tablename__ = "company_report_publication_batch_items"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "ordinal", name="uq_company_report_publication_batch_item_ordinal"),
+        CheckConstraint("state IN ('pending', 'claimed', 'published', 'skipped', 'disabled', 'failed')", name="company_report_publication_batch_item_state"),
+        CheckConstraint("(state = 'pending' AND claim_token IS NULL AND claimed_at IS NULL AND finished_at IS NULL AND reason_code IS NULL) OR (state = 'claimed' AND claim_token IS NOT NULL AND claimed_at IS NOT NULL AND finished_at IS NULL AND reason_code IS NULL) OR (state IN ('published', 'skipped', 'disabled', 'failed') AND claim_token IS NOT NULL AND claimed_at IS NOT NULL AND finished_at IS NOT NULL AND reason_code IS NOT NULL)", name="company_report_publication_batch_item_shape"),
+        CheckConstraint("reason_code IS NULL OR reason_code IN ('sufficient', 'invalid_report', 'report_not_finalized', 'report_not_usable', 'invalid_or_private_snapshot', 'insufficient_scoring', 'thin_content', 'partial_insufficient', 'safe_policy_error', 'state_conflict', 'superseded_by_newer_batch')", name="company_report_publication_batch_item_reason"),
+        Index("ix_company_report_publication_batch_item_claim", "batch_id", "state", "ordinal"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    batch_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_publication_batches.id"), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    subject_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_subjects.id"), nullable=False)
+    report_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_reports.id"), nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    claim_token: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class CompanyReportPublicationJournal(Base):
+    __tablename__ = "company_report_publication_journal"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "ordinal", "action", name="uq_company_report_publication_journal_action"),
+        UniqueConstraint("report_id", "snapshot_hash", "policy_version", "action", name="uq_company_report_publication_journal_terminal"),
+        CheckConstraint("action IN ('published', 'skipped', 'disabled', 'failed')", name="company_report_publication_journal_action_value"),
+        CheckConstraint("reason_code IN ('sufficient', 'invalid_report', 'report_not_finalized', 'report_not_usable', 'invalid_or_private_snapshot', 'insufficient_scoring', 'thin_content', 'partial_insufficient', 'safe_policy_error', 'state_conflict', 'superseded_by_newer_batch')", name="company_report_publication_journal_reason"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    batch_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_publication_batches.id"), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    subject_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_subjects.id"), nullable=False)
+    report_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_reports.id"), nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class CompanyReportProviderRequest(Base):

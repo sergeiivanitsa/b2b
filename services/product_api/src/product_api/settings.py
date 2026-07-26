@@ -161,6 +161,18 @@ class Settings(BaseSettings):
     rate_limit_company_rpm: int = Field(default=60, validation_alias="RATE_LIMIT_COMPANY_RPM")
     rate_limit_user_rpm: int = Field(default=30, validation_alias="RATE_LIMIT_USER_RPM")
     rate_limit_ip_rpm: int = Field(default=120, validation_alias="RATE_LIMIT_IP_RPM")
+    seo_public_rollout_enabled: bool = Field(
+        default=False, validation_alias="SEO_PUBLIC_ROLLOUT_ENABLED"
+    )
+    seo_public_base_url: str = Field(
+        default="http://localhost:8000", validation_alias="SEO_PUBLIC_BASE_URL"
+    )
+    seo_publish_batch_max_limit: int = Field(
+        default=25, validation_alias="SEO_PUBLISH_BATCH_MAX_LIMIT"
+    )
+    seo_sitemap_chunk_size: int = Field(
+        default=1000, validation_alias="SEO_SITEMAP_CHUNK_SIZE"
+    )
 
     @model_validator(mode="after")
     def _no_openai_key_in_product_api(self) -> "Settings":
@@ -437,6 +449,28 @@ class Settings(BaseSettings):
     def _validate_datanewton_cache_ttl_seconds(cls, value: int) -> int:
         if value < 0:
             raise ValueError("DATANEWTON_CACHE_TTL_SECONDS must be >= 0")
+        return value
+
+    @field_validator("seo_public_base_url")
+    @classmethod
+    def _validate_seo_public_base_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        if not normalized.startswith(("http://", "https://")):
+            raise ValueError("SEO_PUBLIC_BASE_URL must start with http:// or https://")
+        return normalized
+
+    @field_validator("seo_publish_batch_max_limit")
+    @classmethod
+    def _validate_seo_publish_batch_max_limit(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("SEO_PUBLISH_BATCH_MAX_LIMIT must be >= 1")
+        return value
+
+    @field_validator("seo_sitemap_chunk_size")
+    @classmethod
+    def _validate_seo_sitemap_chunk_size(cls, value: int) -> int:
+        if not 1 <= value <= 50000:
+            raise ValueError("SEO_SITEMAP_CHUNK_SIZE must be in 1..50000")
         return value
 
 

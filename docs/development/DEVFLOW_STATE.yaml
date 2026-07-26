@@ -82,17 +82,17 @@ iterations:
   - id: 11
     slug: company-page
     title: "Страница компании"
-    status: ready_for_merge
+    status: merged
     branch: feat/iteration-11-company-page
-    commit: pending
-    merged_at: null
+    commit: 71613e5c880748e845e77beebae037ae4f0521e2
+    merged_at: "2026-07-24T21:28:42+10:00"
     block_reason: null
   - id: 12
     slug: seo-publishing
     title: "SEO и массовая публикация страниц"
-    status: planned
-    branch: null
-    commit: null
+    status: ready_for_merge
+    branch: feat/iteration-12-seo-publishing
+    commit: pending
     merged_at: null
     block_reason: null
   - id: 13

@@ -26,6 +26,11 @@ from .jobs import (
     reconcile_expired_jobs,
 )
 from .models import (
+    CompanyReportPublication,
+    CompanyReportPublicationBatch,
+    CompanyReportPublicationBatchItem,
+    CompanyReportPublicationControl,
+    CompanyReportPublicationJournal,
     CompanyReportDataset,
     CompanyReportJob,
     CompanyReportProviderRequest,
@@ -62,6 +67,11 @@ from .serialization import (
 
 __all__ = [
     "CompanyReportDataset",
+    "CompanyReportPublication",
+    "CompanyReportPublicationBatch",
+    "CompanyReportPublicationBatchItem",
+    "CompanyReportPublicationControl",
+    "CompanyReportPublicationJournal",
     "CompanyReportJob",
     "CompanyReportJobFencingError",
     "CompanyReportJobNotFoundError",
