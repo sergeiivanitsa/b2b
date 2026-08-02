@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 
 import { toUserMessage } from '../auth/errors'
+import { consumeCompanyReturnTarget } from '../auth/companyReturnTarget'
 import { resolvePostAuthRoute } from '../auth/postAuthRoute'
 import { useAuth } from '../auth/useAuth'
 
@@ -30,7 +31,7 @@ export function ConfirmPage() {
 
       try {
         const nextUser = await confirmToken(normalizedToken)
-        navigate(resolvePostAuthRoute(nextUser), { replace: true })
+        navigate(consumeCompanyReturnTarget() ?? resolvePostAuthRoute(nextUser), { replace: true })
       } catch (submitError) {
         setError(toUserMessage(submitError, 'Could not confirm token.'))
       } finally {

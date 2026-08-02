@@ -98,10 +98,10 @@ iterations:
   - id: 13
     slug: claims-handoff
     title: "Переход к конкретному долгу и claims-flow"
-    status: ready_for_merge
+    status: merged
     branch: feat/iteration-13-claims-handoff
-    commit: pending
-    merged_at: null
+    commit: 1bcc93024bc18c72f0264f76e3e4cf7c8ef7f432
+    merged_at: "2026-08-02T22:01:13+10:00"
     block_reason: null
     baseline_verification:
       owner_approved: true
@@ -162,3 +162,19 @@ iterations:
         - "tests/test_rbac.py::test_rbac_roles"
         - "tests/test_superadmin_hardening.py::test_admin_company_admins_conflict_active_invite_409"
         - "tests/test_superadmin_hardening.py::test_admin_company_admins_missing_company_404_not_500"
+  - id: 14
+    slug: company-report-entry-flow
+    title: "Единая точка входа CompanyReport"
+    status: ready_for_merge
+    branch: feat/company-report-entry-flow
+    commit: pending
+    merged_at: null
+    block_reason: null
+  - id: 15
+    slug: company-report-landing-visual
+    title: "Визуальный первый экран CompanyReport"
+    status: ready_for_merge
+    branch: feat/company-report-entry-flow
+    commit: pending
+    merged_at: null
+    block_reason: null

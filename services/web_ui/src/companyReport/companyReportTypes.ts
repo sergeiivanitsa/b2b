@@ -20,6 +20,7 @@ export type CompanyReportResponse = {
   scoring?: PublicScoring | null
   ai_explanation?: PublicAiExplanation | null
   failure?: SafeFailure | null
+  canonical_path?: string | null
 }
 
 export type CompanyReportAccepted = { report_id: string; status: 'pending'; reused: boolean }

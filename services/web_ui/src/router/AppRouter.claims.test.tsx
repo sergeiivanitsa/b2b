@@ -75,11 +75,12 @@ describe('AppRouter claims shell', () => {
     expectStep1SmokeUi()
   })
 
-  it('keeps root redirect behavior unchanged', () => {
+  it('renders the CompanyReport entry page at the root route', () => {
     mockedUseAuth.mockReturnValue(buildAuthContext('anonymous'))
 
     renderRouter('/')
 
-    expect(screen.getByText('Sign in')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Вернем дебиторскую задолженность под ключ — с оплатой наших услуг по факту взыскания' })).toBeTruthy()
+    expect(screen.queryByText('CompanyReport')).toBeNull()
   })
 })

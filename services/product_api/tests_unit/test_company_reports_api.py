@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 from product_api.company_reports.schemas import (
     CompanyReportAcceptedResponse,
+    CompanyReportResponse,
     CompanyReportStatusResponse,
 )
 from product_api.company_reports.service import (
@@ -169,6 +170,30 @@ async def test_get_query_forbids_extra_and_invalid_bool(async_client):
 
     assert extra.status_code == 422
     assert invalid.status_code == 422
+
+
+async def test_final_response_exposes_additive_canonical_path(async_client, monkeypatch):
+    now = datetime(2026, 7, 23, tzinfo=timezone.utc)
+
+    async def fake_get(_session, *, inn, settings, include_ai_explanation):
+        assert inn == "7700000000"
+        assert include_ai_explanation is False
+        return CompanyReportResponse(
+            report_id=uuid4(),
+            status="complete",
+            started_at=now,
+            canonical_path="/company/7700000000-ooo-vektor",
+        )
+
+    monkeypatch.setattr(company_reports_router, "get_latest_company_report", fake_get)
+    app.dependency_overrides[company_reports_router.require_company_report_member] = _member
+    try:
+        response = await async_client.get("/company-reports/7700000000")
+    finally:
+        app.dependency_overrides.pop(company_reports_router.require_company_report_member, None)
+
+    assert response.status_code == 200
+    assert response.json()["canonical_path"] == "/company/7700000000-ooo-vektor"
 
 
 async def test_anonymous_is_unauthorized(async_client):

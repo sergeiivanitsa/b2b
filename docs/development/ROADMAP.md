@@ -875,6 +875,66 @@ Slug: claims-handoff
 
 ---
 
+## Итерация 14 — Единая точка входа CompanyReport
+
+ID: 14
+Slug: company-report-entry-flow
+
+### Цель
+
+Устранить блокирующий разрыв между вводом ИНН, созданием CompanyReport и его каноническим URL до production-деплоя.
+
+### Scope
+
+- Первый экран с общей формой ИНН в header и hero.
+- Поддерживаемый plain-INN resolver `/company/{inn}`.
+- Переход на `/company/{inn}-{slug}` после готовности данных.
+- Безопасное аддитивное API-поле canonical path и исправление Claims backlink.
+- Targeted/regression tests.
+
+### Вне scope
+
+- Публикации, массовый SEO rollout, миграции, инфраструктура и deployment.
+
+### Критерии приёмки
+
+- Валидный ИНН запускает или открывает отчёт без штатного 404.
+- Plain URL не образует redirect loop и ведёт на canonical при наличии slug.
+- Повторный submit не создаёт дубликат активной задачи.
+- Canonical URL и existing Claims flow сохраняют совместимость.
+
+---
+
+## Итерация 15 — Визуальный первый экран CompanyReport
+
+ID: 15
+Slug: company-report-landing-visual
+
+### Цель
+
+Привести первый экран `/` к утверждённой композиции без изменения API,
+маршрутизации, resolver, auth return target или lifecycle CompanyReport.
+
+### Scope
+
+- Текстовый бренд, header, навигация, hero и карточка проверки на `/`.
+- Два визуальных варианта общей формы ИНН и responsive layout.
+- Frontend tests, build и desktop/tablet/mobile visual verification.
+
+### Вне scope
+
+- Backend, миграции, Claims handoff, инфраструктура, deployment и новые
+  продуктовые страницы.
+
+### Критерии приёмки
+
+- Экран соответствует утверждённому макету и не содержит видимой технической
+  подписи `CompanyReport`.
+- Существующий единый вход в `/company/{inn}` и canonical flow не меняются.
+- На 1440, 768 и 390 px нет горизонтальной прокрутки.
+
+---
+
 ## 4. Условные и отложенные расширения
 
 Эти работы не получают новый ID без отдельного решения и не блокируют основной путь 8–13.

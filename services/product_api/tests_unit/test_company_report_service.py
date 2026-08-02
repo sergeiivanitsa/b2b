@@ -138,6 +138,60 @@ async def test_latest_report_evaluates_ephemerally_without_mutating_snapshot(
     explain.assert_not_awaited()
 
 
+async def test_latest_report_adds_canonical_path_from_matching_safe_identity(
+    monkeypatch,
+):
+    session = _session()
+    base_report = complete_company_report()
+    report = base_report.model_copy(
+        update={
+            "counterparty": base_report.counterparty.model_copy(
+                update={
+                    "inn": "0000000000",
+                    "short_name": "ООО Вектор",
+                    "full_name": "Полное имя не используется",
+                }
+            )
+        }
+    )
+    finalized = _finalized_record(report)
+    monkeypatch.setattr(service, "get_latest_finalized_report_record", AsyncMock(return_value=finalized))
+    monkeypatch.setattr(service, "get_latest_run_status_by_identifier", AsyncMock(return_value=None))
+
+    response = await service.get_latest_company_report(
+        session,
+        inn=report.target_identifier,
+        settings=get_settings(),
+    )
+
+    assert response.canonical_path == "/company/0000000000-ooo-vektor"
+
+
+async def test_latest_report_has_no_canonical_path_without_matching_identity_or_for_failed_report(
+    monkeypatch,
+):
+    session = _session()
+    base_report = complete_company_report()
+    report = base_report.model_copy(
+        update={
+            "counterparty": base_report.counterparty.model_copy(
+                update={"inn": "7700000000", "short_name": None, "full_name": None}
+            )
+        }
+    )
+    finalized = _finalized_record(report)
+    monkeypatch.setattr(service, "get_latest_finalized_report_record", AsyncMock(return_value=finalized))
+    monkeypatch.setattr(service, "get_latest_run_status_by_identifier", AsyncMock(return_value=None))
+
+    response = await service.get_latest_company_report(
+        session,
+        inn=report.target_identifier,
+        settings=get_settings(),
+    )
+
+    assert response.canonical_path is None
+
+
 async def test_pending_does_not_hide_older_finalized_report(monkeypatch):
     session = _session()
     report = complete_company_report()
@@ -219,4 +273,5 @@ async def test_infrastructure_failed_record_exposes_only_allowlisted_failure(
     assert response.scoring is None
     assert response.failure is not None
     assert response.failure.code == "report_execution_interrupted"
+    assert response.canonical_path is None
     assert "raw exception" not in response.model_dump_json()

@@ -9,6 +9,7 @@ import { AdminClaimsListPage } from '../pages/AdminClaimsListPage'
 import { AdminLoginPage } from '../pages/AdminLoginPage'
 import { ChatPage } from '../pages/ChatPage'
 import { CompanyReportPage } from '../pages/CompanyReportPage'
+import { CompanyLandingPage } from '../pages/CompanyLandingPage'
 import { ClaimStep1Page } from '../pages/ClaimStep1Page'
 import { ClaimStep2Page } from '../pages/ClaimStep2Page'
 import { ClaimStep3Page } from '../pages/ClaimStep3Page'
@@ -26,7 +27,7 @@ import { RequireOnboarding, RequireOrgAdmin, RequireSuperadmin } from './Require
 export function AppRouter() {
   return (
     <Routes>
-      <Route path="/" element={<HomeRedirect />} />
+      <Route path="/" element={<CompanyLandingPage />} />
       <Route path="/claims" element={<ClaimStep1Page />} />
       <Route path="/claims/step-2" element={<ClaimStep2Page />} />
       <Route path="/claims/step-3" element={<ClaimStep3Page />} />
@@ -69,28 +70,6 @@ function ClaimsAdminRoutesLayout() {
     <ClaimsAdminAuthProvider>
       <Outlet />
     </ClaimsAdminAuthProvider>
-  )
-}
-
-function HomeRedirect() {
-  const { status, user } = useAuth()
-
-  if (status === 'loading') {
-    return (
-      <main className="screen">
-        <section className="card">
-          <h1 className="card__title">Loading</h1>
-          <p className="card__subtitle">Checking current session...</p>
-        </section>
-      </main>
-    )
-  }
-
-  return (
-    <Navigate
-      to={status === 'authenticated' ? resolvePostAuthRoute(user) : '/login'}
-      replace
-    />
   )
 }
 
