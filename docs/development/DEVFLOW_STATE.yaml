@@ -170,3 +170,11 @@ iterations:
     commit: pending
     merged_at: null
     block_reason: null
+  - id: 15
+    slug: company-report-landing-visual
+    title: "Визуальный первый экран CompanyReport"
+    status: ready_for_merge
+    branch: feat/company-report-entry-flow
+    commit: pending
+    merged_at: null
+    block_reason: null

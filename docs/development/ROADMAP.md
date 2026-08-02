@@ -905,6 +905,36 @@ Slug: company-report-entry-flow
 
 ---
 
+## Итерация 15 — Визуальный первый экран CompanyReport
+
+ID: 15
+Slug: company-report-landing-visual
+
+### Цель
+
+Привести первый экран `/` к утверждённой композиции без изменения API,
+маршрутизации, resolver, auth return target или lifecycle CompanyReport.
+
+### Scope
+
+- Текстовый бренд, header, навигация, hero и карточка проверки на `/`.
+- Два визуальных варианта общей формы ИНН и responsive layout.
+- Frontend tests, build и desktop/tablet/mobile visual verification.
+
+### Вне scope
+
+- Backend, миграции, Claims handoff, инфраструктура, deployment и новые
+  продуктовые страницы.
+
+### Критерии приёмки
+
+- Экран соответствует утверждённому макету и не содержит видимой технической
+  подписи `CompanyReport`.
+- Существующий единый вход в `/company/{inn}` и canonical flow не меняются.
+- На 1440, 768 и 390 px нет горизонтальной прокрутки.
+
+---
+
 ## 4. Условные и отложенные расширения
 
 Эти работы не получают новый ID без отдельного решения и не блокируют основной путь 8–13.

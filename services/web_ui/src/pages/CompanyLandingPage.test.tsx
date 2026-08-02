@@ -15,4 +15,15 @@ describe('CompanyLandingPage', () => {
     fireEvent.submit(inputs[1].closest('form')!)
     expect(screen.getByText('/company/7700000000')).toBeTruthy()
   })
+
+  it('renders the approved landing copy with two accessible INN forms', () => {
+    render(<MemoryRouter><CompanyLandingPage /></MemoryRouter>)
+
+    expect(screen.getByRole('heading', { name: 'Вернем дебиторскую задолженность под ключ — с оплатой наших услуг по факту взыскания' })).toBeTruthy()
+    expect(screen.getByText('ВЗЫСКАНИЕ ДЕБИТОРКИ')).toBeTruthy()
+    expect(screen.getAllByLabelText('ИНН компании')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Проверить должника' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Запустить проверку' })).toBeTruthy()
+    expect(screen.queryByText('CompanyReport')).toBeNull()
+  })
 })

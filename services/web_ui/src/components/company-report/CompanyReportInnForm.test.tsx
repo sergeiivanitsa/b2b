@@ -23,4 +23,13 @@ describe('CompanyReportInnForm', () => {
     expect(screen.getByText('Введите ИНН из 10 или 12 цифр.')).toBeTruthy()
     expect(onSubmit).not.toHaveBeenCalled()
   })
+
+  it('keeps validation and submit behavior when its presentation text changes', () => {
+    const onSubmit = vi.fn()
+    render(<CompanyReportInnForm id="inn" value="7700000000" onChange={vi.fn()} onSubmit={onSubmit} compact placeholder="ИНН" submitLabel="Проверить должника" />)
+
+    expect(screen.getByPlaceholderText('ИНН')).toBeTruthy()
+    fireEvent.submit(screen.getByRole('button', { name: 'Проверить должника' }).closest('form')!)
+    expect(onSubmit).toHaveBeenCalledWith('7700000000')
+  })
 })

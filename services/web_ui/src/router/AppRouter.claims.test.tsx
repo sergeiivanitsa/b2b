@@ -80,6 +80,7 @@ describe('AppRouter claims shell', () => {
 
     renderRouter('/')
 
-    expect(screen.getByRole('heading', { name: 'Проверьте контрагента перед важной сделкой' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Вернем дебиторскую задолженность под ключ — с оплатой наших услуг по факту взыскания' })).toBeTruthy()
+    expect(screen.queryByText('CompanyReport')).toBeNull()
   })
 })
