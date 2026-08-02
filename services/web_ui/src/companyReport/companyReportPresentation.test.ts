@@ -3,16 +3,24 @@ import { describe, expect, it } from 'vitest'
 import {
   NO_DATA,
   financeUnit,
+  isCanonicalCompanyPath,
   parseCompanyKey,
   signalLabel,
   signalPeriodText,
 } from './companyReportPresentation'
 
 describe('company report presentation helpers', () => {
-  it('accepts only exact INN and lowercase slug company keys', () => {
-    expect(parseCompanyKey('1234567890-company-name')).toEqual({ inn: '1234567890' })
-    expect(parseCompanyKey('123456789012-company')).toEqual({ inn: '123456789012' })
+  it('distinguishes supported plain and canonical company keys', () => {
+    expect(parseCompanyKey('1234567890')).toEqual({ kind: 'plain', inn: '1234567890' })
+    expect(parseCompanyKey('1234567890-company-name')).toEqual({ kind: 'canonical', inn: '1234567890' })
+    expect(parseCompanyKey('123456789012-company')).toEqual({ kind: 'canonical', inn: '123456789012' })
     for (const value of ['123-company', '1234567890-Company', '1234567890-', '1234567890-company--name', '1234567890-company_name']) expect(parseCompanyKey(value)).toEqual({ error: 'invalid_company_key' })
+  })
+  it('accepts only a canonical path for the same INN', () => {
+    expect(isCanonicalCompanyPath('/company/1234567890-company-name', '1234567890')).toBe(true)
+    expect(isCanonicalCompanyPath('/company/123456789012-company-name', '1234567890')).toBe(false)
+    expect(isCanonicalCompanyPath('/company/1234567890', '1234567890')).toBe(false)
+    expect(isCanonicalCompanyPath('https://example.test/company/1234567890-company', '1234567890')).toBe(false)
   })
   it('preserves unavailable data and unknown finance units', () => {
     expect(financeUnit('provider_units_unknown')).toBe('Единица измерения неизвестна')

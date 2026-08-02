@@ -154,6 +154,7 @@ class CompanyReportResponse(StrictPublicModel):
     scoring: ScoringResult | None = None
     ai_explanation: AIExplanationResult | None = None
     failure: CompanyReportSafeFailureResponse | None = None
+    canonical_path: str | None = None
 
 
 _FACT_EXCLUDED_KEYS = {

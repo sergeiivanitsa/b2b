@@ -3149,3 +3149,29 @@ body.is-chat-page #root {
 @media (max-width: 1024px) { .company-report-grid { grid-template-columns: 1fr; } }
 @media (max-width: 480px) { .company-report-page { padding: 16px 12px 36px; } .company-report-hero, .company-report-section, .company-report-cta, .company-report-state { padding: 16px; } .company-report-cta button { width: 100%; } .company-report-section dl > div { grid-template-columns: 1fr; gap: 3px; } }
 @media (prefers-reduced-motion: reduce) { .company-report-page * { scroll-behavior: auto; transition: none !important; } }
+
+.company-entry-page { min-height: 100vh; padding: 20px; color: #182033; background: #f3f6fc; }
+.company-entry-header, .company-entry-hero { max-width: 1160px; margin: 0 auto; }
+.company-entry-header { display: grid; grid-template-columns: auto 1fr minmax(280px, 360px); align-items: center; gap: 20px; padding: 12px 0 32px; }
+.company-entry-header .claims-brand { margin: 0; }
+.company-entry-header nav { display: flex; justify-content: center; flex-wrap: wrap; gap: 14px; }
+.company-entry-header nav a { color: #283d73; font-weight: 700; text-decoration: none; }
+.company-entry-header nav a:focus-visible, .company-entry-form input:focus-visible, .company-entry-form button:focus-visible { outline: 3px solid #ffb000; outline-offset: 3px; }
+.company-entry-hero { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(320px, .85fr); gap: 36px; align-items: center; padding: 52px 36px; background: #fff; border: 1px solid #dce2ea; border-radius: 18px; }
+.company-entry-eyebrow { margin: 0 0 10px; color: #415b9a; font-weight: 700; }
+.company-entry-hero h1 { margin: 0 0 16px; font-size: clamp(2rem, 4vw, 3.5rem); line-height: 1.08; }
+.company-entry-benefits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 18px; margin: 24px 0 0; padding-left: 20px; }
+.company-entry-check-card { padding: 26px; border: 1px solid #dce2ea; border-radius: 14px; background: #f8faff; box-shadow: 0 10px 26px rgb(24 32 51 / 8%); }
+.company-entry-check-card h2 { margin-top: 0; }
+.company-entry-form label { display: block; margin-bottom: 7px; font-weight: 700; }
+.company-entry-form__controls { display: flex; gap: 10px; }
+.company-entry-form input { min-width: 0; width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #b9c5d5; border-radius: 8px; font: inherit; }
+.company-entry-form button { min-height: 44px; padding: 10px 16px; border: 0; border-radius: 8px; background: #283d73; color: #fff; font-weight: 700; cursor: pointer; }
+.company-entry-form button:disabled { opacity: .65; cursor: wait; }
+.company-entry-form__hint, .company-entry-form__status { min-height: 1.25em; margin: 6px 0 0; font-size: .875rem; }
+.company-entry-form__hint { color: #526071; }
+.company-entry-form__status { color: #b42318; }
+.company-entry-form--compact label, .company-entry-form--compact .company-entry-form__hint, .company-entry-form--compact .company-entry-form__status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.company-entry-form--compact .company-entry-form__controls { gap: 6px; }
+@media (max-width: 1024px) { .company-entry-header { grid-template-columns: 1fr; } .company-entry-header nav { justify-content: flex-start; } .company-entry-hero { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .company-entry-page { padding: 12px; } .company-entry-hero { padding: 24px 18px; } .company-entry-benefits { grid-template-columns: 1fr; } .company-entry-form__controls { flex-direction: column; } .company-entry-form button { width: 100%; } }

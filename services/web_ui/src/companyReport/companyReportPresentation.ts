@@ -3,11 +3,22 @@ import type { CounterpartyFacts, FinanceFacts, FinancePeriod, SafeWarning, Signa
 
 export const STATUS_POLL_INTERVAL_MS = 3000
 export const NO_DATA = 'Нет данных'
-export type CompanyKeyParseResult = { inn: string } | { error: 'invalid_company_key' }
+export type CompanyKeyParseResult =
+  | { kind: 'plain'; inn: string }
+  | { kind: 'canonical'; inn: string }
+  | { error: 'invalid_company_key' }
 
 export function parseCompanyKey(value: string | undefined): CompanyKeyParseResult {
-  const match = /^(\d{10}|\d{12})-([a-z0-9]+(?:-[a-z0-9]+)*)$/.exec(value ?? '')
-  return match ? { inn: match[1] } : { error: 'invalid_company_key' }
+  const key = value ?? ''
+  if (/^(\d{10}|\d{12})$/.test(key)) return { kind: 'plain', inn: key }
+  const match = /^(\d{10}|\d{12})-([a-z0-9]+(?:-[a-z0-9]+)*)$/.exec(key)
+  return match ? { kind: 'canonical', inn: match[1] } : { error: 'invalid_company_key' }
+}
+
+export function isCanonicalCompanyPath(value: string | null | undefined, inn: string): boolean {
+  if (!value?.startsWith('/company/')) return false
+  const parsed = parseCompanyKey(value.slice('/company/'.length))
+  return 'kind' in parsed && parsed.kind === 'canonical' && parsed.inn === inn
 }
 
 export function displayValue(value: string | number | boolean | null | undefined): string {

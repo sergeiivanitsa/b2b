@@ -30,6 +30,7 @@ from product_api.providers.datanewton import (
 )
 from product_api.settings import Settings
 
+from .seo import SeoPolicyError, canonical_path
 from .schemas import (
     CompanyReportAcceptedResponse,
     CompanyReportResponse,
@@ -181,6 +182,7 @@ async def get_latest_company_report(
             scoring=None,
             ai_explanation=None,
             failure=_safe_infrastructure_failure(finalized.safe_error_snapshot),
+            canonical_path=None,
         )
         assert_public_payload_is_safe(response.model_dump(mode="json"))
         return response
@@ -247,9 +249,26 @@ async def get_latest_company_report(
         scoring=scoring,
         ai_explanation=ai_result,
         failure=None,
+        canonical_path=_canonical_path_for_report(report, normalized),
     )
     assert_public_payload_is_safe(response.model_dump(mode="json"))
     return response
+
+
+def _canonical_path_for_report(report: object, inn: str) -> str | None:
+    """Build an ephemeral canonical path from safe final counterparty facts."""
+    if not hasattr(report, "status") or getattr(report.status, "value", None) == "failed":
+        return None
+    counterparty = getattr(report, "counterparty", None)
+    if counterparty is None or getattr(counterparty, "inn", None) != inn:
+        return None
+    name = getattr(counterparty, "short_name", None) or getattr(counterparty, "full_name", None)
+    if not isinstance(name, str) or not name.strip():
+        return None
+    try:
+        return canonical_path(inn, name.strip())
+    except SeoPolicyError:
+        return None
 
 
 def validate_company_report_inn(value: str) -> str:
