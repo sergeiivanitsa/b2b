@@ -4,10 +4,10 @@ import type { ArbitrationFacts, CompanyReportContext, CompanyReportResponse, Cou
 import { companyName, displayDate, displayValue, financePeriods, financeUnit, isKnownSignal, safeWarnings, signalLabel, signalPeriodText } from '../../companyReport/companyReportPresentation'
 
 export type CompanyReportError = { message: string; kind: 'generic' | 'unauthenticated' | 'forbidden'; retryOperation: 'get' | 'create' | 'status' | null }
-type Props = { inn: string; response?: CompanyReportResponse; pending?: boolean; notFound?: boolean; error?: CompanyReportError | null; onCreate?: () => void; onRetry?: () => void; onLoadAi?: () => void; aiLoading?: boolean; aiError?: string | null }
+type Props = { inn: string; response?: CompanyReportResponse; pending?: boolean; pendingTitle?: string; notFound?: boolean; error?: CompanyReportError | null; onCreate?: () => void; onRetry?: () => void; onLoadAi?: () => void; aiLoading?: boolean; aiError?: string | null }
 
-export function CompanyReportContent({ inn, response, pending = false, notFound = false, error = null, onCreate, onRetry, onLoadAi, aiLoading = false, aiError = null }: Props) {
-  if (pending) return <StatusView title="Отчёт формируется" message="Проверяем готовность отчёта. Это может занять несколько минут." fallbackClaims />
+export function CompanyReportContent({ inn, response, pending = false, pendingTitle = 'Проверяем компанию', notFound = false, error = null, onCreate, onRetry, onLoadAi, aiLoading = false, aiError = null }: Props) {
+  if (pending) return <StatusView title={pendingTitle} message="Отчёт формируется. Это может занять несколько минут." fallbackClaims />
   if (notFound) return <StatusView title="Отчёт ещё не создан" message="Создайте отчёт, чтобы получить доступные данные о компании." action={onCreate} actionLabel="Создать отчёт" fallbackClaims />
   if (error) return <ErrorView error={error} onRetry={onRetry} />
   if (!response) return <StatusView title="Загружаем отчёт" message="Получаем доступную информацию о компании." />
@@ -34,8 +34,7 @@ export function CompanyReportContent({ inn, response, pending = false, notFound 
 
 function StatusView({ title, message, action, actionLabel, fallbackClaims = false }: { title: string; message: string; action?: () => void; actionLabel?: string; fallbackClaims?: boolean }) { return <main className="company-report-page"><section className="company-report-state" aria-live="polite"><h1>{title}</h1><p>{message}</p>{action && actionLabel && <button type="button" onClick={action}>{actionLabel}</button>}{fallbackClaims ? <p><Link to="/claims">Перейти к взысканию вручную</Link></p> : null}</section></main> }
 function ErrorView({ error, onRetry }: { error: CompanyReportError; onRetry?: () => void }) {
-  if (error.kind === 'unauthenticated') return <main className="company-report-page"><section className="company-report-state" aria-live="polite"><h1>Требуется вход</h1><p>{error.message}</p><Link to="/login">Войти</Link></section></main>
-  if (error.kind === 'forbidden') return <main className="company-report-page"><section className="company-report-state" aria-live="polite"><h1>Доступ ограничен</h1><p>{error.message}</p><Link to="/">Вернуться</Link></section></main>
+  if (error.kind === 'unauthenticated' || error.kind === 'forbidden') return <StatusView title="Не удалось открыть публичный отчёт" message={error.message} />
   return <StatusView title="Не удалось открыть отчёт" message={error.message} action={error.retryOperation ? onRetry : undefined} actionLabel="Повторить" />
 }
 function FailureOnly({ failure, onCreate }: { failure?: SafeFailure | null; onCreate?: () => void }) { return <main className="company-report-page"><section className="company-report-state company-report-state--failed" aria-live="polite"><h1>Отчёт недоступен</h1><SafeFailure failure={failure} />{onCreate && <button type="button" onClick={onCreate}>Создать новый отчёт</button>}<p><Link to="/claims">Перейти к взысканию вручную</Link></p></section></main> }

@@ -45,9 +45,9 @@ export function AppRouter() {
       <Route path="/login" element={<LoginRoute />} />
       <Route path="/auth/confirm" element={<ConfirmPage />} />
       <Route path="/invites/accept" element={<InviteAcceptPage />} />
+      <Route path="/company/:companyKey" element={<CompanyReportPage />} />
       <Route element={<RequireAuth />}>
         <Route path="/chat" element={<ChatPage />} />
-        <Route path="/company/:companyKey" element={<CompanyReportPage />} />
       </Route>
       <Route element={<RequireAuth />}>
         <Route element={<RequireOnboarding />}>

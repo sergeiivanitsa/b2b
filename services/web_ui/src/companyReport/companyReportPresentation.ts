@@ -51,8 +51,7 @@ export function isKnownSignal(code: string): boolean { return code in SIGNAL_LAB
 
 export function safeErrorMessage(error: unknown): string {
   if (error instanceof ApiHttpError) {
-    if (error.status === 401) return 'Необходимо войти в систему.'
-    if (error.status === 403) return 'Недостаточно разрешений для просмотра отчёта.'
+    if (error.status === 401 || error.status === 403) return 'Сервис не смог открыть публичный отчёт. Повторите попытку позднее.'
     if (error.status === 429) return 'Слишком много запросов. Повторите позже.'
     if (error.status === 503) return 'Сервис временно недоступен. Повторите позже.'
     if (error.status === 404) return 'Отчёт не найден.'
