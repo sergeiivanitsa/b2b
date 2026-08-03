@@ -11,6 +11,12 @@ type ViewState = 'loading' | 'report' | 'pending' | 'error'
 type RetryOperation = 'get' | 'create' | 'status'
 type ErrorKind = 'generic' | 'unauthenticated' | 'forbidden'
 type ViewError = { message: string; kind: ErrorKind; retryOperation: RetryOperation | null }
+const PENDING_TITLES = [
+  'Проверяем компанию',
+  'Собираем сведения о должнике',
+  'Анализируем данные',
+  'Формируем отчёт',
+] as const
 
 function toViewError(error: unknown, retryOperation: RetryOperation): ViewError {
   if (error instanceof ApiHttpError && error.status === 401) return { message: safeErrorMessage(error), kind: 'unauthenticated', retryOperation: null }
@@ -30,23 +36,36 @@ export function CompanyReportPage() {
   const [viewError, setViewError] = useState<ViewError | null>(null)
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
+  const [pendingStage, setPendingStage] = useState(0)
   const timerRef = useRef<number | null>(null)
   const requestRef = useRef<AbortController | null>(null)
+  const pollRequestRef = useRef<AbortController | null>(null)
   const aiRequestRef = useRef<AbortController | null>(null)
   const autoStartRef = useRef<string | null>(null)
 
-  const cancelWork = useCallback(() => {
+  const cancelPolling = useCallback(() => {
     if (timerRef.current !== null) {
       window.clearTimeout(timerRef.current)
       timerRef.current = null
     }
+    pollRequestRef.current?.abort()
+    pollRequestRef.current = null
+  }, [])
+  const cancelWork = useCallback(() => {
+    cancelPolling()
     requestRef.current?.abort()
     requestRef.current = null
-  }, [])
+  }, [cancelPolling])
   const startRequest = useCallback(() => {
     requestRef.current?.abort()
     const controller = new AbortController()
     requestRef.current = controller
+    return controller
+  }, [])
+  const startPollRequest = useCallback(() => {
+    pollRequestRef.current?.abort()
+    const controller = new AbortController()
+    pollRequestRef.current = controller
     return controller
   }, [])
 
@@ -54,6 +73,7 @@ export function CompanyReportPage() {
     cancelWork()
     setView('loading')
     setViewError(null)
+    setPendingStage(0)
     const controller = startRequest()
     try {
       await createCompanyReport(targetInn, controller.signal)
@@ -82,6 +102,7 @@ export function CompanyReportPage() {
     } catch (error) {
       if (controller.signal.aborted) return
       if (error instanceof ApiHttpError && error.status === 409 && errorCode(error) === 'report_pending') {
+        setPendingStage(0)
         setView('pending')
         return
       }
@@ -100,11 +121,12 @@ export function CompanyReportPage() {
 
   const poll = useCallback((targetInn: string, targetKind: 'plain' | 'canonical') => {
     const run = async () => {
-      const controller = startRequest()
+      const controller = startPollRequest()
       try {
         const status = await getCompanyReportStatus(targetInn, controller.signal)
         if (controller.signal.aborted) return
         if (status.status === 'pending') {
+          setPendingStage((current) => Math.min(current + 1, PENDING_TITLES.length - 1))
           timerRef.current = window.setTimeout(run, STATUS_POLL_INTERVAL_MS)
           return
         }
@@ -116,7 +138,7 @@ export function CompanyReportPage() {
       }
     }
     timerRef.current = window.setTimeout(run, STATUS_POLL_INTERVAL_MS)
-  }, [loadReport, startRequest])
+  }, [loadReport, startPollRequest])
 
   useEffect(() => {
     cancelWork()
@@ -124,6 +146,7 @@ export function CompanyReportPage() {
     setReport(undefined)
     setAiError(null)
     setAiLoading(false)
+    setPendingStage(0)
     autoStartRef.current = null
     if (!inn || !routeKind) {
       setView('error')
@@ -140,9 +163,9 @@ export function CompanyReportPage() {
   useEffect(() => {
     if (view === 'pending' && inn && routeKind) poll(inn, routeKind)
     return () => {
-      if (view === 'pending') cancelWork()
+      if (view === 'pending') cancelPolling()
     }
-  }, [cancelWork, inn, poll, routeKind, view])
+  }, [cancelPolling, inn, poll, routeKind, view])
 
   const retry = useCallback(() => {
     if (!inn || !routeKind || !viewError?.retryOperation) return
@@ -173,5 +196,5 @@ export function CompanyReportPage() {
   }, [aiLoading, inn, report])
 
   if (!inn) return <CompanyReportContent inn="" error={viewError} />
-  return <CompanyReportContent inn={inn} response={report} pending={view === 'pending'} error={view === 'error' ? viewError : null} onCreate={() => void create(inn)} onRetry={retry} onLoadAi={view === 'report' ? loadAi : undefined} aiLoading={aiLoading} aiError={aiError} />
+  return <CompanyReportContent inn={inn} response={report} pending={view === 'pending'} pendingTitle={PENDING_TITLES[pendingStage]} error={view === 'error' ? viewError : null} onCreate={() => void create(inn)} onRetry={retry} onLoadAi={view === 'report' ? loadAi : undefined} aiLoading={aiLoading} aiError={aiError} />
 }
