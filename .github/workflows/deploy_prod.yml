@@ -61,7 +61,7 @@ jobs:
           docker compose -f docker-compose.product.yml --env-file .env.product build product_api
 
           # A migration failure stops this shell before either new process starts.
-          docker compose -f docker-compose.product.yml --env-file .env.product run --rm --no-deps product_api sh -lc "cd /app/services/product_api && alembic -c alembic.ini upgrade head"
+          docker compose -f docker-compose.product.yml --env-file .env.product run --rm -T --no-deps product_api sh -lc "cd /app/services/product_api && alembic -c alembic.ini upgrade head" </dev/null
 
           docker compose -f docker-compose.product.yml --env-file .env.product up -d --force-recreate --no-deps product_api company_report_worker
           # health retry ~60s (12*5s)
@@ -88,6 +88,14 @@ jobs:
           worker_id="$(docker compose -f docker-compose.product.yml --env-file .env.product ps -q company_report_worker)"
           if [ -z "$api_id" ] || [ -z "$worker_id" ]; then
             echo "Product API or CompanyReport worker container is missing"
+            exit 1
+          fi
+
+          api_running="$(docker inspect -f '{{.State.Running}}' "$api_id")"
+          api_restarting="$(docker inspect -f '{{.State.Restarting}}' "$api_id")"
+          if [ "$api_running" != "true" ] || [ "$api_restarting" != "false" ]; then
+            echo "Product API is not stably running"
+            docker inspect -f 'NAME={{.Name}} STATUS={{.State.Status}} RESTARTING={{.State.Restarting}} IMAGE={{.Image}}' "$api_id"
             exit 1
           fi
 
