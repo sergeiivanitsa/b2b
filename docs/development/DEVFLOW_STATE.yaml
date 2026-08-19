@@ -181,10 +181,10 @@ iterations:
   - id: 16
     slug: company-report-h1-public-contract
     title: "Публичный контракт H1 CompanyReport"
-    status: ready_for_merge
+    status: merged
     branch: codex/company-report-h1-public-contract
-    commit: pending
-    merged_at: null
+    commit: 0b832f95683e08a528cb0ac3c1a22e85e1de0357
+    merged_at: "2026-08-19T20:00:27+10:00"
     block_reason: null
   - id: 17
     slug: company-report-h1-backend

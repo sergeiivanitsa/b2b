@@ -48,7 +48,7 @@
 | 13 | `claims-handoff` | Завершена |
 | 14 | `company-report-entry-flow` | Завершена |
 | 15 | `company-report-landing-visual` | Завершена |
-| 16 | `company-report-h1-public-contract` | Готова к merge; independent review approved |
+| 16 | `company-report-h1-public-contract` | Завершена |
 | 17 | `company-report-h1-backend` | Запланирована после merge итерации 16 и evidence gates |
 | 18 | `company-report-h1-frontend` | Запланирована после merge итерации 17 |
 
