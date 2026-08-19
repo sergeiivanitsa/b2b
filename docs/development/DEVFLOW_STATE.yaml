@@ -165,16 +165,40 @@ iterations:
   - id: 14
     slug: company-report-entry-flow
     title: "Единая точка входа CompanyReport"
-    status: ready_for_merge
+    status: merged
     branch: feat/company-report-entry-flow
-    commit: pending
-    merged_at: null
+    commit: db444bb9a8f668fa08893b8989ab61025a44e6a4
+    merged_at: "2026-08-03T07:46:10+10:00"
     block_reason: null
   - id: 15
     slug: company-report-landing-visual
     title: "Визуальный первый экран CompanyReport"
-    status: ready_for_merge
+    status: merged
     branch: feat/company-report-entry-flow
+    commit: db444bb9a8f668fa08893b8989ab61025a44e6a4
+    merged_at: "2026-08-03T07:46:10+10:00"
+    block_reason: null
+  - id: 16
+    slug: company-report-h1-public-contract
+    title: "Публичный контракт H1 CompanyReport"
+    status: ready_for_merge
+    branch: codex/company-report-h1-public-contract
     commit: pending
     merged_at: null
     block_reason: null
+  - id: 17
+    slug: company-report-h1-backend
+    title: "Backend публичной проекции H1 CompanyReport"
+    status: planned
+    branch: pending
+    commit: pending
+    merged_at: null
+    block_reason: "Ожидает merge итерации 16 и прохождения evidence/operational gates"
+  - id: 18
+    slug: company-report-h1-frontend
+    title: "Публичная страница H1 CompanyReport"
+    status: planned
+    branch: pending
+    commit: pending
+    merged_at: null
+    block_reason: "Ожидает merge backend-контракта итерации 17"
