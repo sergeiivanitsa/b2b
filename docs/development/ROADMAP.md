@@ -40,12 +40,17 @@
 | 5 | `company-report` | Завершена |
 | 6 | `persistence` | Завершена |
 | 7 | `signals` | Обязательная часть завершена |
-| 8 | `scoring` | Следующая |
-| 9 | `ai-explanation` | Запланирована |
-| 10 | `company-reports-api` | Запланирована |
-| 11 | `company-page` | Запланирована |
-| 12 | `seo-publishing` | Запланирована |
-| 13 | `claims-handoff` | Запланирована |
+| 8 | `scoring` | Завершена |
+| 9 | `ai-explanation` | Завершена |
+| 10 | `company-reports-api` | Завершена |
+| 11 | `company-page` | Завершена |
+| 12 | `seo-publishing` | Завершена |
+| 13 | `claims-handoff` | Завершена |
+| 14 | `company-report-entry-flow` | Завершена |
+| 15 | `company-report-landing-visual` | Завершена |
+| 16 | `company-report-h1-public-contract` | Готова к merge; independent review approved |
+| 17 | `company-report-h1-backend` | Запланирована после merge итерации 16 и evidence gates |
+| 18 | `company-report-h1-frontend` | Запланирована после merge итерации 17 |
 
 ## 3. Инженерные правила roadmap
 
@@ -935,9 +940,142 @@ Slug: company-report-landing-visual
 
 ---
 
+## Итерация 16 — Публичный контракт H1 CompanyReport
+
+ID: 16
+Slug: company-report-h1-public-contract
+
+### Цель
+
+Зафиксировать versioned публичный контракт одной доказательной карточки
+компании на canonical URL `/company/{inn}-{slug}` до расширения CompanyReport,
+SSR и SPA новыми fact families.
+
+### Scope
+
+- Семантика immutable `checked_at` и отсутствие автоматического refresh.
+- H1 block manifest и field-level public allowlist.
+- Candidate finance unit `thousand_rub` с обязательным evidence gate; до него
+  абсолютные суммы публично не выводятся.
+- Один snapshot resolver для public SSR и SPA и точный versioned H1 API.
+- Exact INN/OGRN arbitration attribution без двойного role count.
+- Optional tax and bankruptcy semantics.
+- Address, manager and owner visibility with form/privacy rules.
+- Contacts, FSSP indirect facts, score and verdict prohibition.
+- Source precedence, coverage states and backward compatibility.
+- Спецификация и implementation plan будущей runtime-итерации.
+
+### Вне scope
+
+- Runtime/API/UI/DB/migration изменения.
+- Provider live calls, production rollout и deployment.
+- Кнопка обновления отчёта.
+- Контакты и FSSP.
+
+### Критерии приёмки
+
+- Публичные поля имеют source, normalization и missing/conflict behavior.
+- Finance, arbitration, tax и bankruptcy wording однозначны.
+- Один case входит в один arbitration role bucket.
+- Старый report не выглядит проверенным в текущий день.
+- H1 не содержит score, verdict, raw payload или unverified contacts.
+- Реализация может быть спланирована без новых продуктовых решений.
+
+---
+
+## Итерация 17 — Backend публичной проекции H1 CompanyReport
+
+ID: 17
+Slug: company-report-h1-backend
+
+Статус: planning input; implementation требует отдельного DevFlow
+planning/plan-review после merge итерации 16.
+
+### Цель
+
+Реализовать вычисляемую `company_public_h1_v1` projection и публичный read-only
+API поверх одного детерминированно выбранного immutable snapshot, расширив
+CompanyReport optional enrichments без изменения lifecycle трёх required
+datasets.
+
+### Scope
+
+- `GET /company-reports/{inn}/public-h1` без auth, provider/AI/job/write на read
+  path.
+- Один resolver: active publication pin имеет приоритет; без него используется
+  latest eligible `complete|partial` snapshot с `indexable=false`; failed или
+  unusable newer run его не подменяет.
+- Computed projection без новой таблицы и без миграции БД.
+- Report snapshot v2 с отдельным optional dataset envelope для `tax_info` и
+  `bankruptcy`; чтение snapshot v1 сохраняется.
+- Pure normalizers, public coverage/source/limitation models и exact-ID
+  arbitration attribution.
+- Fixed `Europe/Moscow` checked-date policy, готовые display strings и exact
+  typed values в DTO.
+- Safe fixtures, unit/integration tests и SSR/API parity.
+
+### Вне scope
+
+- React presentation, refresh button, deployment и production provider probes.
+- Активация финансовых сумм или optional calls до прохождения соответствующих
+  evidence/operational gates.
+
+### Критерии приёмки
+
+- SSR и API возвращают один `report_id` и одну H1 projection для active
+  publication.
+- Новый finalized run не подменяет опубликованный snapshot до controlled
+  republish.
+- Optional failures не меняют `complete/partial/failed` required lifecycle.
+- Старые snapshots и текущий `GET /company-reports/{inn}` остаются читаемыми.
+- Недоказанные provider fields и единицы не попадают в публичный DTO.
+
+---
+
+## Итерация 18 — Публичная страница H1 CompanyReport
+
+ID: 18
+Slug: company-report-h1-frontend
+
+Статус: planning input; implementation требует отдельного DevFlow
+planning/plan-review после merge итерации 17.
+
+### Цель
+
+Перевести публичную React-страницу компании на `company_public_h1_v1`, не
+дублируя в браузере source semantics, timezone conversion и Decimal rounding.
+
+### Scope
+
+- Публичный, не требующий авторизации H1 renderer для canonical и plain-INN
+  flow.
+- Утверждённый block manifest, coverage, sources и limitations.
+- Отображение backend-provided checked date и денежных display strings.
+- Loading/pending/not-found/partial/failed states, responsive и accessibility.
+- Отсутствие contacts, scoring, verdict и AI controls в H1 presentation.
+- Frontend tests, lint, build, published SSR/API/SPA parity fixtures и
+  latest-unpublished API/SPA parity fixtures.
+
+### Вне scope
+
+- Изменение backend source semantics, provider calls, refresh, SEO rollout и
+  deployment.
+
+### Критерии приёмки
+
+- Для active publication SPA показывает тот же pinned `report_id`, block order,
+  facts, dates и limitations, что H1 API/SSR fixture; latest_unpublished имеет
+  только API/SPA parity и остаётся noindex/SSR-404.
+- Browser locale и JavaScript `Number` не меняют дату или денежное значение.
+- Existing entry flow, canonical redirect и Claims handoff не ломаются.
+- На desktop/tablet/mobile нет горизонтального scroll и недоступных controls.
+
+---
+
 ## 4. Условные и отложенные расширения
 
-Эти работы не получают новый ID без отдельного решения и не блокируют основной путь 8–13.
+Эти работы не получают новый ID без отдельного решения. Мerged path 8–15 не
+пересматривается; H1 runtime выполняется только в явно добавленных 17–18.
 
 ### `finance.reporting_absent`
 
@@ -963,11 +1101,11 @@ provider/probe
 → API/page
 ```
 
-Приоритетные кандидаты:
+`taxInfo` и `bankruptcy` для публичного H1 уже маршрутизированы в итерацию 17 и
+могут включаться только после её schema/operational gates, без автоматического
+влияния на signals/scoring. Остальные приоритетные кандидаты:
 
-- `taxInfo`;
 - `fssp`;
-- `bankruptcy`;
 - court cases общей юрисдикции;
 - государственные контракты;
 - дополнительные risk datasets.
