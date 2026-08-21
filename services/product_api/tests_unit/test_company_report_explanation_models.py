@@ -1,6 +1,6 @@
 import pytest
 
-from product_api.company_reports.explanation.models import AIExplanationResult, AIExplanationStatus, ExplanationSelection
+from product_api.company_reports.explanation.models import AIExplanationResult, AIExplanationStatus, ExplanationInputEnvelope, ExplanationSelection
 from product_api.company_reports.explanation.prompt import explanation_response_format
 from product_api.company_reports.explanation.validation import build_input_envelope
 from product_api.company_reports.scoring import score_signals
@@ -64,3 +64,17 @@ def test_chat_request_admits_only_legacy_or_structured_mode():
             max_output_tokens=structured.max_output_tokens,
             metadata=ChatMetadata(company_id=1, user_id=1, conversation_id=1, message_id=1),
         )
+
+
+@pytest.mark.parametrize("version", ["1", "2"])
+def test_explanation_envelope_accepts_both_snapshot_versions_without_h1_optional_facts(version):
+    report = complete_company_report(report_version=version)
+    signals = evaluate_signals(report)
+    envelope = build_input_envelope(report, signals, score_signals(signals))
+    assert envelope.report_version == version
+    forbidden = {"tax", "bankruptcy", "management", "limitations", "internal_links"}
+    assert forbidden.isdisjoint(envelope.model_dump())
+    payload = envelope.model_dump(mode="python")
+    payload["tax"] = {"raw": "forbidden"}
+    with pytest.raises(ValueError):
+        ExplanationInputEnvelope.model_validate(payload)

@@ -1,0 +1,217 @@
+{
+  "contract_version": "company_public_h1_v1",
+  "report_id": "00000000-0000-0000-0000-000000000001",
+  "report_version": "1",
+  "projection_scope": "latest_unpublished",
+  "canonical_path": "/company/0000000000-ooo-sinteticheskii-etalon",
+  "indexable": false,
+  "checked_at": "2026-01-10T12:30:00Z",
+  "checked_date": "2026-01-10",
+  "checked_date_display": "10 \u044f\u043d\u0432\u0430\u0440\u044f 2026 \u0433\u043e\u0434\u0430",
+  "identity": {
+    "legal_full_name": "\u041e\u041e\u041e \u0421\u0438\u043d\u0442\u0435\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u044d\u0442\u0430\u043b\u043e\u043d",
+    "legal_short_name": null,
+    "display_name": "\u041e\u041e\u041e \u0421\u0438\u043d\u0442\u0435\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u044d\u0442\u0430\u043b\u043e\u043d",
+    "inn": "0000000000",
+    "status_code": null,
+    "status_label": null,
+    "status_effective_at": null
+  },
+  "block_order": [
+    "breadcrumbs",
+    "identity_status",
+    "known_summary",
+    "coverage_checked_at",
+    "requisites",
+    "sources_limitations",
+    "neutral_actions"
+  ],
+  "blocks": {
+    "requisites": {
+      "legal_form": null,
+      "ogrn_or_ogrnip": null,
+      "kpp": null,
+      "registration_date": "2021-01-10",
+      "dissolved_date": null,
+      "region": null,
+      "legal_address": null
+    },
+    "finance": null,
+    "arbitration": null,
+    "bankruptcy": null,
+    "tax": null,
+    "management": null
+  },
+  "coverage": [
+    {
+      "block_id": "requisites",
+      "dataset": "counterparty",
+      "state": "available",
+      "total": null,
+      "returned": null,
+      "limit": null,
+      "offset": null,
+      "limitation_codes": [
+        "address_not_requested"
+      ]
+    },
+    {
+      "block_id": "finance",
+      "dataset": "finance",
+      "state": "failed",
+      "total": null,
+      "returned": null,
+      "limit": null,
+      "offset": null,
+      "limitation_codes": [
+        "finance_dataset_failed"
+      ]
+    },
+    {
+      "block_id": "arbitration",
+      "dataset": "arbitration",
+      "state": "failed",
+      "total": null,
+      "returned": null,
+      "limit": null,
+      "offset": null,
+      "limitation_codes": [
+        "arbitration_dataset_failed"
+      ]
+    },
+    {
+      "block_id": "bankruptcy",
+      "dataset": "bankruptcy",
+      "state": "not_requested",
+      "total": null,
+      "returned": null,
+      "limit": null,
+      "offset": null,
+      "limitation_codes": [
+        "bankruptcy_schema_gate_not_passed",
+        "bankruptcy_operational_gate_not_passed"
+      ]
+    },
+    {
+      "block_id": "tax",
+      "dataset": "tax_info",
+      "state": "not_requested",
+      "total": null,
+      "returned": null,
+      "limit": null,
+      "offset": null,
+      "limitation_codes": [
+        "tax_schema_gate_not_passed",
+        "tax_operational_gate_not_passed"
+      ]
+    },
+    {
+      "block_id": "management",
+      "dataset": "counterparty",
+      "state": "not_requested",
+      "total": null,
+      "returned": null,
+      "limit": null,
+      "offset": null,
+      "limitation_codes": [
+        "management_privacy_gate_not_passed",
+        "management_schema_gate_not_passed",
+        "management_operational_gate_not_passed"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "dataset": "counterparty",
+      "received_at": "2026-01-10T12:30:00Z",
+      "effective_at": null,
+      "period": null,
+      "normalization_version": "counterparty_normalizer_v1"
+    }
+  ],
+  "limitations": [
+    {
+      "code": "arbitration_dataset_failed",
+      "block_id": "arbitration",
+      "field_id": null,
+      "message": "\u0410\u0440\u0431\u0438\u0442\u0440\u0430\u0436\u043d\u044b\u0435 \u0441\u0432\u0435\u0434\u0435\u043d\u0438\u044f \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b \u0438\u0437-\u0437\u0430 \u043e\u0448\u0438\u0431\u043a\u0438 \u043f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f \u0438\u043b\u0438 \u043d\u043e\u0440\u043c\u0430\u043b\u0438\u0437\u0430\u0446\u0438\u0438."
+    },
+    {
+      "code": "bankruptcy_operational_gate_not_passed",
+      "block_id": "bankruptcy",
+      "field_id": null,
+      "message": "\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0439 \u0437\u0430\u043f\u0440\u043e\u0441 \u0431\u0430\u043d\u043a\u0440\u043e\u0442\u043d\u044b\u0445 \u043f\u0443\u0431\u043b\u0438\u043a\u0430\u0446\u0438\u0439 \u043d\u0435 \u0430\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u043d."
+    },
+    {
+      "code": "bankruptcy_schema_gate_not_passed",
+      "block_id": "bankruptcy",
+      "field_id": null,
+      "message": "\u0421\u0432\u0435\u0434\u0435\u043d\u0438\u044f \u043e \u0431\u0430\u043d\u043a\u0440\u043e\u0442\u043d\u044b\u0445 \u043f\u0443\u0431\u043b\u0438\u043a\u0430\u0446\u0438\u044f\u0445 \u043d\u0435 \u0437\u0430\u043f\u0440\u0430\u0448\u0438\u0432\u0430\u043b\u0438\u0441\u044c: \u0441\u0445\u0435\u043c\u0430 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430 \u043d\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0430."
+    },
+    {
+      "code": "finance_dataset_failed",
+      "block_id": "finance",
+      "field_id": null,
+      "message": "\u0424\u0438\u043d\u0430\u043d\u0441\u043e\u0432\u044b\u0435 \u0441\u0432\u0435\u0434\u0435\u043d\u0438\u044f \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b \u0438\u0437-\u0437\u0430 \u043e\u0448\u0438\u0431\u043a\u0438 \u043f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f \u0438\u043b\u0438 \u043d\u043e\u0440\u043c\u0430\u043b\u0438\u0437\u0430\u0446\u0438\u0438."
+    },
+    {
+      "code": "management_operational_gate_not_passed",
+      "block_id": "management",
+      "field_id": null,
+      "message": "\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u0431\u043b\u043e\u043a\u0438 \u0440\u0443\u043a\u043e\u0432\u043e\u0434\u0438\u0442\u0435\u043b\u0435\u0439 \u0438 \u0432\u043b\u0430\u0434\u0435\u043b\u044c\u0446\u0435\u0432 \u043d\u0435 \u0437\u0430\u043f\u0440\u0430\u0448\u0438\u0432\u0430\u043b\u0438\u0441\u044c."
+    },
+    {
+      "code": "management_privacy_gate_not_passed",
+      "block_id": "management",
+      "field_id": null,
+      "message": "\u041f\u0435\u0440\u0441\u043e\u043d\u0430\u043b\u044c\u043d\u044b\u0435 \u0441\u0432\u0435\u0434\u0435\u043d\u0438\u044f \u043e \u0440\u0443\u043a\u043e\u0432\u043e\u0434\u0438\u0442\u0435\u043b\u044f\u0445 \u043d\u0435 \u043f\u0443\u0431\u043b\u0438\u043a\u0443\u044e\u0442\u0441\u044f \u0431\u0435\u0437 \u0443\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043d\u043d\u043e\u0439 privacy policy."
+    },
+    {
+      "code": "management_schema_gate_not_passed",
+      "block_id": "management",
+      "field_id": null,
+      "message": "\u0421\u0432\u0435\u0434\u0435\u043d\u0438\u044f \u043e \u0432\u043b\u0430\u0434\u0435\u043b\u044c\u0446\u0430\u0445 \u043d\u0435 \u043f\u0443\u0431\u043b\u0438\u043a\u0443\u044e\u0442\u0441\u044f: \u0441\u0445\u0435\u043c\u0430 \u0438 \u0441\u0435\u043c\u0430\u043d\u0442\u0438\u043a\u0430 \u0434\u043e\u043b\u0435\u0439 \u043d\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u044b."
+    },
+    {
+      "code": "address_not_requested",
+      "block_id": "requisites",
+      "field_id": "requisites.legal_address",
+      "message": "\u042e\u0440\u0438\u0434\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0430\u0434\u0440\u0435\u0441 \u043d\u0435 \u0437\u0430\u043f\u0440\u0430\u0448\u0438\u0432\u0430\u043b\u0441\u044f \u0432 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d\u043d\u043e\u043c \u043e\u0442\u0447\u0451\u0442\u0435."
+    },
+    {
+      "code": "tax_operational_gate_not_passed",
+      "block_id": "tax",
+      "field_id": null,
+      "message": "\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0439 \u0437\u0430\u043f\u0440\u043e\u0441 \u043d\u0430\u043b\u043e\u0433\u043e\u0432\u044b\u0445 \u0441\u0432\u0435\u0434\u0435\u043d\u0438\u0439 \u043d\u0435 \u0430\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u043d."
+    },
+    {
+      "code": "tax_schema_gate_not_passed",
+      "block_id": "tax",
+      "field_id": null,
+      "message": "\u041d\u0430\u043b\u043e\u0433\u043e\u0432\u044b\u0435 \u0441\u0432\u0435\u0434\u0435\u043d\u0438\u044f \u043d\u0435 \u0437\u0430\u043f\u0440\u0430\u0448\u0438\u0432\u0430\u043b\u0438\u0441\u044c: \u0441\u0445\u0435\u043c\u0430 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430 \u043d\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0430."
+    }
+  ],
+  "actions": [
+    {
+      "action_id": "check_another_company",
+      "label": "\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c \u0434\u0440\u0443\u0433\u0443\u044e \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u044e",
+      "path": "/"
+    },
+    {
+      "action_id": "prepare_claim",
+      "label": "\u041f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u0438\u0442\u044c \u043f\u0440\u0435\u0442\u0435\u043d\u0437\u0438\u044e",
+      "path": "/claims?report_id=00000000-0000-0000-0000-000000000001"
+    }
+  ],
+  "breadcrumbs": [
+    {
+      "label": "\u0413\u043b\u0430\u0432\u043d\u0430\u044f",
+      "path": "/"
+    },
+    {
+      "label": "\u041e\u041e\u041e \u0421\u0438\u043d\u0442\u0435\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u044d\u0442\u0430\u043b\u043e\u043d",
+      "path": "/company/0000000000-ooo-sinteticheskii-etalon"
+    }
+  ],
+  "internal_links": []
+}

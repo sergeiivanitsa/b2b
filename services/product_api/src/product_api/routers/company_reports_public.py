@@ -8,9 +8,19 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse,
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from product_api.company_reports.persistence.publications import get_public_page, list_indexable_publications
-from product_api.company_reports.persistence.serialization import calculate_company_report_snapshot_hash, company_report_from_snapshot
-from product_api.company_reports.seo import canonical_path, evaluate_publication, render_html, render_sitemap, render_sitemap_index
+from product_api.company_reports.persistence.publications import list_indexable_publications
+from product_api.company_reports.public_h1 import render_public_h1_html
+from product_api.company_reports.public_h1_service import (
+    PublicH1FailedError,
+    PublicH1NotEligibleError,
+    PublicH1NotFoundError,
+    PublicH1PendingError,
+    PublicH1UnavailableError,
+    PublicProjectionInvalidError,
+    resolve_public_h1,
+    validate_active_publication,
+)
+from product_api.company_reports.seo import render_sitemap, render_sitemap_index
 from product_api.db.session import get_session
 from product_api.settings import get_settings
 
@@ -28,23 +38,12 @@ def _not_found() -> Response:
 
 
 def _current_public_projection(page):
-    """Return the current policy result only when registry and snapshot agree."""
-    if page.publication.status != "active" or not page.publication.indexable:
-        return None
-    if page.report.lifecycle_status not in {"complete", "partial"} or not page.report.normalized_snapshot or not page.report.snapshot_hash:
-        return None
+    """The same pure complete pin predicate used by API/SSR resolution."""
     try:
-        snapshot_hash = calculate_company_report_snapshot_hash(page.report.normalized_snapshot)
-        if snapshot_hash != page.report.snapshot_hash or snapshot_hash != page.publication.snapshot_hash:
-            return None
-        decision = evaluate_publication(company_report_from_snapshot(page.report.normalized_snapshot))
-        if not decision.indexable or decision.projection is None:
-            return None
-        if canonical_path(decision.projection.inn, decision.projection.name) != page.publication.canonical_path:
-            return None
-    except Exception:
+        dto = validate_active_publication(page)
+        return dto if dto.indexable else None
+    except (PublicProjectionInvalidError, ValueError):
         return None
-    return decision.projection
 
 
 @router.get("/company/{company_key}", response_class=HTMLResponse)
@@ -55,22 +54,19 @@ async def public_company_page(company_key: str, request: Request, session: Async
     if match is None:
         return _not_found()
     try:
-        page = await get_public_page(session, inn=match.group("inn"))
-        if page is None or page.publication.status != "active":
+        dto = await resolve_public_h1(session, inn=match.group("inn"))
+        if dto.projection_scope != "published":
             return _not_found()
-        if page.report.lifecycle_status not in {"complete", "partial"} or not page.report.normalized_snapshot or not page.report.snapshot_hash:
-            return _not_found()
-        if calculate_company_report_snapshot_hash(page.report.normalized_snapshot) != page.publication.snapshot_hash or page.report.snapshot_hash != page.publication.snapshot_hash:
-            return PlainTextResponse("Internal error", status_code=500, headers=_headers("noindex,follow"))
-        report = company_report_from_snapshot(page.report.normalized_snapshot)
-        decision = evaluate_publication(report)
-        if decision.projection is None:
-            return PlainTextResponse("Internal error", status_code=500, headers=_headers("noindex,follow"))
-        expected = canonical_path(decision.projection.inn, decision.projection.name)
-        if match.group("slug") != page.publication.canonical_slug:
-            return RedirectResponse(expected, status_code=301, headers=_headers("noindex,follow"))
-        robots = "index,follow" if page.publication.indexable and decision.indexable and page.publication.canonical_path == expected else "noindex,follow"
-        return HTMLResponse(render_html(decision.projection, base_url=get_settings().seo_public_base_url, robots=robots), headers=_headers(robots))
+        if dto.canonical_path != f"/company/{company_key}":
+            return RedirectResponse(dto.canonical_path, status_code=301, headers=_headers("noindex,follow"))
+        robots = "index,follow" if dto.indexable else "noindex,follow"
+        return HTMLResponse(render_public_h1_html(dto), headers=_headers(robots))
+    except (PublicH1NotFoundError, PublicH1PendingError, PublicH1FailedError, PublicH1NotEligibleError):
+        return _not_found()
+    except PublicH1UnavailableError:
+        return PlainTextResponse("Unavailable", status_code=503, headers=_headers("noindex,follow"))
+    except PublicProjectionInvalidError:
+        return PlainTextResponse("Internal error", status_code=500, headers=_headers("noindex,follow"))
     except SQLAlchemyError:
         return PlainTextResponse("Unavailable", status_code=503, headers=_headers("noindex,follow"))
     except Exception:

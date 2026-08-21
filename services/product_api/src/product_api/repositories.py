@@ -459,7 +459,7 @@ async def detach_company_user(
         previous_company_id = user.company_id
         previous_role = user.role
         user.company_id = None
-        user.role = "member"
+        user.role = None
         user.is_active = False
         user.joined_company_at = None
 

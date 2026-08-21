@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.schemas import ChatResponse
 
 import product_api.main as product_main
+from product_api.models import UserCreditLimit
 from product_api.settings import get_settings
 
 from .utils import (
@@ -25,6 +26,14 @@ async def test_last_n_trimming(async_client, engine, monkeypatch):
         company = await create_company(session, "TrimCo")
         user = await create_user(session, "user@trim.test", "member", company.id)
         await add_credits(session, company.id, 5, reason="seed")
+        session.add(
+            UserCreditLimit(
+                company_id=company.id,
+                user_id=user.id,
+                remaining_credits=5,
+            )
+        )
+        await session.commit()
         cookie = await create_session_cookie(session, user.id)
         conversation = await create_conversation(session, company.id, user.id)
 

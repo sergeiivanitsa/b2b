@@ -22,7 +22,7 @@ from company_report_signal_test_helpers import (
 
 
 def _inputs():
-    report = complete_company_report()
+    report = complete_company_report(report_version="2")
     signals = evaluate_signals(report)
     return report, signals, score_signals(signals)
 

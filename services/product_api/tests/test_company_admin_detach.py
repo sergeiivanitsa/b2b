@@ -69,7 +69,7 @@ async def test_detach_owner_success_user_hidden_from_stats_and_history_kept(asyn
         user = await session.get(User, member.id)
         assert user is not None
         assert user.company_id is None
-        assert user.role == "member"
+        assert user.role is None
         assert user.is_active is False
         assert user.joined_company_at is None
 
@@ -94,7 +94,12 @@ async def test_detach_email_can_be_invited_to_another_company(async_client, engi
         company_b = await create_company(session, "Detach B")
         owner_a = await create_user(session, "owner@a.detach.test", "owner", company_a.id)
         owner_b = await create_user(session, "owner@b.detach.test", "owner", company_b.id)
-        member_a = await create_user(session, "member@cross.detach.test", "member", company_a.id)
+        member_a = await create_user(
+            session,
+            "member.cross.detach@example.org",
+            "member",
+            company_a.id,
+        )
         owner_a_cookie = await create_session_cookie(session, owner_a.id)
         owner_b_cookie = await create_session_cookie(session, owner_b.id)
 

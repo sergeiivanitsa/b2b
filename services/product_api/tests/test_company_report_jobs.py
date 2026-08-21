@@ -106,6 +106,8 @@ async def test_concurrent_enqueue_reuses_one_pending_report_and_job(engine):
     async with AsyncSession(bind=engine) as session:
         assert await session.scalar(select(func.count(CompanyReportRecord.id))) == 1
         assert await session.scalar(select(func.count(CompanyReportJob.id))) == 1
+        stored = await session.get(CompanyReportRecord, first.report_id)
+        assert stored is not None and stored.report_version == "2"
 
 
 async def test_concurrent_claims_claim_each_job_once(engine):

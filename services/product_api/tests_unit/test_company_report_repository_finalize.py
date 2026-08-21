@@ -30,6 +30,7 @@ async def test_finalize_stores_report_datasets_and_provider_journal_atomically()
     )
 
     assert stored.lifecycle_status == report.status.value
+    assert stored.report_version == report.report_version == "2"
     assert stored.normalized_snapshot is not None
     assert stored.snapshot_hash is not None
     assert len(session.datasets) == 3

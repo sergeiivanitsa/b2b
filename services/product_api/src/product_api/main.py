@@ -87,7 +87,6 @@ app.include_router(admin_claims_router)
 app.include_router(invites_router)
 app.include_router(public_claims_router)
 app.include_router(company_reports_router)
-app.include_router(company_reports_public_router)
 
 
 @app.middleware("http")
@@ -1376,3 +1375,8 @@ async def whoami(
 @app.get("/internal/admin-only")
 async def admin_only(current_user: User = Depends(require_superadmin())):
     return {"status": "ok"}
+
+
+# Keep the one-segment public `/company/{company_key}` route after the legacy
+# static `/company/*` endpoints so it cannot shadow summary, users or invites.
+app.include_router(company_reports_public_router)

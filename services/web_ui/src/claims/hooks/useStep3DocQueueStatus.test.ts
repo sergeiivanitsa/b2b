@@ -63,13 +63,13 @@ function installMatchMediaMock(initialMatches: boolean): MatchMediaController {
     removeListener: (listener: MatchMediaListener) => {
       listeners.delete(listener)
     },
-    dispatchEvent: (_event: Event) => true,
+    dispatchEvent: () => true,
   } as MediaQueryList
 
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
     configurable: true,
-    value: vi.fn().mockImplementation((_query: string) => mediaQueryList),
+    value: vi.fn().mockImplementation(() => mediaQueryList),
   })
 
   return {
@@ -289,6 +289,41 @@ describe('useStep3DocQueueStatus', () => {
     })
     expect(vi.getTimerCount()).toBe(0)
     expect(rng).toHaveBeenCalledTimes(0)
+  })
+
+  it('uses a collision-safe item key and restarts for a different id set', () => {
+    const rng = vi.fn(() => 0)
+    const { result, rerender } = renderHook(
+      ({ itemIds }: { itemIds: readonly string[] }) =>
+        useStep3DocQueueStatus({
+          itemIds,
+          runKey: 'claim-1',
+          minDelayMs: 100,
+          maxDelayMs: 100,
+          rng,
+        }),
+      { initialProps: { itemIds: ['a|b', 'c'] } },
+    )
+
+    act(() => {
+      vi.advanceTimersByTime(100)
+    })
+    expect(result.current.allDone).toBe(true)
+
+    rerender({ itemIds: ['a', 'b|c'] })
+
+    expect(result.current.statusById).toEqual({ a: 'loading', 'b|c': 'loading' })
+    expect(result.current.allDone).toBe(false)
+  })
+
+  it('treats an empty queue as complete without timers', () => {
+    const { result } = renderHook(() =>
+      useStep3DocQueueStatus({ itemIds: [], runKey: 'empty' }),
+    )
+
+    expect(result.current.statusById).toEqual({})
+    expect(result.current.allDone).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
   })
 
 })

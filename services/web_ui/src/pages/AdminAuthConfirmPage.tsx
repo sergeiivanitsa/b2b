@@ -7,9 +7,14 @@ export function AdminAuthConfirmPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { confirmToken } = useClaimsAdminAuth()
-  const [statusText, setStatusText] = useState('Проверяем токен...')
-  const [error, setError] = useState<string | null>(null)
-  const isStartedRef = useRef(false)
+  const token = searchParams.get('token')?.trim() || ''
+  const [statusText, setStatusText] = useState(() =>
+    token ? 'Проверяем токен...' : 'Подтверждение недоступно',
+  )
+  const [error, setError] = useState<string | null>(() =>
+    token ? null : 'Токен не найден в ссылке подтверждения.',
+  )
+  const isStartedRef = useRef(!token)
 
   useEffect(() => {
     if (isStartedRef.current) {
@@ -17,10 +22,7 @@ export function AdminAuthConfirmPage() {
     }
     isStartedRef.current = true
 
-    const token = searchParams.get('token')?.trim() || ''
     if (!token) {
-      setError('Токен не найден в ссылке подтверждения.')
-      setStatusText('Подтверждение недоступно')
       return
     }
 
@@ -43,7 +45,7 @@ export function AdminAuthConfirmPage() {
         setStatusText('Подтверждение не удалось')
       }
     })()
-  }, [confirmToken, navigate, searchParams])
+  }, [confirmToken, navigate, token])
 
   return (
     <main className="screen">

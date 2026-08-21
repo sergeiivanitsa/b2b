@@ -5,6 +5,9 @@ from .errors import (
     InvalidDatasetPayloadError,
 )
 from .aggregate import (
+    CURRENT_COMPANY_REPORT_VERSION,
+    OPTIONAL_DATASETS,
+    REQUIRED_DATASETS,
     CompanyReport,
     CompanyReportCompleteness,
     CompanyReportStatus,
@@ -15,6 +18,7 @@ from .aggregate import (
     SafeDatasetError,
 )
 from .models import (
+    BankruptcyFacts,
     ArbitrationCaseFacts,
     ArbitrationClaimAmounts,
     ArbitrationDocumentSummary,
@@ -39,9 +43,10 @@ from .models import (
     SourceMetadata,
     StatusSummary,
     TaxModeInfo,
+    TaxInfoFacts,
 )
 from .normalizers import normalize_arbitration, normalize_counterparty, normalize_finance
-from .orchestrator import REQUIRED_DATASETS, build_company_report
+from .orchestrator import build_company_report
 from .provider_protocol import CompanyReportProvider
 from .explanation import (
     AIExplanation,
@@ -56,6 +61,7 @@ from .explanation import (
 
 __all__ = [
     "ArbitrationCaseFacts",
+    "BankruptcyFacts",
     "AIExplanation",
     "AIExplanationFailure",
     "AIExplanationResult",
@@ -70,6 +76,7 @@ __all__ = [
     "ArbitrationStatus",
     "CompanyAddress",
     "CompanyReport",
+    "CURRENT_COMPANY_REPORT_VERSION",
     "CompanyReportCompleteness",
     "CompanyReportInputError",
     "CompanyManager",
@@ -91,6 +98,7 @@ __all__ = [
     "FinancialPeriod",
     "InvalidDatasetPayloadError",
     "NormalizationWarning",
+    "OPTIONAL_DATASETS",
     "ResultSummary",
     "ReportFreshness",
     "ReportWarning",
@@ -100,6 +108,7 @@ __all__ = [
     "SourceMetadata",
     "StatusSummary",
     "TaxModeInfo",
+    "TaxInfoFacts",
     "build_company_report",
     "explain_scoring_result",
     "normalize_arbitration",

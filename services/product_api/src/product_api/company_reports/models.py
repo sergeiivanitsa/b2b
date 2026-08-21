@@ -159,6 +159,28 @@ class FinanceFacts(FrozenDomainModel):
     warnings: list[NormalizationWarning] = Field(default_factory=list)
 
 
+class TaxInfoFacts(FrozenDomainModel):
+    """Provider-neutral future-gated facts; no iteration-17 normalizer creates these."""
+
+    source: SourceMetadata
+    has_unpaid_debts: bool | None = None
+    as_of_date: date | None = None
+    records: list[str] = Field(default_factory=list)
+    warnings: list[NormalizationWarning] = Field(default_factory=list)
+
+
+class BankruptcyFacts(FrozenDomainModel):
+    """Provider-neutral future-gated facts; no iteration-17 normalizer creates these."""
+
+    source: SourceMetadata
+    total: int | None = Field(default=None, ge=0)
+    returned: int | None = Field(default=None, ge=0)
+    limit: int | None = Field(default=None, ge=0)
+    offset: int | None = Field(default=None, ge=0)
+    publications: list[str] = Field(default_factory=list)
+    warnings: list[NormalizationWarning] = Field(default_factory=list)
+
+
 class ArbitrationRole(StrEnum):
     PLAINTIFF = "plaintiff"
     RESPONDENT = "respondent"
@@ -219,6 +241,13 @@ class ArbitrationCaseFacts(FrozenDomainModel):
     company_roles: list[ArbitrationRole] = Field(default_factory=list)
     plaintiffs: list[ArbitrationParty] = Field(default_factory=list, repr=False)
     respondents: list[ArbitrationParty] = Field(default_factory=list, repr=False)
+    applicants: list[ArbitrationParty] = Field(default_factory=list, repr=False)
+    creditors: list[ArbitrationParty] = Field(default_factory=list, repr=False)
+    debtors: list[ArbitrationParty] = Field(default_factory=list, repr=False)
+    interested_persons: list[ArbitrationParty] = Field(default_factory=list, repr=False)
+    third_parties: list[ArbitrationParty] = Field(default_factory=list, repr=False)
+    other_parties: list[ArbitrationParty] = Field(default_factory=list, repr=False)
+    party_collections_valid: bool = True
     documents: list[ArbitrationDocumentSummary] = Field(default_factory=list, repr=False)
     document_count: int = 0
     document_types: list[str] = Field(default_factory=list)
@@ -272,4 +301,5 @@ class ArbitrationFacts(FrozenDomainModel):
         default_factory=dict,
         repr=False,
     )
+    malformed_entry_count: int = Field(default=0, ge=0)
     warnings: list[NormalizationWarning] = Field(default_factory=list)

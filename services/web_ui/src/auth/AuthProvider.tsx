@@ -1,4 +1,4 @@
-import { createContext, useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { PropsWithChildren } from 'react'
 
 import {
@@ -8,10 +8,9 @@ import {
   logoutSession,
   requestMagicLink,
 } from './authApi'
+import { AuthContext } from './AuthContext'
 import { isUnauthorizedError } from './errors'
 import type { AuthContextValue, AuthStatus, AuthUser } from './types'
-
-export const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const [status, setStatus] = useState<AuthStatus>('loading')

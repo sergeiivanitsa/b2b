@@ -214,10 +214,11 @@ export function SuperadminPage() {
         }),
       )
     } finally {
-      if (!isMountedRef.current || sequence !== loadSeqRef.current) {
-        return
-      }
-      if (showLoading) {
+      if (
+        isMountedRef.current &&
+        sequence === loadSeqRef.current &&
+        showLoading
+      ) {
         setIsLoading(false)
       }
     }

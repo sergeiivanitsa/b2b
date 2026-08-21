@@ -3,7 +3,7 @@ import { useContext } from 'react'
 import {
   ClaimsAdminAuthContext,
   type ClaimsAdminAuthContextValue,
-} from './ClaimsAdminAuthProvider'
+} from './ClaimsAdminAuthContext'
 
 export function useClaimsAdminAuth(): ClaimsAdminAuthContextValue {
   const context = useContext(ClaimsAdminAuthContext)

@@ -1,10 +1,23 @@
 ﻿import pytest
-from sqlalchemy import text
+from sqlalchemy import JSON, bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from product_api.claims.person_name_ai_service import PersonNameAIResult
 
 pytestmark = pytest.mark.asyncio
+
+
+_LEGACY_CLAIM_PREVIEW_UPDATE = text(
+    "UPDATE claims "
+    "SET generation_state = :generation_state, "
+    "generated_preview_text = :generated_preview_text, "
+    "normalized_data_json = :normalized_data_json, "
+    "preview_header_json = :preview_header_json "
+    "WHERE id = :id"
+).bindparams(
+    bindparam("normalized_data_json", type_=JSON),
+    bindparam("preview_header_json", type_=JSON),
+)
 
 
 async def test_generate_preview_and_get_preview(async_client, engine, monkeypatch):
@@ -43,7 +56,7 @@ async def test_generate_preview_and_get_preview(async_client, engine, monkeypatc
     }
 
     async def fake_generate_claim_preview(
-        _settings, *, claim_id, input_text, case_type, normalized_data, decision
+        _settings, *, claim_id, input_text, case_type, normalized_data, decision, reference_date
     ):
         return {
             "generated_preview_text": "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё",
@@ -209,7 +222,7 @@ async def test_generate_and_get_preview_legal_entity_ai_keeps_line3_consistent(
     }
 
     async def fake_generate_claim_preview(
-        _settings, *, claim_id, input_text, case_type, normalized_data, decision
+        _settings, *, claim_id, input_text, case_type, normalized_data, decision, reference_date
     ):
         return {
             "generated_preview_text": "Черновик претензии",
@@ -388,7 +401,7 @@ async def test_generate_and_get_preview_ip_ai_keeps_line2_consistent_and_line3_n
     }
 
     async def fake_generate_claim_preview(
-        _settings, *, claim_id, input_text, case_type, normalized_data, decision
+        _settings, *, claim_id, input_text, case_type, normalized_data, decision, reference_date
     ):
         return {
             "generated_preview_text": "Черновик претензии",
@@ -652,7 +665,7 @@ async def test_generate_and_get_preview_keep_line3_consistent_with_write_path_co
     }
 
     async def fake_generate_claim_preview(
-        _settings, *, claim_id, input_text, case_type, normalized_data, decision
+        _settings, *, claim_id, input_text, case_type, normalized_data, decision, reference_date
     ):
         return {
             "generated_preview_text": "Р§РµСЂРЅРѕРІРёРє РїСЂРµС‚РµРЅР·РёРё",
@@ -791,14 +804,7 @@ async def test_get_preview_upgrades_legacy_header_full_raw_without_mutating_stor
     }
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         await session.execute(
-            text(
-                "UPDATE claims "
-                "SET generation_state = :generation_state, "
-                "generated_preview_text = :generated_preview_text, "
-                "normalized_data_json = :normalized_data_json, "
-                "preview_header_json = :preview_header_json "
-                "WHERE id = :id"
-            ),
+            _LEGACY_CLAIM_PREVIEW_UPDATE,
             {
                 "generation_state": "ready",
                 "generated_preview_text": "Draft preview text",
@@ -821,7 +827,7 @@ async def test_get_preview_upgrades_legacy_header_full_raw_without_mutating_stor
     assert payload["preview_header"]["from_party"]["rendered"] == {
         "line1": "От генерального директора",
         "line2": "ООО «Stored Alpha»",
-        "line3": "Петров Петр Петрович",
+        "line3": "Петрова Петра Петровича",
     }
     assert payload["preview_header"]["to_party"]["line1"] == "Директору ООО «Stored Vector»"
     assert payload["preview_header"]["to_party"]["line2"] == "Ivanov Ivan Ivanovich"
@@ -882,14 +888,7 @@ async def test_get_preview_upgrades_legacy_header_with_normalized_fallback_witho
     }
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         await session.execute(
-            text(
-                "UPDATE claims "
-                "SET generation_state = :generation_state, "
-                "generated_preview_text = :generated_preview_text, "
-                "normalized_data_json = :normalized_data_json, "
-                "preview_header_json = :preview_header_json "
-                "WHERE id = :id"
-            ),
+            _LEGACY_CLAIM_PREVIEW_UPDATE,
             {
                 "generation_state": "ready",
                 "generated_preview_text": "Draft preview text",
@@ -960,14 +959,7 @@ async def test_get_preview_upgrades_legacy_broken_header_with_emergency_bridge_w
     }
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         await session.execute(
-            text(
-                "UPDATE claims "
-                "SET generation_state = :generation_state, "
-                "generated_preview_text = :generated_preview_text, "
-                "normalized_data_json = :normalized_data_json, "
-                "preview_header_json = :preview_header_json "
-                "WHERE id = :id"
-            ),
+            _LEGACY_CLAIM_PREVIEW_UPDATE,
             {
                 "generation_state": "ready",
                 "generated_preview_text": "Draft preview text",

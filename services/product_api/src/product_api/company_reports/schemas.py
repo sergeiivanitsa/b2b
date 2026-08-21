@@ -98,7 +98,7 @@ class CompanyReportPublicFreshness(StrictPublicModel):
 
 
 class CompanyReportPublicSnapshot(StrictPublicModel):
-    report_version: Literal["1"]
+    report_version: Literal["1", "2"]
     status: Literal["complete", "partial", "failed"]
     counterparty: dict[str, Any] | None = None
     finance: dict[str, Any] | None = None

@@ -31,8 +31,9 @@ def test_identifier_helper_rejects_non_inn_identifiers(value):
 
 
 def test_public_projection_is_allowlisted_and_keeps_decimal_exactness():
-    report = complete_company_report()
+    report = complete_company_report(report_version="2")
     snapshot = build_public_snapshot(report)
+    assert snapshot.report_version == "2"
     signals = build_public_signals(evaluate_signals(report))
     payload = {
         "report": snapshot.model_dump(mode="json"),

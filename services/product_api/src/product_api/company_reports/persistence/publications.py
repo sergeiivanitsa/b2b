@@ -52,6 +52,55 @@ def _utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _validated_publication_report(
+    *,
+    batch: CompanyReportPublicationBatch,
+    item: CompanyReportPublicationBatchItem,
+    report: CompanyReportRecord | None,
+    subject: CompanyReportSubject | None,
+):
+    """Validate the entire immutable manifest/ORM/raw/snapshot matrix."""
+    if (
+        report is None
+        or subject is None
+        or not isinstance(report.normalized_snapshot, dict)
+        or not report.snapshot_hash
+        or report.snapshot_hash != item.snapshot_hash
+        or item.batch_id != batch.id
+        or item.policy_version != batch.policy_version
+        or item.policy_version != PUBLICATION_POLICY_VERSION
+        or report.id != item.report_id
+        or report.subject_id != item.subject_id
+        or subject.id != item.subject_id
+        or subject.id != report.subject_id
+        or report.lifecycle_status not in {"complete", "partial"}
+        or report.report_version not in {"1", "2"}
+        or report.generated_at is None
+        or not subject.normalized_identifier.isascii()
+        or not subject.normalized_identifier.isdigit()
+        or len(subject.normalized_identifier) not in {10, 12}
+    ):
+        raise PublicationStateConflictError("publication manifest identity mismatch")
+    raw_hash = calculate_company_report_snapshot_hash(report.normalized_snapshot)
+    if raw_hash != report.snapshot_hash or raw_hash != item.snapshot_hash:
+        raise PublicationStateConflictError("snapshot hash mismatch")
+    try:
+        report_model = company_report_from_snapshot(report.normalized_snapshot)
+    except Exception as exc:
+        raise PublicationStateConflictError("snapshot model is invalid") from exc
+    if (
+        report_model.report_id != report.id
+        or report_model.report_version != report.report_version
+        or report_model.status.value != report.lifecycle_status
+        or _utc(report_model.generated_at) != _utc(report.generated_at)
+        or report_model.target_identifier != subject.normalized_identifier
+        or report_model.counterparty is None
+        or report_model.counterparty.inn != subject.normalized_identifier
+    ):
+        raise PublicationStateConflictError("snapshot identity mismatch")
+    return report_model
+
+
 async def get_public_page(session: AsyncSession, *, inn: str) -> PublicPageRecord | None:
     result = await session.execute(
         select(CompanyReportPublication, CompanyReportRecord, CompanyReportSubject)
@@ -294,42 +343,36 @@ async def finalize_batch_claim(
     ):
         raise PublicationStateConflictError("manifest claim is no longer current")
     report = await session.get(CompanyReportRecord, item.report_id)
-    terminal, reason = "skipped", "invalid_report"
-    if report and report.normalized_snapshot and report.snapshot_hash == item.snapshot_hash:
-        try:
-            if calculate_company_report_snapshot_hash(report.normalized_snapshot) != report.snapshot_hash:
-                raise PublicationStateConflictError("snapshot hash mismatch")
-            report_model = company_report_from_snapshot(report.normalized_snapshot)
-            decision = evaluate_publication(report_model)
-            if decision.indexable and decision.projection:
-                path = canonical_path(decision.projection.inn, decision.projection.name)
-                lastmod = _utc(report.generated_at or report.finished_at) if (report.generated_at or report.finished_at) else None
-                if lastmod is None:
-                    raise PublicationStateConflictError("final report has no lastmod")
-                slug = path[len(f"/company/{decision.projection.inn}-"):]
-                _, applied = await _upsert_publication(
-                    session,
-                    subject_id=report.subject_id,
-                    report_id=report.id,
-                    canonical_slug=slug,
-                    canonical_path_value=path,
-                    snapshot_hash=report.snapshot_hash,
-                    policy_version=item.policy_version,
-                    batch_generation=batch.generation,
-                    sufficiency_status=decision.sufficiency_status,
-                    published_lastmod=lastmod,
-                )
-                terminal, reason = (
-                    ("published", "sufficient")
-                    if applied
-                    else ("skipped", "superseded_by_newer_batch")
-                )
-            else:
-                reason = decision.sufficiency_status
-        except PublicationStateConflictError:
-            terminal, reason = "failed", "state_conflict"
-        except Exception:
-            terminal, reason = "failed", "safe_policy_error"
+    subject = await session.get(CompanyReportSubject, item.subject_id)
+    terminal, reason = "failed", "state_conflict"
+    try:
+        # This complete matrix is a hard gate.  In particular, neither the
+        # evaluator nor the publication upsert is reachable on a mismatch.
+        report_model = _validated_publication_report(batch=batch, item=item, report=report, subject=subject)
+        decision = evaluate_publication(report_model)
+        if decision.indexable and decision.projection:
+            path = canonical_path(decision.projection.inn, decision.projection.name)
+            lastmod = _utc(report.generated_at)
+            slug = path[len(f"/company/{decision.projection.inn}-"):]
+            _, applied = await _upsert_publication(
+                session,
+                subject_id=report.subject_id,
+                report_id=report.id,
+                canonical_slug=slug,
+                canonical_path_value=path,
+                snapshot_hash=report.snapshot_hash,
+                policy_version=item.policy_version,
+                batch_generation=batch.generation,
+                sufficiency_status=decision.sufficiency_status,
+                published_lastmod=lastmod,
+            )
+            terminal, reason = (("published", "sufficient") if applied else ("skipped", "superseded_by_newer_batch"))
+        else:
+            terminal, reason = "skipped", decision.sufficiency_status
+    except PublicationStateConflictError:
+        terminal, reason = "failed", "state_conflict"
+    except Exception:
+        terminal, reason = "failed", "safe_policy_error"
     finalized = await session.execute(
         update(CompanyReportPublicationBatchItem)
         .where(

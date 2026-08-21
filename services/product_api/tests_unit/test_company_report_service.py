@@ -107,7 +107,7 @@ async def test_latest_report_evaluates_ephemerally_without_mutating_snapshot(
     monkeypatch,
 ):
     session = _session()
-    report = complete_company_report()
+    report = complete_company_report(report_version="2")
     finalized = _finalized_record(report)
     original = deepcopy(finalized.normalized_snapshot)
     monkeypatch.setattr(

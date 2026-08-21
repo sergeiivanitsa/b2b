@@ -1,5 +1,8 @@
+from copy import deepcopy
 from datetime import date
 from decimal import Decimal
+
+import pytest
 
 from company_report_test_helpers import arbitration_result, load_fixture
 from product_api.company_reports import (
@@ -60,10 +63,16 @@ def test_arbitration_maps_statuses_results_and_preserves_raw_values():
 
 
 def test_arbitration_pagination_and_summaries():
-    facts = normalize_arbitration(arbitration_result(), target_identifier="0000000000")
+    payload = deepcopy(load_fixture("arbitration_success.json"))
+    payload["data"].append("synthetic-malformed-entry")
+    facts = normalize_arbitration(
+        arbitration_result(payload), target_identifier="0000000000"
+    )
 
     assert facts.total_cases == 7
-    assert facts.returned_cases == 5
+    assert facts.returned_cases == 6
+    assert len(facts.cases) + facts.malformed_entry_count == facts.returned_cases
+    assert facts.malformed_entry_count == 1
     assert facts.is_complete is False
     assert facts.role_summary.model_dump() == {
         "plaintiff_count": 2,
@@ -102,6 +111,30 @@ def test_arbitration_sums_only_unambiguous_roles():
     assert facts.claim_amount_as_respondent == Decimal("200")
     assert facts.claim_amounts_by_currency["RUBLES"].plaintiff == Decimal("100.25")
     assert facts.claim_amounts_by_currency["RUBLES"].respondent == Decimal("200")
+
+
+@pytest.mark.parametrize(
+    "invalid_parties",
+    [
+        {"inn": "0000000000"},
+        [{"inn": "0000000000"}, "not-an-object"],
+    ],
+)
+def test_arbitration_marks_whole_case_malformed_for_invalid_party_collection(
+    invalid_parties,
+):
+    payload = deepcopy(load_fixture("arbitration_success.json"))
+    payload["data"][0]["plaintiffs"] = invalid_parties
+
+    facts = normalize_arbitration(
+        arbitration_result(payload), target_identifier="0000000000"
+    )
+
+    assert facts.cases[0].party_collections_valid is False
+    assert any(
+        item.code in {"arbitration_parties_invalid", "arbitration_party_invalid"}
+        for item in facts.warnings
+    )
 
 
 def test_arbitration_mixed_currency_is_not_combined():

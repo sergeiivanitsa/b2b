@@ -189,11 +189,11 @@ iterations:
   - id: 17
     slug: company-report-h1-backend
     title: "Backend публичной проекции H1 CompanyReport"
-    status: planned
-    branch: pending
+    status: ready_for_merge
+    branch: feat/iteration-17-company-report-h1-backend
     commit: pending
     merged_at: null
-    block_reason: "Ожидает merge итерации 16 и прохождения evidence/operational gates"
+    block_reason: null
   - id: 18
     slug: company-report-h1-frontend
     title: "Публичная страница H1 CompanyReport"

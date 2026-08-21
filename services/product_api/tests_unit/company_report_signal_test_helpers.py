@@ -484,6 +484,7 @@ def complete_company_report(
     counterparty: CounterpartyFacts | None = None,
     finance: FinanceFacts | None = None,
     arbitration: ArbitrationFacts | None = None,
+    report_version: str = "1",
 ) -> CompanyReport:
     normalized_counterparty = counterparty or counterparty_facts()
     normalized_finance = finance or finance_facts(
@@ -542,6 +543,7 @@ def complete_company_report(
     }
     return CompanyReport(
         report_id=UUID("00000000-0000-0000-0000-000000000004"),
+        report_version=report_version,
         generated_at=RECEIVED_AT,
         target_identifier="0000000000",
         target_identifier_type=DataNewtonIdentifierType.LEGAL_ENTITY_INN,
