@@ -1,73 +1,250 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import indexHtml from '../../index.html?raw'
+import publishedFixture from './fixtures/company-public-h1-published.json?raw'
+import { parseCompanyPublicH1 } from './companyReportH1Contract'
 import {
-  NO_DATA,
-  financeUnit,
+  beginCompanyHead,
+  BLOCK_LABELS,
+  classifyH1Error,
+  cleanupCompanyHead,
+  COVERAGE_LABELS,
+  DATASET_LABELS,
+  displayIsoDate,
+  FINANCE_LABELS,
+  HEAD_KIND_ATTRIBUTE,
+  HEAD_OWNER_ATTRIBUTE,
+  HEAD_OWNER_VALUE,
+  HEAD_PREVIOUS_LANG_ATTRIBUTE,
   isCanonicalCompanyPath,
   parseCompanyKey,
-  signalLabel,
-  signalPeriodText,
+  parseCompanyRoute,
+  RESULT_LABELS,
+  ROLE_LABELS,
+  setCompanyHead,
+  setCompanySafeTitle,
+  STATUS_LABELS,
 } from './companyReportPresentation'
+import { ApiHttpError } from '../lib/api'
 
-describe('company report presentation helpers', () => {
-  it('distinguishes supported plain and canonical company keys', () => {
-    expect(parseCompanyKey('1234567890')).toEqual({ kind: 'plain', inn: '1234567890' })
-    expect(parseCompanyKey('1234567890-company-name')).toEqual({ kind: 'canonical', inn: '1234567890' })
-    expect(parseCompanyKey('123456789012-company')).toEqual({ kind: 'canonical', inn: '123456789012' })
-    for (const value of ['123-company', '1234567890-Company', '1234567890-', '1234567890-company--name', '1234567890-company_name']) expect(parseCompanyKey(value)).toEqual({ error: 'invalid_company_key' })
-  })
-  it('accepts only a canonical path for the same INN', () => {
-    expect(isCanonicalCompanyPath('/company/1234567890-company-name', '1234567890')).toBe(true)
-    expect(isCanonicalCompanyPath('/company/123456789012-company-name', '1234567890')).toBe(false)
-    expect(isCanonicalCompanyPath('/company/1234567890', '1234567890')).toBe(false)
-    expect(isCanonicalCompanyPath('https://example.test/company/1234567890-company', '1234567890')).toBe(false)
-  })
-  it('preserves unavailable data and unknown finance units', () => {
-    expect(financeUnit('provider_units_unknown')).toBe('Единица измерения неизвестна')
-    expect(financeUnit(null)).toBe('Единица измерения неизвестна')
-    expect(NO_DATA).toBe('Нет данных')
-  })
-  it('uses the fixed label registry and a neutral unknown fallback', () => {
-    expect(signalLabel('counterparty.active')).toBe('Компания отмечена действующей')
-    expect(signalLabel('counterparty.dissolved')).toBe('Компания отмечена прекратившей деятельность')
-    expect(signalLabel('counterparty.long_operating_history')).toBe('Длительный срок деятельности')
-    expect(signalLabel('counterparty.status_conflict')).toBe('Противоречивые сведения о статусе')
-    expect(signalLabel('finance.negative_equity')).toBe('Отрицательный капитал')
-    expect(signalLabel('finance.revenue_decline')).toBe('Снижение выручки')
-    expect(signalLabel('finance.net_loss')).toBe('Чистый убыток')
-    expect(signalLabel('finance.cash_shortfall')).toBe('Недостаток денежных средств')
-    expect(signalLabel('finance.high_accounts_payable')).toBe('Высокая кредиторская задолженность')
-    expect(signalLabel('arbitration.high_respondent_case_count')).toBe('Много дел в роли ответчика')
-    expect(signalLabel('arbitration.respondent_case_growth')).toBe('Рост дел в роли ответчика')
-    expect(signalLabel('arbitration.open_cases')).toBe('Открытые арбитражные дела')
-    expect(signalLabel('arbitration.frequent_plaintiff')).toBe('Частые обращения в суд как истец')
-    expect(signalLabel('unknown.signal')).toBe('Сигнал требует проверки')
+const dto = parseCompanyPublicH1(JSON.parse(publishedFixture))
+const ownedSelector = `[${HEAD_OWNER_ATTRIBUTE}="${HEAD_OWNER_VALUE}"]`
+
+function bootstrapSource(): string {
+  const source = indexHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1]
+  if (!source) throw new Error('Company head bootstrap is missing')
+  return source
+}
+
+function runBootstrap(pathname: string): void {
+  const execute = new Function('document', 'location', bootstrapSource())
+  execute(document, { pathname })
+}
+
+describe('CompanyReport presentation policy', () => {
+  beforeEach(() => {
+    cleanupCompanyHead()
+    document.head.innerHTML = '<title>Исходный заголовок</title>'
+    document.documentElement.lang = 'en'
+    document.documentElement.removeAttribute(HEAD_PREVIOUS_LANG_ATTRIBUTE)
   })
 
-  it('uses the exact public signal period field names', () => {
+  afterEach(() => {
+    cleanupCompanyHead()
+    vi.restoreAllMocks()
+  })
+
+  it('parses only strict plain/canonical keys and rejects non-empty queries', () => {
+    expect(parseCompanyKey('1234567890')).toEqual({
+      kind: 'plain',
+      inn: '1234567890',
+    })
+    expect(parseCompanyKey('123456789012-safe-name')).toEqual({
+      kind: 'canonical',
+      inn: '123456789012',
+    })
+    for (const key of [
+      undefined,
+      '123456789',
+      '１２３４５６７８９０',
+      '1234567890-Safe',
+      '1234567890-safe_name',
+      '1234567890-safe-',
+    ]) {
+      expect(parseCompanyKey(key)).toEqual({ error: 'invalid_company_key' })
+    }
+    expect(parseCompanyRoute('1234567890-safe', '?source=test')).toEqual({
+      error: 'invalid_company_key',
+    })
+    expect(parseCompanyRoute('1234567890-safe', '')).toMatchObject({
+      kind: 'canonical',
+    })
+  })
+
+  it('accepts only a canonical path for the exact requested INN', () => {
     expect(
-      signalPeriodText({
-        kind: 'no_period',
-        as_of: '2026-07-24T00:00:00Z',
-      }),
-    ).toBe('На 2026-07-24T00:00:00Z')
-    expect(signalPeriodText({ kind: 'date', value: '2026-07-24' })).toBe(
-      '2026-07-24',
+      isCanonicalCompanyPath('/company/1234567890-safe-name', '1234567890'),
+    ).toBe(true)
+    expect(
+      isCanonicalCompanyPath('/company/0987654321-safe-name', '1234567890'),
+    ).toBe(false)
+    expect(
+      isCanonicalCompanyPath(
+        '/company/1234567890-safe-name?leak=1',
+        '1234567890',
+      ),
+    ).toBe(false)
+    expect(
+      isCanonicalCompanyPath('https://example.test/company/1234567890-safe', '1234567890'),
+    ).toBe(false)
+  })
+
+  it('formats ISO dates by string slicing and is browser-timezone independent', () => {
+    const dateSpy = vi.spyOn(Intl, 'DateTimeFormat')
+    expect(displayIsoDate('2026-01-02')).toBe('02.01.2026')
+    expect(displayIsoDate('1970-01-01')).toBe('01.01.1970')
+    expect(dateSpy).not.toHaveBeenCalled()
+  })
+
+  it('provides a closed Russian label for every reachable catalog value', () => {
+    expect(Object.keys(BLOCK_LABELS)).toEqual([
+      'requisites',
+      'finance',
+      'arbitration',
+      'bankruptcy',
+      'tax',
+      'management',
+    ])
+    expect(Object.keys(DATASET_LABELS)).toEqual([
+      'counterparty',
+      'finance',
+      'arbitration',
+      'bankruptcy',
+      'tax_info',
+    ])
+    expect(Object.keys(COVERAGE_LABELS)).toEqual([
+      'available',
+      'available_empty',
+      'not_found',
+      'not_requested',
+      'partial',
+      'failed',
+      'conflict',
+    ])
+    expect(Object.keys(FINANCE_LABELS)).toHaveLength(20)
+    expect(ROLE_LABELS.unattributed).toBe('Не отнесено')
+    expect(STATUS_LABELS.completed).toBe('Завершённые')
+    expect(RESULT_LABELS.undefined).toBe('Не определено')
+  })
+
+  it('classifies terminal and retryable failures without exposing payload text', () => {
+    expect(
+      classifyH1Error(
+        new ApiHttpError(429, { detail: { message: 'secret' } }),
+        'status',
+      ),
+    ).toEqual({
+      kind: 'retryable',
+      message: 'Слишком много запросов. Повторите позже.',
+      operation: 'status',
+    })
+    expect(
+      classifyH1Error(
+        new ApiHttpError(409, { detail: { code: 'report_failed' } }),
+        'read',
+      ),
+    ).toEqual({
+      kind: 'terminal',
+      message: 'Отчёт не сформирован',
+      operation: null,
+    })
+    expect(
+      classifyH1Error(
+        new ApiHttpError(409, { detail: { code: 'unknown_conflict' } }),
+        'read',
+      ).kind,
+    ).toBe('terminal')
+    expect(classifyH1Error(new Error('raw network detail'), 'create')).toEqual({
+      kind: 'retryable',
+      message: 'Не удалось подключиться к сервису. Повторите попытку.',
+      operation: 'create',
+    })
+  })
+
+  it('runs the inline bootstrap before telemetry only for a strict company path', () => {
+    const bootstrap = bootstrapSource()
+    expect(indexHtml.indexOf(bootstrap)).toBeLessThan(indexHtml.indexOf('ym(108400392'))
+    expect(bootstrap).not.toMatch(/\b(?:fetch|XMLHttpRequest|sendBeacon|console|ym)\b/)
+
+    runBootstrap('/')
+    expect(document.documentElement.lang).toBe('en')
+    expect(document.head.querySelectorAll(ownedSelector)).toHaveLength(0)
+
+    runBootstrap('/company/1234567890-safe-name')
+    expect(document.documentElement.lang).toBe('ru')
+    expect(
+      document.documentElement.getAttribute(HEAD_PREVIOUS_LANG_ATTRIBUTE),
+    ).toBe('en')
+    const robots = document.head.querySelectorAll(
+      `${ownedSelector}[${HEAD_KIND_ATTRIBUTE}="robots"]`,
     )
+    expect(robots).toHaveLength(1)
+    expect(robots[0].getAttribute('content')).toBe('noindex,follow')
+  })
+
+  it('adopts one bootstrap robots owner, stays noindex, and owns one canonical', () => {
+    runBootstrap('/company/1234567890-safe-name')
+    const bootstrapRobots = document.head.querySelector(ownedSelector)
+    const duplicate = bootstrapRobots?.cloneNode(true)
+    if (duplicate) document.head.append(duplicate)
+    const foreignRobots = document.createElement('meta')
+    foreignRobots.name = 'robots'
+    foreignRobots.content = 'index,follow'
+    document.head.append(foreignRobots)
+
+    beginCompanyHead()
+    const ownedRobots = document.head.querySelectorAll(
+      `${ownedSelector}[${HEAD_KIND_ATTRIBUTE}="robots"]`,
+    )
+    expect(ownedRobots).toHaveLength(1)
+    expect(ownedRobots[0]).toBe(bootstrapRobots)
+    expect(ownedRobots[0].getAttribute('content')).toBe('noindex,follow')
+
+    setCompanyHead(dto)
+    setCompanyHead(dto)
+    expect(document.title).toBe('ООО Синтетика — ИНН 1234567890')
+    expect(document.documentElement.lang).toBe('ru')
+    expect(document.head.querySelectorAll(ownedSelector)).toHaveLength(2)
+    const canonical = document.head.querySelector(
+      `link${ownedSelector}[${HEAD_KIND_ATTRIBUTE}="canonical"]`,
+    )
+    expect(canonical?.getAttribute('href')).toBe(dto.canonical_path)
+    expect(ownedRobots[0].getAttribute('content')).toBe('noindex,follow')
+    expect(foreignRobots.isConnected).toBe(true)
+  })
+
+  it('removes stale canonical in safe states and restores pre-bootstrap title/lang', () => {
+    runBootstrap('/company/1234567890-safe-name')
+    setCompanyHead(dto)
+    setCompanySafeTitle('Публичный отчёт недоступен')
+    expect(document.title).toBe('Публичный отчёт недоступен')
     expect(
-      signalPeriodText({
-        kind: 'date_range',
-        start: '2020-01-01',
-        end: '2026-07-24',
-      }),
-    ).toBe('2020-01-01 — 2026-07-24')
-    expect(signalPeriodText({ kind: 'year', year: 2025 })).toBe('2025')
+      document.head.querySelector(
+        `${ownedSelector}[${HEAD_KIND_ATTRIBUTE}="canonical"]`,
+      ),
+    ).toBeNull()
     expect(
-      signalPeriodText({
-        kind: 'year_range',
-        start_year: 2024,
-        end_year: 2025,
-      }),
-    ).toBe('2024 — 2025')
+      document.head.querySelector(
+        `${ownedSelector}[${HEAD_KIND_ATTRIBUTE}="robots"]`,
+      )?.getAttribute('content'),
+    ).toBe('noindex,follow')
+
+    cleanupCompanyHead()
+    expect(document.title).toBe('Исходный заголовок')
+    expect(document.documentElement.lang).toBe('en')
+    expect(document.head.querySelectorAll(ownedSelector)).toHaveLength(0)
+    expect(
+      document.documentElement.hasAttribute(HEAD_PREVIOUS_LANG_ATTRIBUTE),
+    ).toBe(false)
   })
 })

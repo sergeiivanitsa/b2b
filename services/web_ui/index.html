@@ -1,6 +1,33 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <script>
+      (function () {
+        var companyPath = /^\/company\/(?:\d{10}|\d{12})(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$/;
+        if (!companyPath.test(location.pathname)) return;
+        var root = document.documentElement;
+        var previousLang = 'data-company-report-previous-lang';
+        if (!root.hasAttribute(previousLang)) {
+          root.setAttribute(previousLang, root.lang);
+        }
+        root.lang = 'ru';
+        var owner = 'data-company-report-head-owner';
+        var kind = 'data-company-report-head-kind';
+        var selector = '[' + owner + '="company-report-h1-v1"][' + kind + '="robots"]';
+        var nodes = document.head.querySelectorAll(selector);
+        var robots = null;
+        for (var i = 0; i < nodes.length; i += 1) {
+          if (!robots && nodes[i].tagName === 'META') robots = nodes[i];
+          else nodes[i].remove();
+        }
+        if (!robots) robots = document.createElement('meta');
+        robots.setAttribute(owner, 'company-report-h1-v1');
+        robots.setAttribute(kind, 'robots');
+        robots.setAttribute('name', 'robots');
+        robots.setAttribute('content', 'noindex,follow');
+        if (!robots.parentNode) document.head.appendChild(robots);
+      })();
+    </script>
     <!-- Yandex.Metrika counter -->
     <script type="text/javascript">
       (function (m, e, t, r, i, k, a) {

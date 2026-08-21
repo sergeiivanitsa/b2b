@@ -1,54 +1,127 @@
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useRef } from 'react'
 
-import type { ArbitrationFacts, CompanyReportContext, CompanyReportResponse, CounterpartyFacts, FinanceFacts, PublicAiExplanation, PublicDataset, PublicScoring, PublicSignal, SafeFailure, SafeWarning } from '../../companyReport/companyReportTypes'
-import { companyName, displayDate, displayValue, financePeriods, financeUnit, isKnownSignal, safeWarnings, signalLabel, signalPeriodText } from '../../companyReport/companyReportPresentation'
+import type { CompanyPublicH1Response } from '../../companyReport/companyReportTypes'
+import { CompanyReportH1Block } from './CompanyReportH1Blocks'
 
-export type CompanyReportError = { message: string; kind: 'generic' | 'unauthenticated' | 'forbidden'; retryOperation: 'get' | 'create' | 'status' | null }
-type Props = { inn: string; response?: CompanyReportResponse; pending?: boolean; pendingTitle?: string; notFound?: boolean; error?: CompanyReportError | null; onCreate?: () => void; onRetry?: () => void; onLoadAi?: () => void; aiLoading?: boolean; aiError?: string | null }
+export type CompanyReportView =
+  | { kind: 'loading_h1' }
+  | { kind: 'pending'; title: string; cycle: number }
+  | { kind: 'content'; dto: CompanyPublicH1Response }
+  | { kind: 'terminal_error'; message: string }
+  | { kind: 'retryable_error'; message: string }
+  | { kind: 'contract_error' }
+  | { kind: 'invalid_route' }
 
-export function CompanyReportContent({ inn, response, pending = false, pendingTitle = 'Проверяем компанию', notFound = false, error = null, onCreate, onRetry, onLoadAi, aiLoading = false, aiError = null }: Props) {
-  if (pending) return <StatusView title={pendingTitle} message="Отчёт формируется. Это может занять несколько минут." fallbackClaims />
-  if (notFound) return <StatusView title="Отчёт ещё не создан" message="Создайте отчёт, чтобы получить доступные данные о компании." action={onCreate} actionLabel="Создать отчёт" fallbackClaims />
-  if (error) return <ErrorView error={error} onRetry={onRetry} />
-  if (!response) return <StatusView title="Загружаем отчёт" message="Получаем доступную информацию о компании." />
-  const snapshot = response.report
-  if (!snapshot) return <FailureOnly failure={response.failure} onCreate={onCreate} />
-  const counterparty = snapshot.counterparty
-  const context: CompanyReportContext = { inn, companyName: counterparty?.short_name || counterparty?.full_name || undefined, reportId: response.report_id }
-
-  return <main className="company-report-page">
-    <header className="company-report-hero"><p className="company-report-eyebrow">CompanyReport</p><h1>{companyName(counterparty, inn)}</h1><p>Оценка финансового состояния и возможности взыскания задолженности</p><p className="company-report-status" aria-label="Статус отчёта">Статус: {response.status === 'partial' ? 'данные неполные' : response.status === 'failed' ? 'сбор отчёта завершился с ошибкой' : 'отчёт готов'}</p></header>
-    {response.status === 'partial' && <p className="company-report-notice" role="status">Отчёт содержит не все доступные данные. Отсутствующие показатели не заменены значениями.</p>}
-    {response.status === 'failed' && <><SafeFailure failure={response.failure} />{onCreate && <p><button type="button" onClick={onCreate}>Создать новый отчёт</button></p>}</>}
-    <ReportMetadata response={response} />
-    <DatasetDetails datasets={snapshot.datasets} usableForPublicPage={snapshot.usable_for_public_page} usableForFutureScoring={snapshot.usable_for_future_scoring} />
-    <div className="company-report-grid"><LegalFacts counterparty={counterparty} /><Arbitration facts={snapshot.arbitration} /></div>
-    <Finance finance={snapshot.finance} />
-    <Warnings warnings={[...safeWarnings(snapshot.warnings), ...safeWarnings(snapshot.freshness.warnings)]} />
-    <Signals response={response} />
-    <MachineScoring scoring={response.scoring} signals={response.signals?.signals ?? []} />
-    <AiSection ai={response.ai_explanation} loading={aiLoading} error={aiError} onLoad={onLoadAi} />
-    <ClaimCta context={context} />
-  </main>
+type CompanyReportContentProps = {
+  view: CompanyReportView
+  onRetry?: () => void
 }
 
-function StatusView({ title, message, action, actionLabel, fallbackClaims = false }: { title: string; message: string; action?: () => void; actionLabel?: string; fallbackClaims?: boolean }) { return <main className="company-report-page"><section className="company-report-state" aria-live="polite"><h1>{title}</h1><p>{message}</p>{action && actionLabel && <button type="button" onClick={action}>{actionLabel}</button>}{fallbackClaims ? <p><Link to="/claims">Перейти к взысканию вручную</Link></p> : null}</section></main> }
-function ErrorView({ error, onRetry }: { error: CompanyReportError; onRetry?: () => void }) {
-  if (error.kind === 'unauthenticated' || error.kind === 'forbidden') return <StatusView title="Не удалось открыть публичный отчёт" message={error.message} />
-  return <StatusView title="Не удалось открыть отчёт" message={error.message} action={error.retryOperation ? onRetry : undefined} actionLabel="Повторить" />
+function liveAnnouncement(view: CompanyReportView): string {
+  switch (view.kind) {
+    case 'loading_h1':
+      return 'Загружаем сведения о компании.'
+    case 'pending':
+      return 'Отчёт формируется.'
+    case 'content':
+      return 'Сведения о компании загружены.'
+    case 'contract_error':
+      return 'Формат отчёта не поддерживается.'
+    case 'invalid_route':
+      return 'Адрес страницы компании некорректен.'
+    case 'terminal_error':
+    case 'retryable_error':
+      return view.message
+  }
 }
-function FailureOnly({ failure, onCreate }: { failure?: SafeFailure | null; onCreate?: () => void }) { return <main className="company-report-page"><section className="company-report-state company-report-state--failed" aria-live="polite"><h1>Отчёт недоступен</h1><SafeFailure failure={failure} />{onCreate && <button type="button" onClick={onCreate}>Создать новый отчёт</button>}<p><Link to="/claims">Перейти к взысканию вручную</Link></p></section></main> }
-function SafeFailure({ failure }: { failure?: SafeFailure | null }) { return <p className="company-report-notice" role="status">{failure?.message || 'Не удалось сформировать безопасную версию отчёта.'}{failure?.retryable ? ' Можно повторить запрос.' : ''}</p> }
-function ReportMetadata({ response }: { response: CompanyReportResponse }) { const report = response.report!; return <section className="company-report-section" aria-labelledby="company-report-completeness"><h2 id="company-report-completeness">Полнота и актуальность</h2><p>Доступно наборов данных: {report.completeness.available_count} из {report.completeness.required_count} ({report.completeness.percent}%).</p><p>Сформирован: {displayDate(report.freshness.generated_at)}</p></section> }
-function DatasetDetails({ datasets, usableForPublicPage, usableForFutureScoring }: { datasets: Record<string, PublicDataset>; usableForPublicPage: boolean; usableForFutureScoring: boolean }) { return <section className="company-report-section" aria-labelledby="company-report-datasets"><h2 id="company-report-datasets">Наборы данных</h2><p>Пригодность для страницы: {usableForPublicPage ? 'Да' : 'Нет'}</p><p>Пригодность для последующей оценки: {usableForFutureScoring ? 'Да' : 'Нет'}</p><ul>{Object.entries(datasets).sort(([left], [right]) => left.localeCompare(right)).map(([name, dataset]) => <li key={name}><strong>{name}</strong>: {displayValue(dataset.status)}; источник: {displayDate(dataset.source_time?.received_at)}{dataset.failure && <>; {dataset.failure.message}</>}<Warnings warnings={safeWarnings(dataset.warnings)} /></li>)}</ul></section> }
-function LegalFacts({ counterparty }: { counterparty?: CounterpartyFacts | null }) { const rows: Array<[string, string | number | boolean | null | undefined]> = [['ИНН', counterparty?.inn], ['ОГРН', counterparty?.ogrn], ['КПП', counterparty?.kpp], ['Организационно-правовая форма', counterparty?.legal_form], ['Статус', counterparty?.status_text], ['Код статуса', counterparty?.status_code], ['Дата регистрации', counterparty?.registration_date], ['Дата прекращения деятельности', counterparty?.dissolved_date], ['Срок деятельности', counterparty?.years_from_registration], ['Адрес', counterparty?.address?.line_address]]; return <section className="company-report-section" aria-labelledby="company-report-legal"><h2 id="company-report-legal">Реквизиты</h2><dl>{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{displayValue(value)}</dd></div>)}</dl></section> }
-function Finance({ finance }: { finance?: FinanceFacts | null }) { const periods = financePeriods(finance); const fields: Array<[keyof (typeof periods)[number], string]> = [['total_assets', 'Активы'], ['current_assets', 'Оборотные активы'], ['cash_and_equivalents', 'Денежные средства'], ['equity', 'Капитал'], ['accounts_payable', 'Кредиторская задолженность'], ['revenue', 'Выручка'], ['net_profit', 'Чистая прибыль']]; return <section className="company-report-section" aria-labelledby="company-report-finance"><h2 id="company-report-finance">Финансовые показатели</h2><p>Единица измерения: {financeUnit(finance?.unit)}</p>{periods.length === 0 ? <p>{displayValue(null)}</p> : <div className="company-report-table-wrap"><table><thead><tr><th>Показатель</th>{periods.map((period, index) => <th key={`${period.year ?? 'unknown'}-${index}`}>{displayValue(period.year)}</th>)}</tr></thead><tbody>{fields.map(([field, label]) => <tr key={field}><th scope="row">{label}</th>{periods.map((period, index) => <td key={`${field}-${index}`}>{displayValue(period[field] as string | null | undefined)}</td>)}</tr>)}</tbody></table></div>}</section> }
-function Arbitration({ facts }: { facts?: ArbitrationFacts | null }) { return <section className="company-report-section" aria-labelledby="company-report-arbitration"><h2 id="company-report-arbitration">Арбитраж</h2><dl><div><dt>Всего дел</dt><dd>{displayValue(facts?.total_cases)}</dd></div><div><dt>Возвращённые дела</dt><dd>{displayValue(facts?.returned_cases)}</dd></div><div><dt>Данные полные</dt><dd>{facts?.is_complete === undefined || facts?.is_complete === null ? displayValue(null) : facts.is_complete ? 'Да' : 'Нет'}</dd></div></dl><Summary title="Роли" values={facts?.role_summary} /><Summary title="Статусы" values={facts?.status_summary} /><Summary title="Результаты" values={facts?.result_summary} />{facts?.claim_amounts_by_currency && <ul>{Object.entries(facts.claim_amounts_by_currency).map(([currency, amount]) => <li key={currency}>{currency}: истец {displayValue(amount.plaintiff)}, ответчик {displayValue(amount.respondent)}</li>)}</ul>}</section> }
-function Summary({ title, values }: { title: string; values?: Record<string, number> | null }) { if (!values) return null; return <><h3>{title}</h3><ul>{Object.entries(values).sort(([left], [right]) => left.localeCompare(right)).map(([label, value]) => <li key={label}>{label}: {displayValue(value)}</li>)}</ul></> }
-function Warnings({ warnings }: { warnings: SafeWarning[] }) { return warnings.length ? <ul className="company-report-warnings">{warnings.map((warning, index) => <li key={`${warning.code}-${index}`}>{warning.message}</li>)}</ul> : null }
-function Signals({ response }: { response: CompanyReportResponse }) { const signals = response.signals?.signals ?? []; return signals.length ? <section className="company-report-section" aria-labelledby="company-report-signals"><h2 id="company-report-signals">Зафиксированные сигналы</h2><ul>{signals.map((signal) => <li key={signal.code}><strong>{signalLabel(signal.code)}</strong>{!isKnownSignal(signal.code) && <code> {signal.code}</code>}<span> — {signal.direction}; {signal.strength}; {signal.confidence}; период: {signalPeriodText(signal.period)}</span><Warnings warnings={safeWarnings(signal.warnings)} /></li>)}</ul><Warnings warnings={safeWarnings(response.signals?.warnings)} /></section> : null }
-function MachineScoring({ scoring, signals }: { scoring?: PublicScoring | null; signals: PublicSignal[] }) { if (!scoring) return null; const signalDirections = new Map(signals.map((signal) => [signal.code, signal.direction])); const forReasons = scoring.reasons.filter((reason) => (reason.direction ?? signalDirections.get(reason.signal_code)) === 'positive'); const againstReasons = scoring.reasons.filter((reason) => (reason.direction ?? signalDirections.get(reason.signal_code)) === 'negative'); return <section className="company-report-section company-report-machine" aria-labelledby="company-report-machine"><h2 id="company-report-machine">Машинная оценка</h2><p>Уровень: {scoring.level}</p>{scoring.level === 'insufficient_data' ? <p>Недостаточно доказательств для числовой оценки.</p> : <p>Баллы: {displayValue(scoring.score_points)}</p>}<p>Достоверность: {displayValue(typeof scoring.confidence.value === 'string' ? scoring.confidence.value : null)}</p><h3>Аргументы за</h3><ReasonList reasons={forReasons} /><h3>Аргументы против</h3><ReasonList reasons={againstReasons} /><h3>Разбивка по доменам</h3><ul>{scoring.domain_breakdown.map((item) => <li key={item.category}>{item.category}: исходные баллы {displayValue(item.raw_points)}, после ограничения {displayValue(item.capped_points)}</li>)}</ul><Warnings warnings={safeWarnings(scoring.warnings)} /></section> }
-function ReasonList({ reasons }: { reasons: PublicScoring['reasons'] }) { return reasons.length ? <ul>{reasons.map((reason) => <li key={reason.signal_code}>{signalLabel(reason.signal_code)}: {displayValue(reason.contribution)}</li>)}</ul> : <p>{displayValue(null)}</p> }
-function AiSection({ ai, loading, error, onLoad }: { ai?: PublicAiExplanation | null; loading: boolean; error: string | null; onLoad?: () => void }) { const content = ai?.status === 'ok' ? ai.explanation : null; return <section className="company-report-section company-report-ai" aria-labelledby="company-report-ai"><h2 id="company-report-ai">AI-пояснение</h2>{content ? <><p>{content.overall_conclusion}</p><AiList label="Факторы" values={content.recovery_factors} /><AiList label="Риски" values={content.key_risks} /><p>Срочность: {content.urgency}</p><p>Следующий шаг: {content.recommended_next_step}</p><AiList label="Ограничения" values={content.limitations} /></> : <><p>{error || (ai && ai.status !== 'ok' ? 'AI-пояснение временно недоступно.' : 'AI-пояснение загружается только по вашему запросу.')}</p>{onLoad && <button type="button" onClick={onLoad} disabled={loading}>{loading ? 'Загружаем AI-пояснение…' : 'Показать AI-пояснение'}</button>}</>}</section> }
-function AiList({ label, values }: { label: string; values: string[] }) { return values.length ? <><h3>{label}</h3><ul>{values.map((value, index) => <li key={`${label}-${index}`}>{value}</li>)}</ul></> : null }
-function ClaimCta({ context }: { context: CompanyReportContext }) { const navigate = useNavigate(); const reportId = context.reportId; return <section className="company-report-cta"><h2>Следующий шаг</h2><p>Данные должника уже заполнены — останется указать основание и сумму долга.</p><button type="button" onClick={() => navigate(reportId ? `/claims?report_id=${encodeURIComponent(reportId)}` : '/claims')}>Перейти к взысканию</button></section> }
+
+export function CompanyReportContent({
+  view,
+  onRetry,
+}: CompanyReportContentProps) {
+  const mainRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    if (view.kind === 'loading_h1') return
+    mainRef.current
+      ?.querySelector<HTMLElement>('[data-company-report-focus-heading]')
+      ?.focus()
+  }, [view.kind])
+
+  const busy = view.kind === 'loading_h1' || view.kind === 'pending'
+  const contentAttributes =
+    view.kind === 'content'
+      ? {
+          'data-company-contract': view.dto.contract_version,
+          'data-company-report-id': view.dto.report_id,
+          'data-company-report-version': view.dto.report_version,
+          'data-company-projection-scope': view.dto.projection_scope,
+          'data-company-canonical-path': view.dto.canonical_path,
+          'data-company-indexable': String(view.dto.indexable),
+          'data-company-block-order': view.dto.block_order.join(','),
+        }
+      : {}
+
+  return (
+    <main
+      ref={mainRef}
+      className="company-report-page"
+      aria-busy={busy || undefined}
+      {...contentAttributes}
+    >
+      <p
+        className="company-report-live"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {liveAnnouncement(view)}
+      </p>
+      {view.kind === 'content' ? (
+        view.dto.block_order.map((id) => (
+          <CompanyReportH1Block key={id} id={id} dto={view.dto} />
+        ))
+      ) : (
+        <CompanyReportState view={view} onRetry={onRetry} />
+      )}
+    </main>
+  )
+}
+
+function CompanyReportState({
+  view,
+  onRetry,
+}: {
+  view: Exclude<CompanyReportView, { kind: 'content' }>
+  onRetry?: () => void
+}) {
+  const state =
+    view.kind === 'loading_h1'
+      ? [
+          'Загружаем сведения о компании',
+          'Получаем доступную информацию о компании.',
+        ]
+      : view.kind === 'pending'
+        ? [view.title, 'Отчёт формируется. Это может занять несколько минут.']
+        : view.kind === 'contract_error'
+          ? ['Неподдерживаемый формат отчёта', 'Сведения временно недоступны.']
+          : view.kind === 'invalid_route'
+            ? [
+                'Некорректный адрес страницы компании.',
+                'Проверьте адрес и повторите попытку.',
+              ]
+            : [view.message, '']
+
+  return (
+    <section className="company-report-state">
+      <h1 tabIndex={-1} data-company-report-focus-heading>
+        {state[0]}
+      </h1>
+      {state[1] ? <p>{state[1]}</p> : null}
+      {view.kind === 'retryable_error' && onRetry ? (
+        <button type="button" onClick={onRetry}>
+          Повторить
+        </button>
+      ) : null}
+    </section>
+  )
+}
