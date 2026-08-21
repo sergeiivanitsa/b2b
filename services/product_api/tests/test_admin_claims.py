@@ -17,10 +17,12 @@ async def _create_claim(
     *,
     status: str = "paid",
     generation_state: str = "ready",
+    client_email: str | None = None,
 ) -> Claim:
     claim = Claim(
         status=status,
         generation_state=generation_state,
+        client_email=client_email,
         price_rub=990,
         input_text="OOO Vector did not pay for delivery",
         edit_token_hash=f"hash-{uuid.uuid4().hex}",
@@ -76,7 +78,12 @@ async def test_admin_claim_status_transition_send_and_files(async_client, engine
     settings = get_settings()
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         cookie = await _create_claims_admin_cookie(session)
-        claim = await _create_claim(session, status="paid", generation_state="ready")
+        claim = await _create_claim(
+            session,
+            status="paid",
+            generation_state="ready",
+            client_email="client@example.org",
+        )
         session.add(
             ClaimFile(
                 claim_id=claim.id,

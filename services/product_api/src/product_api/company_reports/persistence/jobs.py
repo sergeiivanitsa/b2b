@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from product_api.company_reports.aggregate import CompanyReport
+from product_api.company_reports.aggregate import CompanyReport, CURRENT_COMPANY_REPORT_VERSION
 from product_api.company_reports.ephemeral_evaluation import (
     evaluate_report_ephemerally,
 )
@@ -167,7 +167,7 @@ async def enqueue_company_report_job(
     report = CompanyReportRecord(
         id=report_id,
         subject_id=subject.id,
-        report_version="1",
+        report_version=CURRENT_COMPANY_REPORT_VERSION,
         lifecycle_status=REPORT_PENDING_STATUS,
         request_id=f"company-report:{report_id}",
         started_at=db_time,
@@ -221,6 +221,7 @@ async def claim_next_job(
         or subject is None
         or report.subject_id != job.subject_id
         or report.lifecycle_status != REPORT_PENDING_STATUS
+        or report.report_version != CURRENT_COMPANY_REPORT_VERSION
     ):
         await _fail_queued_precondition(
             session,

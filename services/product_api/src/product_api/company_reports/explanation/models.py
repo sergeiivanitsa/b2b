@@ -60,7 +60,7 @@ class AllowedStatementCatalog(FrozenDomainModel):
 
 
 class ExplanationInputEnvelope(FrozenDomainModel):
-    report_version: Literal["1"]
+    report_version: Literal["1", "2"]
     report_status: str = Field(min_length=1)
     completeness: dict[str, object]
     dataset_statuses: list[ExplanationDatasetStatus]

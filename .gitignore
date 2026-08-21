@@ -33,6 +33,7 @@ Thumbs.db
 cookie_*.txt
 req.json
 context/
+/.tmp/iteration17-postgres/
 
 # local artifacts
 cookie*.txt

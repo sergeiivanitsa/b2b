@@ -90,8 +90,10 @@ def normalize_arbitration(
 
     warnings: list[NormalizationWarning] = []
     cases: list[ArbitrationCaseFacts] = []
+    malformed_entry_count = 0
     for index, raw_case in enumerate(raw_cases):
         if not isinstance(raw_case, dict):
+            malformed_entry_count += 1
             warnings.append(
                 warning(
                     "arbitration_case_invalid",
@@ -138,7 +140,10 @@ def normalize_arbitration(
     return ArbitrationFacts(
         source=source,
         total_cases=total_cases,
-        returned_cases=len(cases),
+        # ``returned_cases`` is the raw slice size, including malformed
+        # entries.  Public projection relies on the invariant
+        # normalized + malformed == returned.
+        returned_cases=len(raw_cases),
         offset=offset,
         limit=limit,
         is_complete=offset == 0 and len(raw_cases) >= total_cases,
@@ -149,6 +154,7 @@ def normalize_arbitration(
         claim_amount_as_plaintiff=plaintiff_total,
         claim_amount_as_respondent=respondent_total,
         claim_amounts_by_currency=amounts_by_currency,
+        malformed_entry_count=malformed_entry_count,
         warnings=source.warnings,
     )
 
@@ -162,9 +168,16 @@ def _normalize_case(
 ) -> ArbitrationCaseFacts:
     path = f"$.data[{index}]"
     parties_by_container: dict[str, list[ArbitrationParty]] = {}
+    party_collections_valid = True
     company_roles: list[ArbitrationRole] = []
     for container, role in _PARTY_CONTAINERS:
-        parties = _parties(raw_case.get(container), path=f"{path}.{container}", warnings=warnings)
+        raw_parties = raw_case.get(container)
+        if raw_parties is not None and (
+            not isinstance(raw_parties, list)
+            or any(not isinstance(item, dict) for item in raw_parties)
+        ):
+            party_collections_valid = False
+        parties = _parties(raw_parties, path=f"{path}.{container}", warnings=warnings)
         parties_by_container[container] = parties
         if any(_party_matches(party, target_identifier) for party in parties):
             if role not in company_roles:
@@ -219,6 +232,16 @@ def _normalize_case(
         company_roles=company_roles,
         plaintiffs=parties_by_container["plaintiffs"],
         respondents=parties_by_container["respondents"],
+        applicants=parties_by_container["applicants"],
+        creditors=(
+            parties_by_container["creditors"]
+            + parties_by_container["creditors_current_payments"]
+        ),
+        debtors=parties_by_container["debtors"],
+        interested_persons=parties_by_container["interested_persons"],
+        third_parties=parties_by_container["third_parties"],
+        other_parties=parties_by_container["others"],
+        party_collections_valid=party_collections_valid,
         documents=documents,
         document_count=len(documents),
         document_types=sorted(document_types),

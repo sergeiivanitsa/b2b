@@ -30,6 +30,7 @@ async def test_pending_creation_normalizes_subject_and_is_idempotent():
     assert len(session.subjects) == 1
     assert len(session.reports) == 1
     assert first.lifecycle_status == "pending"
+    assert first.report_version == "2"
     assert first.normalized_snapshot is None
     assert first.safe_error_snapshot is None
     assert session.commit_count == 0

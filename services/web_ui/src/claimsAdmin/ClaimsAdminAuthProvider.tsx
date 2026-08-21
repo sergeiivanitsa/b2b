@@ -1,4 +1,4 @@
-import { createContext, useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { PropsWithChildren } from 'react'
 
 import { ApiHttpError } from '../lib/api'
@@ -8,19 +8,11 @@ import {
   probeClaimsAdminSession,
   requestClaimsAdminLink,
 } from './adminAuthApi'
+import {
+  ClaimsAdminAuthContext,
+  type ClaimsAdminAuthContextValue,
+} from './ClaimsAdminAuthContext'
 import type { ClaimsAdminAuthStatus } from './types'
-
-export type ClaimsAdminAuthContextValue = {
-  status: ClaimsAdminAuthStatus
-  refreshSession: () => Promise<ClaimsAdminAuthStatus>
-  requestLink: (email: string) => Promise<void>
-  confirmToken: (token: string) => Promise<ClaimsAdminAuthStatus>
-  logout: () => Promise<void>
-}
-
-export const ClaimsAdminAuthContext = createContext<ClaimsAdminAuthContextValue | undefined>(
-  undefined,
-)
 
 export function ClaimsAdminAuthProvider({ children }: PropsWithChildren) {
   const [status, setStatus] = useState<ClaimsAdminAuthStatus>('loading')

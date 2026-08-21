@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
 const DEFAULT_MIN_DELAY_MS = 2500
@@ -27,6 +27,15 @@ export type UseStep3DocQueueStatusResult = {
   statusById: Record<string, Step3DocQueueStatus>
   allDone: boolean
   isReducedMotion: boolean
+}
+
+type QueueState = {
+  identity: QueueIdentity
+  statusById: Record<string, Step3DocQueueStatus>
+}
+
+type QueueIdentity = {
+  key: string
 }
 
 function defaultRng(): number {
@@ -105,13 +114,32 @@ export function useStep3DocQueueStatus({
   const [isReducedMotion, setIsReducedMotion] = useState<boolean>(() =>
     readReducedMotionPreference(),
   )
-  const [statusById, setStatusById] = useState<Record<string, Step3DocQueueStatus>>(() =>
-    buildStatusMap(itemIds, 'loading'),
+  const itemIdsKey = JSON.stringify(itemIds)
+  const stableItemIds = useMemo<readonly string[]>(
+    () => JSON.parse(itemIdsKey) as string[],
+    [itemIdsKey],
   )
-  const timerIdsRef = useRef<number[]>([])
-  const runIdRef = useRef(0)
-  const itemIdsSignature = itemIds.join('|')
-  const stableItemIds = useMemo(() => [...itemIds], [itemIdsSignature])
+  const [resolvedMinDelayMs, resolvedMaxDelayMs] = resolveDelayRange(
+    minDelayMs,
+    maxDelayMs,
+  )
+  const queueKey = JSON.stringify([
+    runKey,
+    itemIdsKey,
+    enabled,
+    isReducedMotion,
+    resolvedMinDelayMs,
+    resolvedMaxDelayMs,
+  ])
+  const queueIdentity = useMemo<QueueIdentity>(() => ({ key: queueKey }), [queueKey])
+  const initialStatus = isReducedMotion ? 'done' : 'loading'
+  const baselineStatusById = buildStatusMap(stableItemIds, initialStatus)
+  const [queueState, setQueueState] = useState<QueueState>(() => ({
+    identity: queueIdentity,
+    statusById: baselineStatusById,
+  }))
+  const statusById =
+    queueState.identity === queueIdentity ? queueState.statusById : baselineStatusById
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
@@ -119,7 +147,6 @@ export function useStep3DocQueueStatus({
     }
 
     const mediaQueryList = window.matchMedia(REDUCED_MOTION_QUERY)
-    setIsReducedMotion(mediaQueryList.matches)
 
     const handleChange = (event: MediaQueryListEvent) => {
       setIsReducedMotion(event.matches)
@@ -140,73 +167,60 @@ export function useStep3DocQueueStatus({
   }, [])
 
   useEffect(() => {
-    const currentRunId = runIdRef.current + 1
-    runIdRef.current = currentRunId
-
-    timerIdsRef.current.forEach((timerId) => {
-      window.clearTimeout(timerId)
-    })
-    timerIdsRef.current = []
-
-    if (stableItemIds.length === 0) {
-      setStatusById({})
+    if (stableItemIds.length === 0 || !enabled || isReducedMotion) {
       return
     }
 
-    if (!enabled) {
-      setStatusById(buildStatusMap(stableItemIds, 'loading'))
-      return
-    }
-
-    if (isReducedMotion) {
-      setStatusById(buildStatusMap(stableItemIds, 'done'))
-      return
-    }
-
-    const [resolvedMinDelayMs, resolvedMaxDelayMs] = resolveDelayRange(
-      minDelayMs,
-      maxDelayMs,
-    )
-    setStatusById(buildStatusMap(stableItemIds, 'loading'))
+    let cancelled = false
+    const timerIds: number[] = []
 
     stableItemIds.forEach((itemId) => {
-      const delayMs = randomDelay(resolvedMinDelayMs, resolvedMaxDelayMs, resolvedRng)
+      const delayMs = randomDelay(
+        resolvedMinDelayMs,
+        resolvedMaxDelayMs,
+        resolvedRng,
+      )
       const timerId = window.setTimeout(() => {
-        if (runIdRef.current !== currentRunId) {
+        if (cancelled) {
           return
         }
 
-        setStatusById((previousState) => {
-          if (previousState[itemId] === 'done') {
-            return previousState
+        setQueueState((previousState) => {
+          const previousStatusById =
+            previousState.identity === queueIdentity
+              ? previousState.statusById
+              : buildStatusMap(stableItemIds, 'loading')
+          if (previousStatusById[itemId] === 'done') {
+            return previousState.identity === queueIdentity
+              ? previousState
+              : { identity: queueIdentity, statusById: previousStatusById }
           }
           return {
-            ...previousState,
-            [itemId]: 'done',
+            identity: queueIdentity,
+            statusById: {
+              ...previousStatusById,
+              [itemId]: 'done',
+            },
           }
         })
       }, delayMs)
 
-      timerIdsRef.current.push(timerId)
+      timerIds.push(timerId)
     })
 
     return () => {
-      if (runIdRef.current !== currentRunId) {
-        return
-      }
-      timerIdsRef.current.forEach((timerId) => {
+      cancelled = true
+      timerIds.forEach((timerId) => {
         window.clearTimeout(timerId)
       })
-      timerIdsRef.current = []
     }
   }, [
     enabled,
     isReducedMotion,
-    itemIdsSignature,
-    maxDelayMs,
-    minDelayMs,
+    queueIdentity,
+    resolvedMaxDelayMs,
+    resolvedMinDelayMs,
     resolvedRng,
-    runKey,
     stableItemIds,
   ])
 

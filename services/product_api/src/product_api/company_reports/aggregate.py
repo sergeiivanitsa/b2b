@@ -12,11 +12,18 @@ from product_api.providers.datanewton import DataNewtonIdentifierType
 
 from .models import (
     ArbitrationFacts,
+    BankruptcyFacts,
     CounterpartyFacts,
     FinanceFacts,
     FrozenDomainModel,
     SourceMetadata,
+    TaxInfoFacts,
 )
+
+
+CURRENT_COMPANY_REPORT_VERSION = "2"
+REQUIRED_DATASETS: tuple[str, ...] = ("counterparty", "finance", "arbitration")
+OPTIONAL_DATASETS: tuple[str, ...] = ("tax_info", "bankruptcy")
 
 
 class CompanyReportStatus(StrEnum):
@@ -106,7 +113,7 @@ class ReportFreshness(FrozenDomainModel):
 
 class CompanyReport(FrozenDomainModel):
     report_id: UUID
-    report_version: Literal["1"] = "1"
+    report_version: Literal["1", "2"] = CURRENT_COMPANY_REPORT_VERSION
     generated_at: datetime
     target_identifier: str = Field(repr=False)
     target_identifier_type: DataNewtonIdentifierType
@@ -115,6 +122,9 @@ class CompanyReport(FrozenDomainModel):
     finance: FinanceFacts | None = None
     arbitration: ArbitrationFacts | None = None
     datasets: dict[str, DatasetReport]
+    optional_datasets: dict[str, DatasetReport] = Field(default_factory=dict)
+    tax_info: TaxInfoFacts | None = None
+    bankruptcy: BankruptcyFacts | None = None
     completeness: CompanyReportCompleteness
     freshness: ReportFreshness
     warnings: list[ReportWarning] = Field(default_factory=list)
@@ -130,9 +140,13 @@ class CompanyReport(FrozenDomainModel):
 
     @model_validator(mode="after")
     def _status_matches_datasets(self) -> CompanyReport:
+        if tuple(self.datasets) != REQUIRED_DATASETS and set(self.datasets) != set(REQUIRED_DATASETS):
+            raise ValueError("report datasets must contain exactly required datasets")
+        if any(key not in OPTIONAL_DATASETS for key in self.optional_datasets):
+            raise ValueError("report optional datasets contain an unsupported dataset")
         available = sum(
             dataset.status is DatasetReportStatus.AVAILABLE
-            for dataset in self.datasets.values()
+            for dataset in (self.datasets[name] for name in REQUIRED_DATASETS)
         )
         if self.status is CompanyReportStatus.COMPLETE and available != 3:
             raise ValueError("complete report must have all required datasets available")

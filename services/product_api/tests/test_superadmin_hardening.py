@@ -174,7 +174,7 @@ async def test_admin_company_admins_missing_company_404_not_500(async_client, en
 
     resp = await async_client.post(
         "/admin/companies/999999/admins",
-        json={"email": "new-admin@org.test"},
+        json={"email": "new-admin@example.org"},
         cookies={settings.session_cookie_name: super_cookie},
     )
     assert resp.status_code == 404
@@ -186,11 +186,16 @@ async def test_admin_company_admins_conflict_active_invite_409(async_client, eng
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         company = await create_company(session, "Invite Co")
         super_cookie = await _make_superadmin_cookie(session)
-        await create_invite(session, company.id, "taken-admin@org.test", role="admin")
+        await create_invite(
+            session,
+            company.id,
+            "taken-admin@example.org",
+            role="admin",
+        )
 
     resp = await async_client.post(
         f"/admin/companies/{company.id}/admins",
-        json={"email": "taken-admin@org.test"},
+        json={"email": "taken-admin@example.org"},
         cookies={settings.session_cookie_name: super_cookie},
     )
     assert resp.status_code == 409

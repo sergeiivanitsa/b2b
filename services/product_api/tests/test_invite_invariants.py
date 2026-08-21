@@ -17,11 +17,11 @@ async def test_company_invite_reject_user_with_company(async_client, engine):
         company_b = await create_company(session, "CompanyB")
         admin = await create_user(session, "admin@a.test", "admin", company_a.id)
         cookie = await create_session_cookie(session, admin.id)
-        await create_user(session, "member@b.test", "member", company_b.id)
+        await create_user(session, "member.b@example.org", "member", company_b.id)
 
     resp = await async_client.post(
         "/company/invites",
-        json={"email": "member@b.test"},
+        json={"email": "member.b@example.org"},
         cookies={settings.session_cookie_name: cookie},
     )
     assert resp.status_code == 409
@@ -34,11 +34,11 @@ async def test_company_invite_reject_active_invite_other_org(async_client, engin
         company_b = await create_company(session, "CompanyB")
         admin = await create_user(session, "admin@a.test", "admin", company_a.id)
         cookie = await create_session_cookie(session, admin.id)
-        await create_invite(session, company_b.id, "pending@org.test")
+        await create_invite(session, company_b.id, "pending@example.org")
 
     resp = await async_client.post(
         "/company/invites",
-        json={"email": "pending@org.test"},
+        json={"email": "pending@example.org"},
         cookies={settings.session_cookie_name: cookie},
     )
     assert resp.status_code == 409
@@ -68,7 +68,7 @@ async def test_company_invite_saves_profile_fields_and_list_returns_them(async_c
     create_resp = await async_client.post(
         "/company/invites",
         json={
-            "email": "new.member@org.test",
+            "email": "new.member@example.org",
             "first_name": "  Ivan  ",
             "last_name": "  Ivanov  ",
         },
@@ -78,7 +78,7 @@ async def test_company_invite_saves_profile_fields_and_list_returns_them(async_c
 
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         result = await session.execute(
-            select(Invite).where(Invite.email == "new.member@org.test")
+            select(Invite).where(Invite.email == "new.member@example.org")
         )
         invite = result.scalar_one_or_none()
         assert invite is not None
@@ -93,14 +93,14 @@ async def test_company_invite_saves_profile_fields_and_list_returns_them(async_c
     payload = list_resp.json()
     assert "invites" in payload
     by_email = {item["email"]: item for item in payload["invites"]}
-    assert "new.member@org.test" in by_email
-    assert by_email["new.member@org.test"]["first_name"] == "Ivan"
-    assert by_email["new.member@org.test"]["last_name"] == "Ivanov"
+    assert "new.member@example.org" in by_email
+    assert by_email["new.member@example.org"]["first_name"] == "Ivan"
+    assert by_email["new.member@example.org"]["last_name"] == "Ivanov"
 
 
 async def test_invite_accept_creates_user_with_profile_and_joined_company_at(async_client, engine):
     settings = get_settings()
-    email = "accept.new@org.test"
+    email = "accept.new@example.org"
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         company = await create_company(session, "CompanyA")
         admin = await create_user(session, "admin@a.test", "admin", company.id)
@@ -135,7 +135,7 @@ async def test_invite_accept_creates_user_with_profile_and_joined_company_at(asy
 
 async def test_invite_accept_updates_existing_user_without_company_profile(async_client, engine):
     settings = get_settings()
-    email = "accept.existing@org.test"
+    email = "accept.existing@example.org"
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         company = await create_company(session, "CompanyA")
         admin = await create_user(session, "admin@a.test", "admin", company.id)

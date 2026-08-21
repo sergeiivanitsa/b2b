@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
+from typing import Literal
 from uuid import UUID, uuid4
 
 import pytest
@@ -42,13 +43,17 @@ async def _store_final_report(
     inn: str,
     name: str,
     subject_id: UUID | None = None,
+    report_version: Literal["1", "2"] = "1",
 ) -> tuple[UUID, UUID]:
     now = datetime.now(timezone.utc)
     report_id = uuid4()
     counterparty = counterparty_facts().model_copy(
         update={"inn": inn, "short_name": name, "full_name": name}
     )
-    report = complete_company_report(counterparty=counterparty).model_copy(
+    report = complete_company_report(
+        counterparty=counterparty,
+        report_version=report_version,
+    ).model_copy(
         update={
             "report_id": report_id,
             "generated_at": now,
@@ -98,7 +103,7 @@ async def _store_nonfinal_report(engine, *, inn: str, status: str) -> UUID:
         await session.flush()
         record = CompanyReportRecord(
             subject_id=subject.id,
-            report_version="v1",
+            report_version="2",
             lifecycle_status=status,
             started_at=now,
             finished_at=now if status == "failed" else None,
@@ -132,15 +137,26 @@ async def _member_cookies(engine, *, email: str, company_inn: str) -> dict[str, 
     return {get_settings().session_cookie_name: raw_cookie}
 
 
+@pytest.mark.parametrize("report_version", ["1", "2"])
 async def test_linked_create_is_trusted_idempotent_and_keeps_safe_audit(
     async_client,
     engine,
+    report_version,
 ):
     subject_id, report_id = await _store_final_report(
         engine,
         inn="7700000000",
         name="ООО Вектор",
+        report_version=report_version,
     )
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        source_record = await session.get(CompanyReportRecord, report_id)
+        assert source_record is not None
+        assert source_record.report_version == report_version
+        assert isinstance(source_record.normalized_snapshot, dict)
+        assert source_record.normalized_snapshot["report_version"] == report_version
+        source_snapshot = deepcopy(source_record.normalized_snapshot)
+        source_hash = source_record.snapshot_hash
     cookies = await _member_cookies(
         engine,
         email="handoff-member@example.com",
@@ -211,6 +227,10 @@ async def test_linked_create_is_trusted_idempotent_and_keeps_safe_audit(
         claim = claims[0]
         assert claim.source_company_report_id == report_id
         assert claim.handoff_idempotency_key_hash != "same-command-1"
+        source_record = await session.get(CompanyReportRecord, report_id)
+        assert source_record is not None
+        assert source_record.normalized_snapshot == source_snapshot
+        assert source_record.snapshot_hash == source_hash
         persisted = json.dumps(claim.normalized_data_json, ensure_ascii=False)
         audit = json.dumps(events[0].payload_json, ensure_ascii=False)
         for forbidden in (
@@ -231,6 +251,7 @@ async def test_linked_create_is_trusted_idempotent_and_keeps_safe_audit(
         inn="7700000000",
         name="ООО Вектор — новая выписка",
         subject_id=subject_id,
+        report_version=report_version,
     )
     assert newer_report_id != report_id
     restored = await async_client.get(

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from product_api.company_reports.aggregate import (
     CompanyReport,
+    CURRENT_COMPANY_REPORT_VERSION,
     DatasetReportStatus,
 )
 from product_api.company_reports.models import (
@@ -120,7 +121,7 @@ async def create_pending_report(
     *,
     identifier: str,
     report_id: UUID | None = None,
-    report_version: str = "1",
+    report_version: str = CURRENT_COMPANY_REPORT_VERSION,
     request_id: str | None = None,
     started_at: datetime | None = None,
     fresh_until: datetime | None = None,

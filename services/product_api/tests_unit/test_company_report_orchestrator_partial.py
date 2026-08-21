@@ -36,6 +36,9 @@ async def test_partial_reports_preserve_successful_facts(failed_dataset, expecte
     )
 
     assert report.status is CompanyReportStatus.PARTIAL
+    assert report.report_version == "2"
+    assert tuple(report.datasets) == ("counterparty", "finance", "arbitration")
+    assert report.optional_datasets == {}
     assert report.completeness.percent == expected_percent
     assert report.datasets[failed_dataset].status is DatasetReportStatus.ACCESS_DENIED
     assert report.datasets[failed_dataset].error is not None

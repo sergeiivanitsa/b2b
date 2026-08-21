@@ -45,13 +45,13 @@ function installMatchMediaMock(initialMatches: boolean): MatchMediaController {
     removeListener: (listener: MatchMediaListener) => {
       listeners.delete(listener)
     },
-    dispatchEvent: (_event: Event) => true,
+    dispatchEvent: () => true,
   } as MediaQueryList
 
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
     configurable: true,
-    value: vi.fn().mockImplementation((_query: string) => mediaQueryList),
+    value: vi.fn().mockImplementation(() => mediaQueryList),
   })
 
   return {
@@ -252,5 +252,29 @@ describe('useTypewriterPlaceholder', () => {
 
     expect(vi.getTimerCount()).toBe(0)
     expect(clearTimeoutSpy).toHaveBeenCalled()
+  })
+
+  it('preserves progress for equal phrases and resets for changed phrases', () => {
+    const { result, rerender } = renderHook(
+      ({ phrases }: { phrases: readonly string[] }) =>
+        useTypewriterPlaceholder({ phrases, typingMs: 10, holdMs: 30 }),
+      { initialProps: { phrases: ['abc'] } },
+    )
+
+    act(() => {
+      vi.advanceTimersByTime(10)
+    })
+    expect(result.current.placeholder).toBe('a')
+
+    rerender({ phrases: [...['abc']] })
+    expect(result.current.placeholder).toBe('a')
+
+    rerender({ phrases: ['xy'] })
+    expect(result.current.placeholder).toBe('')
+
+    act(() => {
+      vi.advanceTimersByTime(10)
+    })
+    expect(result.current.placeholder).toBe('x')
   })
 })

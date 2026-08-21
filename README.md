@@ -29,6 +29,14 @@ the read explicitly uses `?include_ai_explanation=true`. An interrupted
 running job is safely failed after its lease expires and is never
 automatically replayed; a new run requires another explicit POST.
 
+The anonymous read-only H1 projection is available at
+`GET /company-reports/{inn}/public-h1`. It accepts no query parameters and
+never creates or refreshes a report, calls providers, scoring/signals or AI, or
+writes to the database. New reports use snapshot version 2; stored version-1
+snapshots and legacy CompanyReport endpoints remain readable. Optional tax,
+bankruptcy, management and absolute-finance facts remain disabled until their
+tracked evidence and operational gates are approved.
+
 Env examples:
 - services/product_api/.env.example
 - services/gateway_api/.env.example
@@ -134,6 +142,35 @@ Web UI:
 - `npm run build`
 
 Note: Product API tests expect `DATABASE_URL` (or `TEST_DATABASE_URL`) and a running Postgres.
+
+### Iteration 17 disposable PostgreSQL tests (Windows)
+
+The tracked runbook uses only an already-local `postgres:16-alpine` image. It
+does not pull an image, accept an external database URL, or use a persistent
+Docker volume. It creates a uniquely named loopback-only PostgreSQL container,
+applies the repository's existing Alembic migrations, verifies JUnit results,
+and removes only the exact labeled container it created.
+
+Run both modes independently from the repository root:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-iteration17-postgres-tests.ps1 -Mode Targeted
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-iteration17-postgres-tests.ps1 -Mode Full
+```
+
+`Targeted` runs the publication, public API/read, and Claims handoff
+integration tests. `Full` runs all Product API integration tests and proves
+that the self-managed migration cases executed. Each run requires tests > 0
+and zero failures, errors, or skips. Evidence is overwritten per mode at
+`.tmp/iteration17-postgres/targeted.xml` and
+`.tmp/iteration17-postgres/full.xml`; this exact directory is gitignored.
+
+Prerequisites are Docker with its daemon running, the local
+`postgres:16-alpine` image, Python, and the repository's existing Product API
+test dependencies. A missing prerequisite is reported as an environment
+failure. The runbook also refuses unreviewed `.env` files in the repository
+root or Product API directory; it never falls back to a production or unknown
+database.
 
 ## Production deployment (2 servers)
 RU server (product_api):

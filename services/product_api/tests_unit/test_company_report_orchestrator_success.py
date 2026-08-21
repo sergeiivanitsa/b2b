@@ -26,6 +26,9 @@ async def test_all_datasets_success_and_request_contract():
     )
 
     assert report.status is CompanyReportStatus.COMPLETE
+    assert report.report_version == "2"
+    assert report.optional_datasets == {}
+    assert report.tax_info is None and report.bankruptcy is None
     assert report.completeness.available_count == 3
     assert report.completeness.percent == 100
     assert report.completeness.ratio == 1

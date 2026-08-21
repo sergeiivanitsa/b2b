@@ -1,0 +1,62 @@
+{
+  "report_id": "00000000-0000-0000-0000-000000000017",
+  "report_version": "1",
+  "generated_at": "2026-01-10T12:30:00Z",
+  "target_identifier": "0000000000",
+  "target_identifier_type": "legal_entity_inn",
+  "status": "partial",
+  "counterparty": {
+    "source": {
+      "provider": "datanewton",
+      "dataset": "counterparty",
+      "endpoint": "/v1/counterparty",
+      "response_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "received_at": "2026-01-10T12:30:00Z"
+    },
+    "inn": "0000000000",
+    "full_name": "ООО Синтетический архив"
+  },
+  "finance": null,
+  "arbitration": null,
+  "datasets": {
+    "counterparty": {
+      "dataset": "counterparty",
+      "status": "available",
+      "source": {
+        "provider": "datanewton",
+        "dataset": "counterparty",
+        "endpoint": "/v1/counterparty",
+        "response_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "received_at": "2026-01-10T12:30:00Z"
+      }
+    },
+    "finance": {
+      "dataset": "finance",
+      "status": "disabled",
+      "error": {"error_type": "disabled", "message": "Dataset is disabled."}
+    },
+    "arbitration": {
+      "dataset": "arbitration",
+      "status": "disabled",
+      "error": {"error_type": "disabled", "message": "Dataset is disabled."}
+    }
+  },
+  "completeness": {
+    "required_datasets": ["counterparty", "finance", "arbitration"],
+    "available_datasets": ["counterparty"],
+    "missing_datasets": ["finance", "arbitration"],
+    "unavailable_datasets": ["finance", "arbitration"],
+    "available_count": 1,
+    "required_count": 3,
+    "ratio": "0.3333333333333333333333333333",
+    "percent": 33,
+    "identity_available": true,
+    "financial_data_available": false,
+    "arbitration_data_available": false
+  },
+  "freshness": {
+    "generated_at": "2026-01-10T12:30:00Z"
+  },
+  "usable_for_public_page": true,
+  "usable_for_future_scoring": false
+}

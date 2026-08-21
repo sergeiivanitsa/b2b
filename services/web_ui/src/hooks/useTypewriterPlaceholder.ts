@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 const DEFAULT_TYPING_MS = 333
 const DEFAULT_HOLD_MS = 1300
@@ -11,6 +11,15 @@ type AnimationState = {
   phraseIndex: number
   visibleLength: number
   phase: AnimationPhase
+}
+
+type KeyedAnimationState = {
+  phrasesIdentity: PhrasesIdentity
+  animation: AnimationState
+}
+
+type PhrasesIdentity = {
+  key: string
 }
 
 type LegacyMediaQueryList = MediaQueryList & {
@@ -69,51 +78,30 @@ export function useTypewriterPlaceholder({
   enabled = true,
   staticPlaceholder,
 }: UseTypewriterPlaceholderOptions): UseTypewriterPlaceholderResult {
-  const [animationState, setAnimationState] = useState<AnimationState>(INITIAL_STATE)
+  const phrasesKey = JSON.stringify(phrases)
+  const stablePhrases = useMemo<readonly string[]>(
+    () => JSON.parse(phrasesKey) as string[],
+    [phrasesKey],
+  )
+  const phrasesIdentity = useMemo<PhrasesIdentity>(
+    () => ({ key: phrasesKey }),
+    [phrasesKey],
+  )
+  const [keyedAnimationState, setKeyedAnimationState] = useState<KeyedAnimationState>(
+    () => ({ phrasesIdentity, animation: INITIAL_STATE }),
+  )
   const [isReducedMotion, setIsReducedMotion] = useState<boolean>(() =>
     readReducedMotionPreference(),
   )
-  const timeoutRef = useRef<number | null>(null)
+  const animationState =
+    keyedAnimationState.phrasesIdentity === phrasesIdentity
+      ? keyedAnimationState.animation
+      : INITIAL_STATE
 
   const staticValue = useMemo(
-    () => resolveStaticPlaceholder(phrases, staticPlaceholder),
-    [phrases, staticPlaceholder],
+    () => resolveStaticPlaceholder(stablePhrases, staticPlaceholder),
+    [stablePhrases, staticPlaceholder],
   )
-
-  useEffect(() => {
-    setAnimationState((previousState) => {
-      if (phrases.length === 0) {
-        if (
-          previousState.phraseIndex === INITIAL_STATE.phraseIndex &&
-          previousState.visibleLength === INITIAL_STATE.visibleLength &&
-          previousState.phase === INITIAL_STATE.phase
-        ) {
-          return previousState
-        }
-        return INITIAL_STATE
-      }
-
-      const boundedPhraseIndex = Math.min(previousState.phraseIndex, phrases.length - 1)
-      const phrase = phrases[boundedPhraseIndex] ?? ''
-      const boundedVisibleLength = Math.min(previousState.visibleLength, phrase.length)
-      const nextPhase: AnimationPhase =
-        boundedVisibleLength < phrase.length ? 'typing' : previousState.phase
-
-      if (
-        boundedPhraseIndex === previousState.phraseIndex &&
-        boundedVisibleLength === previousState.visibleLength &&
-        nextPhase === previousState.phase
-      ) {
-        return previousState
-      }
-
-      return {
-        phraseIndex: boundedPhraseIndex,
-        visibleLength: boundedVisibleLength,
-        phase: nextPhase,
-      }
-    })
-  }, [phrases])
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
@@ -121,7 +109,6 @@ export function useTypewriterPlaceholder({
     }
 
     const mediaQueryList = window.matchMedia(REDUCED_MOTION_QUERY)
-    setIsReducedMotion(mediaQueryList.matches)
 
     const handleChange = (event: MediaQueryListEvent) => {
       setIsReducedMotion(event.matches)
@@ -141,91 +128,92 @@ export function useTypewriterPlaceholder({
     }
   }, [])
 
-  const shouldUseStaticPlaceholder = !enabled || isReducedMotion || phrases.length === 0
+  const shouldUseStaticPlaceholder =
+    !enabled || isReducedMotion || stablePhrases.length === 0
   const shouldAnimate = !shouldUseStaticPlaceholder && !paused
 
-  const currentPhrase = phrases[animationState.phraseIndex] ?? ''
+  const currentPhrase = stablePhrases[animationState.phraseIndex] ?? ''
   const boundedVisibleLength = Math.min(animationState.visibleLength, currentPhrase.length)
   const animatedPlaceholder = currentPhrase.slice(0, boundedVisibleLength)
 
   useEffect(() => {
-    if (timeoutRef.current !== null) {
-      window.clearTimeout(timeoutRef.current)
-      timeoutRef.current = null
-    }
-
     if (!shouldAnimate || !currentPhrase) {
       return
     }
 
+    let timeoutId: number
     if (animationState.phase === 'typing') {
-      if (boundedVisibleLength >= currentPhrase.length) {
-        setAnimationState((previousState) =>
-          previousState.phase === 'holding'
-            ? previousState
-            : {
-                ...previousState,
-                phase: 'holding',
-              },
-        )
-        return
-      }
-
-      timeoutRef.current = window.setTimeout(() => {
-        setAnimationState((previousState) => {
-          const phrase = phrases[previousState.phraseIndex] ?? ''
+      timeoutId = window.setTimeout(() => {
+        setKeyedAnimationState((previousState) => {
+          const previousAnimation =
+            previousState.phrasesIdentity === phrasesIdentity
+              ? previousState.animation
+              : INITIAL_STATE
+          const phrase = stablePhrases[previousAnimation.phraseIndex] ?? ''
           if (!phrase) {
             return previousState
           }
-          const nextVisibleLength = Math.min(previousState.visibleLength + 1, phrase.length)
+          const nextVisibleLength = Math.min(
+            previousAnimation.visibleLength + 1,
+            phrase.length,
+          )
           const nextPhase: AnimationPhase =
             nextVisibleLength >= phrase.length ? 'holding' : 'typing'
 
           if (
-            nextVisibleLength === previousState.visibleLength &&
-            nextPhase === previousState.phase
+            previousState.phrasesIdentity === phrasesIdentity &&
+            nextVisibleLength === previousAnimation.visibleLength &&
+            nextPhase === previousAnimation.phase
           ) {
             return previousState
           }
 
           return {
-            phraseIndex: previousState.phraseIndex,
-            visibleLength: nextVisibleLength,
-            phase: nextPhase,
+            phrasesIdentity,
+            animation: {
+              phraseIndex: previousAnimation.phraseIndex,
+              visibleLength: nextVisibleLength,
+              phase: nextPhase,
+            },
           }
         })
       }, typingMs)
+    } else {
+      const isLastPhrase = animationState.phraseIndex >= stablePhrases.length - 1
+      if (!loop && isLastPhrase) {
+        return
+      }
 
-      return
+      timeoutId = window.setTimeout(() => {
+        setKeyedAnimationState((previousState) => {
+          const previousAnimation =
+            previousState.phrasesIdentity === phrasesIdentity
+              ? previousState.animation
+              : INITIAL_STATE
+          if (stablePhrases.length === 0) {
+            return previousState
+          }
+
+          const wasLastPhrase =
+            previousAnimation.phraseIndex >= stablePhrases.length - 1
+          const nextPhraseIndex = wasLastPhrase
+            ? 0
+            : previousAnimation.phraseIndex + 1
+
+          return {
+            phrasesIdentity,
+            animation: {
+              phraseIndex: nextPhraseIndex,
+              visibleLength: 0,
+              phase: 'typing',
+            },
+          }
+        })
+      }, holdMs)
     }
-
-    const isLastPhrase = animationState.phraseIndex >= phrases.length - 1
-    if (!loop && isLastPhrase) {
-      return
-    }
-
-    timeoutRef.current = window.setTimeout(() => {
-      setAnimationState((previousState) => {
-        if (phrases.length === 0) {
-          return previousState
-        }
-
-        const wasLastPhrase = previousState.phraseIndex >= phrases.length - 1
-        const nextPhraseIndex = wasLastPhrase ? 0 : previousState.phraseIndex + 1
-
-        return {
-          phraseIndex: nextPhraseIndex,
-          visibleLength: 0,
-          phase: 'typing',
-        }
-      })
-    }, holdMs)
 
     return () => {
-      if (timeoutRef.current !== null) {
-        window.clearTimeout(timeoutRef.current)
-        timeoutRef.current = null
-      }
+      window.clearTimeout(timeoutId)
     }
   }, [
     animationState.phase,
@@ -234,19 +222,11 @@ export function useTypewriterPlaceholder({
     currentPhrase,
     holdMs,
     loop,
-    phrases,
+    phrasesIdentity,
     shouldAnimate,
+    stablePhrases,
     typingMs,
   ])
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current !== null) {
-        window.clearTimeout(timeoutRef.current)
-        timeoutRef.current = null
-      }
-    }
-  }, [])
 
   return {
     placeholder: shouldUseStaticPlaceholder ? staticValue : animatedPlaceholder,

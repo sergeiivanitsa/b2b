@@ -64,6 +64,12 @@ from .serialization import (
     company_report_from_snapshot,
     company_report_to_snapshot,
 )
+from .public_h1 import (
+    PublicationResolutionRecord,
+    ReportResolutionRecord,
+    get_publication_resolution_record,
+    list_report_resolution_records,
+)
 
 __all__ = [
     "CompanyReportDataset",
@@ -106,6 +112,10 @@ __all__ = [
     "complete_claimed_job",
     "company_report_from_snapshot",
     "company_report_to_snapshot",
+    "PublicationResolutionRecord",
+    "ReportResolutionRecord",
+    "get_publication_resolution_record",
+    "list_report_resolution_records",
     "create_pending_report",
     "database_wall_clock",
     "enqueue_company_report_job",

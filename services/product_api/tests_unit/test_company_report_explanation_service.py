@@ -16,7 +16,9 @@ from company_report_signal_test_helpers import complete_company_report
 
 
 def _inputs():
-    report = complete_company_report()
+    # Exercise the legacy AI flow with the new persisted snapshot version;
+    # the envelope remains the same strict fact allowlist.
+    report = complete_company_report(report_version="2")
     signals = evaluate_signals(report)
     return report, signals, score_signals(signals)
 

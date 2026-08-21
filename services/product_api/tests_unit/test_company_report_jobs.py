@@ -1,10 +1,11 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
+from product_api.company_reports import worker
 from product_api.company_reports.persistence import jobs
 from product_api.company_reports.persistence.errors import (
     CompanyReportJobFencingError,
@@ -15,6 +16,7 @@ from product_api.company_reports.persistence.models import (
     CompanyReportRecord,
     CompanyReportSubject,
 )
+from product_api.settings import get_settings
 
 pytestmark = pytest.mark.asyncio
 
@@ -24,6 +26,9 @@ class _ScalarResult:
         self._value = value
 
     def scalar_one_or_none(self):
+        return self._value
+
+    def scalar_one(self):
         return self._value
 
 
@@ -47,9 +52,55 @@ def _session():
     session = MagicMock()
     session.execute = AsyncMock()
     session.flush = AsyncMock()
+    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
     session.add = MagicMock()
     session.get_bind.return_value.dialect.name = "postgresql"
     return session
+
+
+class _SessionContext:
+    def __init__(self, session):
+        self._session = session
+
+    async def __aenter__(self):
+        return self._session
+
+    async def __aexit__(self, *_args):
+        return None
+
+
+class _SingleSessionFactory:
+    def __init__(self, session):
+        self._session = session
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        return _SessionContext(self._session)
+
+
+class _FailIfCalledDataNewtonClient:
+    def __init__(self):
+        self.calls = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def fetch_counterparty(self, *_args, **_kwargs):
+        self.calls.append("counterparty")
+        raise AssertionError("legacy pending report must not call DataNewton")
+
+    async def fetch_finance(self, *_args, **_kwargs):
+        self.calls.append("finance")
+        raise AssertionError("legacy pending report must not call DataNewton")
+
+    async def fetch_arbitration_cases(self, *_args, **_kwargs):
+        self.calls.append("arbitration")
+        raise AssertionError("legacy pending report must not call DataNewton")
 
 
 async def test_enqueue_creates_pending_report_and_queued_job_without_commit(monkeypatch):
@@ -119,7 +170,7 @@ async def test_enqueue_reuses_only_matching_active_job(monkeypatch):
     report = CompanyReportRecord(
         id=uuid4(),
         subject_id=subject.id,
-        report_version="1",
+        report_version="2",
         lifecycle_status="pending",
         started_at=datetime.now(timezone.utc),
         warnings_snapshot=[],
@@ -207,7 +258,7 @@ async def test_claim_uses_one_database_time_for_all_lease_fields(monkeypatch):
     report = CompanyReportRecord(
         id=report_id,
         subject_id=subject_id,
-        report_version="1",
+        report_version="2",
         lifecycle_status="pending",
         started_at=datetime.now(timezone.utc),
         warnings_snapshot=[],
@@ -241,6 +292,126 @@ async def test_claim_uses_one_database_time_for_all_lease_fields(monkeypatch):
     assert job.claimed_at == job.heartbeat_at == db_time
     assert job.lease_expires_at == db_time + timedelta(seconds=60)
     assert claimed.worker_token == token
+
+
+async def test_worker_rejects_legacy_v1_pending_before_provider_boundary(
+    monkeypatch,
+):
+    session = _session()
+    shutdown = asyncio.Event()
+    db_time = datetime(2026, 7, 23, 1, 2, 3, tzinfo=timezone.utc)
+    legacy_created_at = db_time - timedelta(minutes=2)
+    current_created_at = db_time - timedelta(minutes=1)
+
+    legacy_subject = CompanyReportSubject(
+        id=uuid4(),
+        normalized_identifier="7700000000",
+        identifier_type="legal_entity_inn",
+    )
+    legacy_report = CompanyReportRecord(
+        id=uuid4(),
+        subject_id=legacy_subject.id,
+        report_version="1",
+        lifecycle_status="pending",
+        started_at=legacy_created_at,
+        warnings_snapshot=[],
+        usable_for_public_page=False,
+        usable_for_future_scoring=False,
+        created_at=legacy_created_at,
+    )
+    legacy_job = CompanyReportJob(
+        id=uuid4(),
+        report_id=legacy_report.id,
+        subject_id=legacy_subject.id,
+        state="queued",
+        attempt_count=0,
+        created_at=legacy_created_at,
+    )
+
+    current_subject = CompanyReportSubject(
+        id=uuid4(),
+        normalized_identifier="7800000000",
+        identifier_type="legal_entity_inn",
+    )
+    current_report = CompanyReportRecord(
+        id=uuid4(),
+        subject_id=current_subject.id,
+        report_version="2",
+        lifecycle_status="pending",
+        started_at=current_created_at,
+        warnings_snapshot=[],
+        usable_for_public_page=False,
+        usable_for_future_scoring=False,
+        created_at=current_created_at,
+    )
+    current_job = CompanyReportJob(
+        id=uuid4(),
+        report_id=current_report.id,
+        subject_id=current_subject.id,
+        state="queued",
+        attempt_count=0,
+        created_at=current_created_at,
+    )
+
+    session.execute.side_effect = [
+        _ScalarResult(legacy_job),
+        _ScalarResult(legacy_report),
+        _ScalarResult(legacy_subject),
+        _ScalarResult(db_time),
+    ]
+    session.commit.side_effect = shutdown.set
+    session_factory = _SingleSessionFactory(session)
+    reconcile = AsyncMock(return_value=0)
+    monkeypatch.setattr(worker, "reconcile_expired_jobs", reconcile)
+    provider = _FailIfCalledDataNewtonClient()
+    client_factory_calls = []
+
+    def client_factory(settings):
+        client_factory_calls.append(settings)
+        return provider
+
+    await worker.run_worker(
+        get_settings(),
+        shutdown,
+        session_factory=session_factory,
+        client_factory=client_factory,
+    )
+
+    reconcile.assert_awaited_once_with(session)
+    assert session_factory.calls == 1
+    assert session.execute.await_count == 4
+    session.flush.assert_awaited_once()
+    session.commit.assert_awaited_once()
+    session.rollback.assert_not_awaited()
+    assert client_factory_calls == []
+    assert provider.calls == []
+
+    assert legacy_job.state == "failed"
+    assert legacy_job.attempt_count == 0
+    assert legacy_job.finished_at == db_time
+    assert (
+        legacy_job.safe_failure_code
+        == jobs.REPORT_JOB_PRECONDITION_FAILED_CODE
+    )
+    assert legacy_report.lifecycle_status == "failed"
+    assert legacy_report.finished_at == db_time
+    assert legacy_report.generated_at is None
+    assert legacy_report.normalized_snapshot is None
+    assert legacy_report.snapshot_hash is None
+    assert legacy_report.safe_error_snapshot == {
+        "code": jobs.REPORT_JOB_PRECONDITION_FAILED_CODE
+    }
+    assert legacy_report.usable_for_public_page is False
+    assert legacy_report.usable_for_future_scoring is False
+
+    assert current_job.state == "queued"
+    assert current_job.attempt_count == 0
+    assert current_job.finished_at is None
+    assert current_job.safe_failure_code is None
+    assert current_report.report_version == "2"
+    assert current_report.lifecycle_status == "pending"
+    assert current_report.finished_at is None
+    assert current_report.safe_error_snapshot is None
 
 
 async def test_heartbeat_cannot_extend_expired_or_stale_lease(monkeypatch):

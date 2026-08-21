@@ -32,6 +32,7 @@ from product_api.providers.datanewton import (
 )
 
 from .aggregate import (
+    CURRENT_COMPANY_REPORT_VERSION,
     CompanyReport,
     CompanyReportCompleteness,
     CompanyReportStatus,
@@ -56,7 +57,7 @@ from .models import (
 from .normalizers import normalize_arbitration, normalize_counterparty, normalize_finance
 from .provider_protocol import CompanyReportProvider
 
-REQUIRED_DATASETS: tuple[str, ...] = ("counterparty", "finance", "arbitration")
+from .aggregate import REQUIRED_DATASETS
 _ENDPOINTS = {
     "counterparty": COUNTERPARTY_ENDPOINT,
     "finance": FINANCE_ENDPOINT,
@@ -156,6 +157,7 @@ async def build_company_report(
     arbitration = _available_fact(outcomes["arbitration"], ArbitrationFacts)
     return CompanyReport(
         report_id=report_id,
+        report_version=CURRENT_COMPANY_REPORT_VERSION,
         generated_at=generated_at,
         target_identifier=normalized_identifier,
         target_identifier_type=identifier_type,
@@ -164,6 +166,9 @@ async def build_company_report(
         finance=finance,
         arbitration=arbitration,
         datasets=dataset_reports,
+        optional_datasets={},
+        tax_info=None,
+        bankruptcy=None,
         completeness=completeness,
         freshness=freshness,
         warnings=warnings,
