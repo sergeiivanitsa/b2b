@@ -189,10 +189,10 @@ iterations:
   - id: 17
     slug: company-report-h1-backend
     title: "Backend публичной проекции H1 CompanyReport"
-    status: ready_for_merge
+    status: merged
     branch: feat/iteration-17-company-report-h1-backend
-    commit: pending
-    merged_at: null
+    commit: f4ea53762be9228b8b46fdac0a9a3150dc538bf6
+    merged_at: "2026-08-21T22:58:29+10:00"
     block_reason: null
   - id: 18
     slug: company-report-h1-frontend
@@ -201,4 +201,4 @@ iterations:
     branch: pending
     commit: pending
     merged_at: null
-    block_reason: "Ожидает merge backend-контракта итерации 17"
+    block_reason: null
