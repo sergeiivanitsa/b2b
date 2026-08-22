@@ -197,8 +197,8 @@ iterations:
   - id: 18
     slug: company-report-h1-frontend
     title: "Публичная страница H1 CompanyReport"
-    status: ready_for_merge
+    status: merged
     branch: feat/iteration-18-company-report-h1-frontend
-    commit: pending
-    merged_at: null
+    commit: 0ff1a756aa2787f284f1fb08e32c29245a1e92a1
+    merged_at: "2026-08-22T10:36:28+10:00"
     block_reason: null

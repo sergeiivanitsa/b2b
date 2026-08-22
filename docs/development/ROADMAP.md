@@ -50,7 +50,7 @@
 | 15 | `company-report-landing-visual` | Завершена |
 | 16 | `company-report-h1-public-contract` | Завершена |
 | 17 | `company-report-h1-backend` | Завершена |
-| 18 | `company-report-h1-frontend` | Запланирована после merge итерации 17 |
+| 18 | `company-report-h1-frontend` | Завершена |
 
 ## 3. Инженерные правила roadmap
 
