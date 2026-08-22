@@ -3127,28 +3127,254 @@ body.is-chat-page #root {
   }
 }
 
-.company-report-page { max-width: 1160px; margin: 0 auto; padding: 32px 20px 56px; color: #182033; }
-.company-report-hero, .company-report-section, .company-report-cta, .company-report-state { background: #fff; border: 1px solid #dce2ea; border-radius: 14px; padding: 24px; margin-bottom: 18px; }
-.company-report-hero h1 { margin: 0 0 10px; overflow-wrap: anywhere; }
-.company-report-eyebrow { color: #415b9a; font-weight: 700; margin: 0 0 8px; }
-.company-report-status, .company-report-notice { border-left: 4px solid #415b9a; padding: 10px 12px; background: #f3f6fc; }
-.company-report-notice { margin: 0 0 18px; }
-.company-report-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-.company-report-section h2, .company-report-cta h2 { margin-top: 0; }
-.company-report-section dl { margin: 0; }
-.company-report-section dl > div { display: grid; grid-template-columns: minmax(150px, 40%) 1fr; gap: 12px; padding: 7px 0; border-bottom: 1px solid #edf0f4; }
-.company-report-section dd { margin: 0; overflow-wrap: anywhere; }
-.company-report-table-wrap { overflow-x: auto; }
-.company-report-section table { border-collapse: collapse; min-width: 640px; width: 100%; }
-.company-report-section th, .company-report-section td { padding: 9px; text-align: left; border: 1px solid #dce2ea; vertical-align: top; }
-.company-report-machine { border-color: #8ba1d2; }
-.company-report-ai { border-color: #a789c6; }
-.company-report-cta button, .company-report-state button, .company-report-ai button { min-height: 44px; padding: 10px 16px; border: 0; border-radius: 8px; background: #283d73; color: #fff; font-weight: 700; cursor: pointer; }
-.company-report-page button:focus-visible { outline: 3px solid #ffb000; outline-offset: 3px; }
-.company-report-page button:disabled { opacity: .65; cursor: wait; }
-@media (max-width: 1024px) { .company-report-grid { grid-template-columns: 1fr; } }
-@media (max-width: 480px) { .company-report-page { padding: 16px 12px 36px; } .company-report-hero, .company-report-section, .company-report-cta, .company-report-state { padding: 16px; } .company-report-cta button { width: 100%; } .company-report-section dl > div { grid-template-columns: 1fr; gap: 3px; } }
-@media (prefers-reduced-motion: reduce) { .company-report-page * { scroll-behavior: auto; transition: none !important; } }
+.company-report-page {
+  box-sizing: border-box;
+  width: min(100%, 1120px);
+  min-width: 0;
+  margin: 0 auto;
+  padding: 32px 20px 56px;
+  color: #182033;
+  overflow-wrap: anywhere;
+}
+
+.company-report-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.company-report-page > header,
+.company-report-page > section,
+.company-report-page > nav {
+  min-width: 0;
+  margin-bottom: 18px;
+  padding: 24px;
+  border: 1px solid #dce2ea;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.company-report-page h1,
+.company-report-page h2,
+.company-report-page h3,
+.company-report-page h4 {
+  overflow-wrap: anywhere;
+}
+
+.company-report-page h1,
+.company-report-page h2 {
+  margin-top: 0;
+}
+
+.company-report-breadcrumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.company-report-breadcrumbs li:not(:last-child)::after {
+  margin-left: 12px;
+  color: #687184;
+  content: '/';
+}
+
+.company-report-hero h1 {
+  margin-bottom: 12px;
+  font-size: clamp(1.8rem, 4vw, 3.1rem);
+  line-height: 1.12;
+}
+
+.company-report-coverage,
+.company-report-sources,
+.company-report-limitations,
+.company-report-facts,
+.company-report-distribution {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.company-report-coverage,
+.company-report-sources {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.company-report-coverage li,
+.company-report-sources li,
+.company-report-cases article {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid #e2e6ed;
+  border-radius: 10px;
+  background: #f8f9fb;
+}
+
+.company-report-definition-grid {
+  margin: 0;
+}
+
+.company-report-definition-grid > div {
+  display: grid;
+  grid-template-columns: minmax(190px, 38%) minmax(0, 1fr);
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.company-report-definition-grid dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.company-report-facts,
+.company-report-limitations {
+  display: grid;
+  gap: 10px;
+}
+
+.company-report-limitations li {
+  padding: 12px 14px;
+  border-left: 4px solid #687184;
+  background: #f3f5f8;
+}
+
+.company-report-distribution {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.company-report-distribution li {
+  display: flex;
+  min-width: 0;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 1px solid #edf0f4;
+  border-radius: 8px;
+}
+
+.company-report-dense {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 10px;
+  border: 1px solid #cbd3df;
+  border-radius: 10px;
+}
+
+.company-report-cases {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.company-report-cases h4,
+.company-report-cases p {
+  margin: 0;
+}
+
+.company-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.company-report-actions h2 {
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.company-report-page a,
+.company-report-page button {
+  box-sizing: border-box;
+  min-height: 44px;
+}
+
+.company-report-page a {
+  display: inline-flex;
+  align-items: center;
+}
+
+.company-report-actions a,
+.company-report-state button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #283d73;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.company-report-page :focus-visible {
+  outline: 3px solid #ffb000;
+  outline-offset: 3px;
+}
+
+@media (max-width: 768px) {
+  .company-report-page > header,
+  .company-report-page > section,
+  .company-report-page > nav {
+    padding: 18px;
+  }
+
+  .company-report-coverage,
+  .company-report-sources,
+  .company-report-distribution {
+    grid-template-columns: 1fr;
+  }
+
+  .company-report-definition-grid > div {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}
+
+@media (max-width: 480px) {
+  .company-report-page {
+    padding: 16px 12px 36px;
+  }
+
+  .company-report-page > header,
+  .company-report-page > section,
+  .company-report-page > nav {
+    padding: 16px;
+  }
+
+  .company-report-actions a,
+  .company-report-state button {
+    width: 100%;
+  }
+
+  .company-report-cases {
+    grid-template-columns: minmax(250px, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .company-report-page * {
+    scroll-behavior: auto;
+    transition: none !important;
+  }
+}
 
 .company-entry-page { min-height: 100vh; overflow-x: clip; color: #101010; background: #fff; }
 .company-entry-header { display: grid; grid-template-columns: minmax(250px, 1fr) auto minmax(390px, 1fr); align-items: center; gap: 32px; min-height: 115px; padding: 15px clamp(20px, 3.25vw, 66px) 20px; border-bottom: 1px solid #e7e7e7; }

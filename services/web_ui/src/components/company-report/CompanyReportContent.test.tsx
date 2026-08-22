@@ -1,83 +1,135 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import type { ComponentProps } from 'react'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { CompanyReportResponse, PublicSignal } from '../../companyReport/companyReportTypes'
+import publishedFixture from '../../companyReport/fixtures/company-public-h1-published.json?raw'
+import { parseCompanyPublicH1 } from '../../companyReport/companyReportH1Contract'
 import { CompanyReportContent } from './CompanyReportContent'
 
-const response: CompanyReportResponse = {
-  report_id: '2e7e9d9f-5f3a-4d43-a8e8-2bb3c2adf6b1', status: 'complete', started_at: '2026-01-01T00:00:00Z',
-  report: {
-    status: 'complete', datasets: {}, usable_for_public_page: true, usable_for_future_scoring: true,
-    completeness: { available_count: 3, required_count: 3, percent: 100, missing_datasets: [], unavailable_datasets: [] }, freshness: { generated_at: '2026-01-01T00:00:00Z' }, warnings: [],
-    counterparty: { short_name: 'ООО Тест', inn: '1234567890', address: { line_address: 'Тестовая улица' }, status_text: 'Действует' },
-    finance: { unit: 'provider_units_unknown', periods: [{ year: 2025, revenue: '123.4500', net_profit: null }] },
-    arbitration: { total_cases: 2, returned_cases: 1, is_complete: true, claim_amounts_by_currency: { USD: { plaintiff: '10.00', respondent: '0.01' } } },
-  },
-  signals: { signals: [{ code: 'unknown.signal', category: 'financial', direction: 'neutral', strength: 'weak', confidence: 'low' }] },
-  scoring: { level: 'insufficient_data', score_points: null, confidence: {}, reasons: [], domain_breakdown: [] },
-}
+const dto = parseCompanyPublicH1(JSON.parse(publishedFixture))
 
-function LocationProbe() { const location = useLocation(); return <pre>{location.search}</pre> }
+function renderContent(
+  props: ComponentProps<typeof CompanyReportContent>,
+) {
+  return render(
+    <MemoryRouter>
+      <CompanyReportContent {...props} />
+    </MemoryRouter>,
+  )
+}
 
 describe('CompanyReportContent', () => {
   afterEach(cleanup)
-  it('renders only safe fields, preserves exact decimal and unknown unit', () => {
-    render(<MemoryRouter><CompanyReportContent inn="1234567890" response={{ ...response, report: { ...response.report!, raw_payload: 'secret' } as typeof response.report }} /></MemoryRouter>)
-    expect(screen.getByRole('heading', { name: 'ООО Тест' })).toBeTruthy()
-    expect(screen.getByText('123.4500')).toBeTruthy()
-    expect(screen.getByText(/Единица измерения неизвестна/)).toBeTruthy()
-    expect(screen.getAllByText('Нет данных').length).toBeGreaterThan(0)
-    expect(screen.queryByText('secret')).toBeNull()
-    expect(screen.queryByText('factual_basis')).toBeNull()
-    expect(screen.getByText('Сигнал требует проверки')).toBeTruthy()
-    expect(screen.getByText('unknown.signal')).toBeTruthy()
+
+  it('renders an aria-busy loading shell without moving focus prematurely', () => {
+    const { container } = renderContent({ view: { kind: 'loading_h1' } })
+    const main = container.querySelector('main')
+    expect(main?.getAttribute('aria-busy')).toBe('true')
+    expect(
+      screen.getByRole('heading', {
+        name: 'Загружаем сведения о компании',
+      }),
+    ).toBeTruthy()
+    expect(document.activeElement).toBe(document.body)
   })
-  it('keeps machine score semantically distinct from explicit AI', () => {
-    const onLoadAi = vi.fn()
-    render(<MemoryRouter><CompanyReportContent inn="1234567890" response={response} onLoadAi={onLoadAi} /></MemoryRouter>)
-    expect(screen.getByRole('heading', { name: 'Машинная оценка' })).toBeTruthy()
-    expect(screen.getByText('Недостаточно доказательств для числовой оценки.')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Показать AI-пояснение' }))
-    expect(onLoadAi).toHaveBeenCalledTimes(1)
+
+  it('keeps one stable live region and does not announce visual poll stages', () => {
+    const result = renderContent({
+      view: { kind: 'pending', title: 'Проверяем компанию', cycle: 1 },
+    })
+    const live = result.container.querySelector('[aria-live="polite"]')
+    const pendingHeading = screen.getByRole('heading', {
+      name: 'Проверяем компанию',
+    })
+    expect(live?.textContent).toBe('Отчёт формируется.')
+    expect(document.activeElement).toBe(pendingHeading)
+
+    result.rerender(
+      <MemoryRouter>
+        <CompanyReportContent
+          view={{
+            kind: 'pending',
+            title: 'Собираем сведения о должнике',
+            cycle: 2,
+          }}
+        />
+      </MemoryRouter>,
+    )
+    expect(result.container.querySelector('[aria-live="polite"]')).toBe(live)
+    expect(live?.textContent).toBe('Отчёт формируется.')
+    expect(document.activeElement).toBe(pendingHeading)
+    expect(pendingHeading.textContent).toBe('Собираем сведения о должнике')
   })
-  it('keeps a snapshot failure safe and offers a new report only explicitly', () => {
-    const onCreate = vi.fn()
-    render(<MemoryRouter><CompanyReportContent inn="1234567890" response={{ ...response, status: 'failed', failure: { code: 'snapshot_failed', message: 'Безопасная ошибка', retryable: true } }} onCreate={onCreate} /></MemoryRouter>)
-    expect(screen.getByText(/Безопасная ошибка/)).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Создать новый отчёт' }))
-    expect(onCreate).toHaveBeenCalledTimes(1)
+
+  it('moves focus to the sole H1 after content becomes available', () => {
+    const result = renderContent({ view: { kind: 'loading_h1' } })
+    result.rerender(
+      <MemoryRouter>
+        <CompanyReportContent view={{ kind: 'content', dto }} />
+      </MemoryRouter>,
+    )
+    const headings = screen.getAllByRole('heading', { level: 1 })
+    expect(headings).toHaveLength(1)
+    expect(headings[0].textContent).toContain(dto.identity.legal_full_name)
+    expect(document.activeElement).toBe(headings[0])
+    const main = result.container.querySelector('main')
+    expect(main?.getAttribute('data-company-contract')).toBe(
+      dto.contract_version,
+    )
+    expect(main?.getAttribute('data-company-report-id')).toBe(dto.report_id)
+    expect(main?.getAttribute('data-company-block-order')).toBe(
+      dto.block_order.join(','),
+    )
+    expect(main?.hasAttribute('aria-busy')).toBe(false)
   })
-  it('renders approved partial blocks while excluding factual and evaluation bases', () => {
-    const partial: CompanyReportResponse = {
-      ...response,
-      status: 'partial',
-      report: {
-        ...response.report!,
-        usable_for_public_page: false,
-        usable_for_future_scoring: true,
-        datasets: { finance: { status: 'partial', source_time: { received_at: '2026-01-02T00:00:00Z' }, failure: { code: 'partial', message: 'Часть данных недоступна', retryable: false }, warnings: [{ code: 'finance_warning', message: 'Финансовое предупреждение' }] } },
-        arbitration: { ...response.report!.arbitration!, role_summary: { respondent_count: 2 }, status_summary: { open_count: 1 }, result_summary: { returned_count: 1 } },
+
+  it('focuses safe error headings and offers retry only for retryable errors', () => {
+    const onRetry = vi.fn()
+    const result = renderContent({
+      view: {
+        kind: 'retryable_error',
+        message: 'Сервис временно недоступен. Повторите позже.',
       },
-      signals: { signals: [{ code: 'finance.net_loss', category: 'financial', direction: 'negative', strength: 'high', confidence: 'high', period: { kind: 'year', year: 2025 }, warnings: [{ code: 'signal_warning', message: 'Предупреждение сигнала' }], factual_basis: { secret: 'не показывать' } } as unknown as PublicSignal] },
-      scoring: { level: 'medium', score_points: '12.00', confidence: { value: '0.80' }, reasons: [{ signal_code: 'finance.net_loss', contribution: '12.00', direction: 'negative' }], domain_breakdown: [{ category: 'financial', raw_points: '12.00', capped_points: '10.00' }] },
-    }
-    render(<MemoryRouter><CompanyReportContent inn="1234567890" response={partial} /></MemoryRouter>)
-    expect(screen.getByText(/Часть данных недоступна/)).toBeTruthy()
-    expect(screen.getByText('Финансовое предупреждение')).toBeTruthy()
-    expect(screen.getByText(/respondent_count: 2/)).toBeTruthy()
-    expect(screen.getByText(/open_count: 1/)).toBeTruthy()
-    expect(screen.getByText(/returned_count: 1/)).toBeTruthy()
-    expect(screen.getByText(/период: 2025/)).toBeTruthy()
-    expect(screen.getByText('Предупреждение сигнала')).toBeTruthy()
-    expect(screen.getByText('Разбивка по доменам')).toBeTruthy()
-    expect(screen.queryByText('не показывать')).toBeNull()
-    expect(screen.queryByText('evaluation_basis')).toBeNull()
+      onRetry,
+    })
+    const heading = screen.getByRole('heading', {
+      name: 'Сервис временно недоступен. Повторите позже.',
+    })
+    expect(document.activeElement).toBe(heading)
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
+
+    result.rerender(
+      <MemoryRouter>
+        <CompanyReportContent
+          view={{ kind: 'terminal_error', message: 'Публичный отчёт не найден' }}
+          onRetry={onRetry}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByRole('button', { name: 'Повторить' })).toBeNull()
+    expect(document.activeElement).toBe(
+      screen.getByRole('heading', { name: 'Публичный отчёт не найден' }),
+    )
   })
-  it('passes only a minimal report identifier to the Claims route', () => {
-    render(<MemoryRouter initialEntries={['/company/1234567890-test']}><Routes><Route path="/company/:key" element={<CompanyReportContent inn="1234567890" response={response} />} /><Route path="/claims" element={<LocationProbe />} /></Routes></MemoryRouter>)
-    fireEvent.click(screen.getByRole('button', { name: 'Перейти к взысканию' }))
-    expect(screen.getByText(/report_id=2e7e9d9f-5f3a-4d43-a8e8-2bb3c2adf6b1/)).toBeTruthy()
-    expect(screen.queryByText(/companyReportContext/)).toBeNull()
+
+  it('renders contract and invalid-route states without response details', () => {
+    const result = renderContent({ view: { kind: 'contract_error' } })
+    expect(
+      screen.getByRole('heading', { name: 'Неподдерживаемый формат отчёта' }),
+    ).toBeTruthy()
+    expect(result.container.textContent).not.toContain('raw_payload')
+
+    result.rerender(
+      <MemoryRouter>
+        <CompanyReportContent view={{ kind: 'invalid_route' }} />
+      </MemoryRouter>,
+    )
+    expect(
+      screen.getByRole('heading', {
+        name: 'Некорректный адрес страницы компании.',
+      }),
+    ).toBeTruthy()
   })
 })

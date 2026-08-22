@@ -3,48 +3,41 @@ import { MemoryRouter, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAuth } from '../auth/useAuth'
-import { getCompanyReport } from '../companyReport/companyReportApi'
-import type { CompanyReportResponse } from '../companyReport/companyReportTypes'
+import {
+  createCompanyReport,
+  getCompanyPublicH1,
+  getCompanyReportStatus,
+} from '../companyReport/companyReportApi'
+import publishedFixture from '../companyReport/fixtures/company-public-h1-published.json?raw'
+import { parseCompanyPublicH1 } from '../companyReport/companyReportH1Contract'
+import {
+  cleanupCompanyHead,
+  HEAD_OWNER_ATTRIBUTE,
+  HEAD_OWNER_VALUE,
+} from '../companyReport/companyReportPresentation'
 import { AppRouter } from './AppRouter'
 
 vi.mock('../auth/useAuth', () => ({ useAuth: vi.fn() }))
 vi.mock('../companyReport/companyReportApi', () => ({
   createCompanyReport: vi.fn(),
-  getCompanyReport: vi.fn(),
+  getCompanyPublicH1: vi.fn(),
   getCompanyReportStatus: vi.fn(),
 }))
 
 const mockedUseAuth = vi.mocked(useAuth)
-const mockedGetCompanyReport = vi.mocked(getCompanyReport)
-const completed: CompanyReportResponse = {
-  report_id: 'report-1',
-  status: 'complete',
-  started_at: '2026-01-01T00:00:00Z',
-  canonical_path: '/company/7700000000-test-company',
-  report: {
-    status: 'complete',
-    datasets: {},
-    completeness: {
-      available_count: 1,
-      required_count: 1,
-      percent: 100,
-      missing_datasets: [],
-      unavailable_datasets: [],
-    },
-    freshness: { generated_at: '2026-01-01T00:00:00Z' },
-    warnings: [],
-    usable_for_public_page: true,
-    usable_for_future_scoring: true,
-    counterparty: { short_name: 'Тестовая компания' },
-  },
-}
+const mockedGet = vi.mocked(getCompanyPublicH1)
+const mockedCreate = vi.mocked(createCompanyReport)
+const mockedStatus = vi.mocked(getCompanyReportStatus)
+const dto = parseCompanyPublicH1(JSON.parse(publishedFixture))
 
 function LocationProbe() {
-  return <p data-testid="location">{useLocation().pathname}</p>
+  const location = useLocation()
+  return <p data-testid="location">{`${location.pathname}${location.search}`}</p>
 }
 
 describe('public CompanyReport flow', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     mockedUseAuth.mockReturnValue({
       status: 'anonymous',
       user: null,
@@ -54,14 +47,17 @@ describe('public CompanyReport flow', () => {
       acceptInvite: vi.fn(),
       logout: vi.fn(),
     })
-    mockedGetCompanyReport.mockResolvedValue(completed)
-  })
-  afterEach(() => {
-    cleanup()
-    vi.clearAllMocks()
+    mockedGet.mockResolvedValue(dto)
+    document.title = 'Публичная главная'
+    document.documentElement.lang = 'en'
   })
 
-  it('opens and loads a company report from the landing without login', async () => {
+  afterEach(() => {
+    cleanup()
+    cleanupCompanyHead()
+  })
+
+  it('opens a public H1 projection from the landing without login or duplicate read', async () => {
     render(
       <MemoryRouter initialEntries={['/']}>
         <LocationProbe />
@@ -70,22 +66,59 @@ describe('public CompanyReport flow', () => {
     )
 
     fireEvent.change(screen.getAllByLabelText('ИНН компании')[0], {
-      target: { value: '7700000000' },
+      target: { value: dto.identity.inn },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Проверить должника' }))
 
-    await waitFor(() => {
-      expect(mockedGetCompanyReport).toHaveBeenCalledWith(
-        '7700000000',
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      )
-      expect(screen.getByTestId('location').textContent).toBe(
-        '/company/7700000000-test-company',
-      )
+    expect(
+      await screen.findByRole('heading', {
+        name: `${dto.identity.legal_full_name} — ИНН ${dto.identity.inn}`,
+      }),
+    ).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe(dto.canonical_path)
+    expect(mockedGet).toHaveBeenCalledTimes(1)
+    expect(mockedGet).toHaveBeenCalledWith(
+      dto.identity.inn,
+      expect.any(AbortSignal),
+    )
+    expect(mockedCreate).not.toHaveBeenCalled()
+    expect(mockedStatus).not.toHaveBeenCalled()
+    expect(screen.queryByText('Sign in')).toBeNull()
+  })
+
+  it('cleans only owned company metadata when returning to the landing', async () => {
+    const foreign = document.createElement('meta')
+    foreign.name = 'description'
+    foreign.content = 'foreign metadata'
+    document.head.append(foreign)
+    render(
+      <MemoryRouter initialEntries={[dto.canonical_path]}>
+        <LocationProbe />
+        <AppRouter />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('heading', {
+      name: `${dto.identity.legal_full_name} — ИНН ${dto.identity.inn}`,
     })
     expect(
-      await screen.findByRole('heading', { name: 'Тестовая компания' }),
-    ).toBeTruthy()
-    expect(screen.queryByText('Sign in')).toBeNull()
+      document.head.querySelectorAll(
+        `[${HEAD_OWNER_ATTRIBUTE}="${HEAD_OWNER_VALUE}"]`,
+      ),
+    ).toHaveLength(2)
+
+    fireEvent.click(
+      screen.getByRole('link', { name: 'Проверить другую компанию' }),
+    )
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe('/')
+    })
+    expect(
+      document.head.querySelectorAll(
+        `[${HEAD_OWNER_ATTRIBUTE}="${HEAD_OWNER_VALUE}"]`,
+      ),
+    ).toHaveLength(0)
+    expect(document.title).toBe('Публичная главная')
+    expect(document.documentElement.lang).toBe('en')
+    expect(foreign.isConnected).toBe(true)
   })
 })

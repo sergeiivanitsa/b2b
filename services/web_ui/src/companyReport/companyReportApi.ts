@@ -1,9 +1,9 @@
 import { apiFetchJson } from '../lib/api'
-import type { CompanyReportAccepted, CompanyReportLifecycle, CompanyReportResponse } from './companyReportTypes'
+import { parseCompanyPublicH1 } from './companyReportH1Contract'
+import type { CompanyPublicH1Response, CompanyReportAccepted, CompanyReportLifecycle } from './companyReportTypes'
 
-export function getCompanyReport(inn: string, options: { includeAiExplanation?: boolean; signal?: AbortSignal } = {}): Promise<CompanyReportResponse> {
-  const suffix = options.includeAiExplanation ? '?include_ai_explanation=true' : ''
-  return apiFetchJson<CompanyReportResponse>(`/company-reports/${inn}${suffix}`, { signal: options.signal })
+export async function getCompanyPublicH1(inn: string, signal?: AbortSignal): Promise<CompanyPublicH1Response> {
+  return parseCompanyPublicH1(await apiFetchJson<unknown>(`/company-reports/${inn}/public-h1`, { signal }))
 }
 
 export function getCompanyReportStatus(inn: string, signal?: AbortSignal): Promise<CompanyReportLifecycle> {

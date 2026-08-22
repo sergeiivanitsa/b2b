@@ -1,16 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 
-import { CompanyReportContent } from '../components/company-report/CompanyReportContent'
-import { createCompanyReport, getCompanyReport, getCompanyReportStatus } from '../companyReport/companyReportApi'
-import type { CompanyReportResponse } from '../companyReport/companyReportTypes'
-import { errorCode, isCanonicalCompanyPath, parseCompanyKey, safeErrorMessage, STATUS_POLL_INTERVAL_MS } from '../companyReport/companyReportPresentation'
+import { createCompanyReport, getCompanyPublicH1, getCompanyReportStatus } from '../companyReport/companyReportApi'
+import { CompanyReportContractError } from '../companyReport/companyReportH1Contract'
+import {
+  beginCompanyHead,
+  classifyH1Error,
+  cleanupCompanyHead,
+  errorCode,
+  isCanonicalCompanyPath,
+  parseCompanyRoute,
+  setCompanyHead,
+  setCompanySafeTitle,
+  STATUS_POLL_INTERVAL_MS,
+  type CompanyRouteKind,
+  type H1Operation,
+} from '../companyReport/companyReportPresentation'
+import type { CompanyPublicH1Response } from '../companyReport/companyReportTypes'
+import { CompanyReportContent, type CompanyReportView } from '../components/company-report/CompanyReportContent'
 import { ApiHttpError } from '../lib/api'
 
-type ViewState = 'loading' | 'report' | 'pending' | 'error'
-type RetryOperation = 'get' | 'create' | 'status'
-type ErrorKind = 'generic' | 'unauthenticated' | 'forbidden'
-type ViewError = { message: string; kind: ErrorKind; retryOperation: RetryOperation | null }
 const PENDING_TITLES = [
   'Проверяем компанию',
   'Собираем сведения о должнике',
@@ -18,183 +27,397 @@ const PENDING_TITLES = [
   'Формируем отчёт',
 ] as const
 
-function toViewError(error: unknown, retryOperation: RetryOperation): ViewError {
-  if (error instanceof ApiHttpError && error.status === 401) return { message: safeErrorMessage(error), kind: 'unauthenticated', retryOperation: null }
-  if (error instanceof ApiHttpError && error.status === 403) return { message: safeErrorMessage(error), kind: 'forbidden', retryOperation: null }
-  return { message: safeErrorMessage(error), kind: 'generic', retryOperation }
+type RouteIdentity = {
+  token: symbol
+  inn: string
+  kind: CompanyRouteKind
+  pathname: string
+}
+
+type RetainedDto = {
+  inn: string
+  canonicalPath: string
+  dto: CompanyPublicH1Response
+}
+
+type ActiveRequest = {
+  route: RouteIdentity
+  controller: AbortController
+}
+
+type ActiveTimer = {
+  route: RouteIdentity
+  id: number
+}
+
+type RetryDescriptor = {
+  route: RouteIdentity
+  operation: H1Operation
+  allowAutoCreate: boolean
+}
+
+function isPendingError(error: unknown): boolean {
+  return (
+    error instanceof ApiHttpError &&
+    error.status === 409 &&
+    errorCode(error) === 'report_pending'
+  )
+}
+
+function isPlainNotFound(error: unknown): boolean {
+  return (
+    error instanceof ApiHttpError &&
+    error.status === 404 &&
+    errorCode(error) === 'company_report_not_found'
+  )
 }
 
 export function CompanyReportPage() {
   const { companyKey } = useParams()
-  const parsed = parseCompanyKey(companyKey)
-  const inn = 'inn' in parsed ? parsed.inn : null
-  const routeKind = 'kind' in parsed ? parsed.kind : null
   const location = useLocation()
   const navigate = useNavigate()
-  const [view, setView] = useState<ViewState>('loading')
-  const [report, setReport] = useState<CompanyReportResponse | undefined>()
-  const [viewError, setViewError] = useState<ViewError | null>(null)
-  const [aiLoading, setAiLoading] = useState(false)
-  const [aiError, setAiError] = useState<string | null>(null)
-  const [pendingStage, setPendingStage] = useState(0)
-  const timerRef = useRef<number | null>(null)
-  const requestRef = useRef<AbortController | null>(null)
-  const pollRequestRef = useRef<AbortController | null>(null)
-  const aiRequestRef = useRef<AbortController | null>(null)
-  const autoStartRef = useRef<string | null>(null)
+  const parsed = parseCompanyRoute(companyKey, location.search)
+  const inn = 'kind' in parsed ? parsed.inn : null
+  const routeKind = 'kind' in parsed ? parsed.kind : null
 
-  const cancelPolling = useCallback(() => {
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current)
-      timerRef.current = null
+  const [view, setView] = useState<CompanyReportView>(
+    inn && routeKind ? { kind: 'loading_h1' } : { kind: 'invalid_route' },
+  )
+  const routeRef = useRef<RouteIdentity | null>(null)
+  const retainedRef = useRef<RetainedDto | null>(null)
+  const workRef = useRef<ActiveRequest | null>(null)
+  const pollRef = useRef<ActiveRequest | null>(null)
+  const timerRef = useRef<ActiveTimer | null>(null)
+  const retryRef = useRef<RetryDescriptor | null>(null)
+  const autoCreateKeysRef = useRef(new Set<string>())
+  const pendingStageRef = useRef(0)
+  const pendingCycleRef = useRef(0)
+
+  const isCurrentRoute = useCallback(
+    (route: RouteIdentity) => routeRef.current === route,
+    [],
+  )
+
+  const abortRouteOperations = useCallback((route?: RouteIdentity) => {
+    const work = workRef.current
+    if (work && (!route || work.route === route)) {
+      work.controller.abort()
+      if (workRef.current === work) workRef.current = null
     }
-    pollRequestRef.current?.abort()
-    pollRequestRef.current = null
-  }, [])
-  const cancelWork = useCallback(() => {
-    cancelPolling()
-    requestRef.current?.abort()
-    requestRef.current = null
-  }, [cancelPolling])
-  const startRequest = useCallback(() => {
-    requestRef.current?.abort()
-    const controller = new AbortController()
-    requestRef.current = controller
-    return controller
-  }, [])
-  const startPollRequest = useCallback(() => {
-    pollRequestRef.current?.abort()
-    const controller = new AbortController()
-    pollRequestRef.current = controller
-    return controller
-  }, [])
-
-  const create = useCallback(async (targetInn: string) => {
-    cancelWork()
-    setView('loading')
-    setViewError(null)
-    setPendingStage(0)
-    const controller = startRequest()
-    try {
-      await createCompanyReport(targetInn, controller.signal)
-      if (!controller.signal.aborted) setView('pending')
-    } catch (error) {
-      if (controller.signal.aborted) return
-      setViewError(toViewError(error, 'create'))
-      setView('error')
+    const poll = pollRef.current
+    if (poll && (!route || poll.route === route)) {
+      poll.controller.abort()
+      if (pollRef.current === poll) pollRef.current = null
     }
-  }, [cancelWork, startRequest])
+    const timer = timerRef.current
+    if (timer && (!route || timer.route === route)) {
+      window.clearTimeout(timer.id)
+      if (timerRef.current === timer) timerRef.current = null
+    }
+  }, [])
 
-  const loadReport = useCallback(async (targetInn: string, targetKind: 'plain' | 'canonical') => {
-    const controller = startRequest()
-    setView('loading')
-    setViewError(null)
-    try {
-      const next = await getCompanyReport(targetInn, { signal: controller.signal })
-      if (controller.signal.aborted) return
-      const canonicalPath = next.canonical_path
-      if (targetKind === 'plain' && typeof canonicalPath === 'string' && isCanonicalCompanyPath(canonicalPath, targetInn) && canonicalPath !== location.pathname) {
-        navigate(canonicalPath, { replace: true })
+  const startWork = useCallback((route: RouteIdentity): ActiveRequest => {
+    workRef.current?.controller.abort()
+    const request = { route, controller: new AbortController() }
+    workRef.current = request
+    return request
+  }, [])
+
+  const canCommitWork = useCallback(
+    (route: RouteIdentity, request: ActiveRequest): boolean =>
+      isCurrentRoute(route) &&
+      workRef.current === request &&
+      !request.controller.signal.aborted,
+    [isCurrentRoute],
+  )
+
+  const releaseWork = useCallback((request: ActiveRequest) => {
+    if (workRef.current === request) workRef.current = null
+  }, [])
+
+  const enterPending = useCallback(
+    (route: RouteIdentity, resetStage: boolean) => {
+      if (!isCurrentRoute(route)) return
+      if (resetStage) pendingStageRef.current = 0
+      pendingCycleRef.current += 1
+      retryRef.current = null
+      setView({
+        kind: 'pending',
+        title: PENDING_TITLES[pendingStageRef.current],
+        cycle: pendingCycleRef.current,
+      })
+      setCompanySafeTitle('Отчёт формируется')
+    },
+    [isCurrentRoute],
+  )
+
+  const showError = useCallback(
+    (
+      route: RouteIdentity,
+      error: unknown,
+      operation: H1Operation,
+      allowAutoCreate: boolean,
+    ) => {
+      if (!isCurrentRoute(route)) return
+      retainedRef.current = null
+      if (error instanceof CompanyReportContractError) {
+        retryRef.current = null
+        setView({ kind: 'contract_error' })
+        setCompanySafeTitle('Неподдерживаемый формат отчёта')
         return
       }
-      setReport(next)
-      setView('report')
-    } catch (error) {
-      if (controller.signal.aborted) return
-      if (error instanceof ApiHttpError && error.status === 409 && errorCode(error) === 'report_pending') {
-        setPendingStage(0)
-        setView('pending')
-        return
+      const classified = classifyH1Error(error, operation)
+      if (classified.kind === 'retryable') {
+        retryRef.current = { route, operation, allowAutoCreate }
+        setView({ kind: 'retryable_error', message: classified.message })
+      } else {
+        retryRef.current = null
+        setView({ kind: 'terminal_error', message: classified.message })
       }
-      if (targetKind === 'plain' && error instanceof ApiHttpError && error.status === 404 && errorCode(error) === 'company_report_not_found') {
-        const key = `plain:${targetInn}`
-        if (autoStartRef.current !== key) {
-          autoStartRef.current = key
-          void create(targetInn)
-        }
-        return
-      }
-      setViewError(toViewError(error, 'get'))
-      setView('error')
-    }
-  }, [create, location.pathname, navigate, startRequest])
+      setCompanySafeTitle(classified.message)
+    },
+    [isCurrentRoute],
+  )
 
-  const poll = useCallback((targetInn: string, targetKind: 'plain' | 'canonical') => {
-    const run = async () => {
-      const controller = startPollRequest()
+  const createReport = useCallback(
+    async (route: RouteIdentity) => {
+      if (!isCurrentRoute(route)) return
+      const request = startWork(route)
+      retryRef.current = null
+      setView({ kind: 'loading_h1' })
+      setCompanySafeTitle('Запускаем формирование отчёта')
       try {
-        const status = await getCompanyReportStatus(targetInn, controller.signal)
-        if (controller.signal.aborted) return
-        if (status.status === 'pending') {
-          setPendingStage((current) => Math.min(current + 1, PENDING_TITLES.length - 1))
-          timerRef.current = window.setTimeout(run, STATUS_POLL_INTERVAL_MS)
+        await createCompanyReport(route.inn, request.controller.signal)
+        if (!canCommitWork(route, request)) return
+        releaseWork(request)
+        enterPending(route, true)
+      } catch (error) {
+        if (!canCommitWork(route, request)) return
+        releaseWork(request)
+        showError(route, error, 'create', false)
+      }
+    },
+    [canCommitWork, enterPending, isCurrentRoute, releaseWork, showError, startWork],
+  )
+
+  const loadH1 = useCallback(
+    async (route: RouteIdentity, allowAutoCreate: boolean) => {
+      if (!isCurrentRoute(route)) return
+      retainedRef.current = null
+      const request = startWork(route)
+      retryRef.current = null
+      setView({ kind: 'loading_h1' })
+      setCompanySafeTitle('Загружаем сведения о компании')
+      try {
+        const dto = await getCompanyPublicH1(
+          route.inn,
+          request.controller.signal,
+        )
+        if (!canCommitWork(route, request)) return
+        releaseWork(request)
+        if (
+          dto.identity.inn !== route.inn ||
+          !isCanonicalCompanyPath(dto.canonical_path, route.inn)
+        ) {
+          showError(
+            route,
+            new CompanyReportContractError(),
+            'read',
+            false,
+          )
           return
         }
-        await loadReport(targetInn, targetKind)
+        if (route.pathname !== dto.canonical_path) {
+          retainedRef.current = {
+            inn: route.inn,
+            canonicalPath: dto.canonical_path,
+            dto,
+          }
+          navigate(dto.canonical_path, { replace: true })
+          return
+        }
+        setView({ kind: 'content', dto })
+        setCompanyHead(dto)
       } catch (error) {
-        if (controller.signal.aborted) return
-        setViewError(toViewError(error, 'status'))
-        setView('error')
+        if (!canCommitWork(route, request)) return
+        releaseWork(request)
+        if (isPendingError(error)) {
+          enterPending(route, true)
+          return
+        }
+        if (
+          allowAutoCreate &&
+          route.kind === 'plain' &&
+          isPlainNotFound(error)
+        ) {
+          const createKey = `${route.kind}:${route.inn}`
+          if (!autoCreateKeysRef.current.has(createKey)) {
+            autoCreateKeysRef.current.add(createKey)
+            void createReport(route)
+          } else {
+            enterPending(route, true)
+          }
+          return
+        }
+        showError(route, error, 'read', allowAutoCreate)
       }
-    }
-    timerRef.current = window.setTimeout(run, STATUS_POLL_INTERVAL_MS)
-  }, [loadReport, startPollRequest])
+    },
+    [
+      canCommitWork,
+      createReport,
+      enterPending,
+      isCurrentRoute,
+      navigate,
+      releaseWork,
+      showError,
+      startWork,
+    ],
+  )
 
-  useEffect(() => {
-    cancelWork()
-    aiRequestRef.current?.abort()
-    setReport(undefined)
-    setAiError(null)
-    setAiLoading(false)
-    setPendingStage(0)
-    autoStartRef.current = null
-    if (!inn || !routeKind) {
-      setView('error')
-      setViewError({ message: 'Некорректный адрес страницы компании.', kind: 'generic', retryOperation: null })
-      return cancelWork
-    }
-    void loadReport(inn, routeKind)
-    return () => {
-      cancelWork()
-      aiRequestRef.current?.abort()
-    }
-  }, [cancelWork, inn, loadReport, routeKind])
-
-  useEffect(() => {
-    if (view === 'pending' && inn && routeKind) poll(inn, routeKind)
-    return () => {
-      if (view === 'pending') cancelPolling()
-    }
-  }, [cancelPolling, inn, poll, routeKind, view])
+  const pollOnce = useCallback(
+    async (route: RouteIdentity) => {
+      if (!isCurrentRoute(route)) return
+      const currentPoll = pollRef.current
+      if (currentPoll) {
+        if (currentPoll.route === route) return
+        currentPoll.controller.abort()
+        if (pollRef.current === currentPoll) pollRef.current = null
+      }
+      const request = { route, controller: new AbortController() }
+      pollRef.current = request
+      try {
+        const status = await getCompanyReportStatus(
+          route.inn,
+          request.controller.signal,
+        )
+        if (
+          !isCurrentRoute(route) ||
+          pollRef.current !== request ||
+          request.controller.signal.aborted
+        ) {
+          return
+        }
+        pollRef.current = null
+        if (status.status === 'pending') {
+          pendingStageRef.current = Math.min(
+            pendingStageRef.current + 1,
+            PENDING_TITLES.length - 1,
+          )
+          enterPending(route, false)
+          return
+        }
+        await loadH1(route, false)
+      } catch (error) {
+        if (
+          !isCurrentRoute(route) ||
+          pollRef.current !== request ||
+          request.controller.signal.aborted
+        ) {
+          return
+        }
+        pollRef.current = null
+        showError(route, error, 'status', false)
+      }
+    },
+    [enterPending, isCurrentRoute, loadH1, showError],
+  )
 
   const retry = useCallback(() => {
-    if (!inn || !routeKind || !viewError?.retryOperation) return
-    cancelWork()
-    if (viewError.retryOperation === 'get') void loadReport(inn, routeKind)
-    if (viewError.retryOperation === 'create') void create(inn)
-    if (viewError.retryOperation === 'status') {
-      setViewError(null)
-      setView('pending')
+    const descriptor = retryRef.current
+    if (!descriptor || !isCurrentRoute(descriptor.route)) return
+    retryRef.current = null
+    if (descriptor.operation === 'read') {
+      void loadH1(descriptor.route, descriptor.allowAutoCreate)
+      return
     }
-  }, [cancelWork, create, inn, loadReport, routeKind, viewError])
-
-  const loadAi = useCallback(async () => {
-    if (!inn || !report || aiLoading) return
-    aiRequestRef.current?.abort()
-    const controller = new AbortController()
-    aiRequestRef.current = controller
-    setAiLoading(true)
-    setAiError(null)
-    try {
-      const response = await getCompanyReport(inn, { includeAiExplanation: true, signal: controller.signal })
-      if (!controller.signal.aborted) setReport((current) => current ? { ...current, ai_explanation: response.ai_explanation } : current)
-    } catch (error) {
-      if (!controller.signal.aborted) setAiError(safeErrorMessage(error))
-    } finally {
-      if (!controller.signal.aborted) setAiLoading(false)
+    if (descriptor.operation === 'create') {
+      void createReport(descriptor.route)
+      return
     }
-  }, [aiLoading, inn, report])
+    enterPending(descriptor.route, false)
+    void pollOnce(descriptor.route)
+  }, [createReport, enterPending, isCurrentRoute, loadH1, pollOnce])
 
-  if (!inn) return <CompanyReportContent inn="" error={viewError} />
-  return <CompanyReportContent inn={inn} response={report} pending={view === 'pending'} pendingTitle={PENDING_TITLES[pendingStage]} error={view === 'error' ? viewError : null} onCreate={() => void create(inn)} onRetry={retry} onLoadAi={view === 'report' ? loadAi : undefined} aiLoading={aiLoading} aiError={aiError} />
+  useEffect(() => {
+    abortRouteOperations()
+    beginCompanyHead()
+    retryRef.current = null
+    pendingStageRef.current = 0
+
+    if (!inn || !routeKind) {
+      routeRef.current = null
+      retainedRef.current = null
+      setCompanySafeTitle('Некорректный адрес страницы компании.')
+      return
+    }
+
+    const route: RouteIdentity = {
+      token: Symbol(`${routeKind}:${inn}:${location.pathname}`),
+      inn,
+      kind: routeKind,
+      pathname: location.pathname,
+    }
+    routeRef.current = route
+
+    const retained = retainedRef.current
+    if (
+      retained &&
+      retained.inn === route.inn &&
+      retained.canonicalPath === route.pathname
+    ) {
+      retainedRef.current = null
+      setView({ kind: 'content', dto: retained.dto })
+      setCompanyHead(retained.dto)
+    } else {
+      retainedRef.current = null
+      void loadH1(route, route.kind === 'plain')
+    }
+
+    return () => {
+      if (routeRef.current === route) routeRef.current = null
+      abortRouteOperations(route)
+      if (retryRef.current?.route === route) retryRef.current = null
+    }
+  }, [
+    abortRouteOperations,
+    inn,
+    loadH1,
+    location.pathname,
+    routeKind,
+  ])
+
+  const pendingCycle = view.kind === 'pending' ? view.cycle : -1
+  useEffect(() => {
+    if (view.kind !== 'pending') return
+    const route = routeRef.current
+    if (!route) return
+    const timer: ActiveTimer = {
+      route,
+      id: window.setTimeout(() => {
+        if (timerRef.current === timer) timerRef.current = null
+        void pollOnce(route)
+      }, STATUS_POLL_INTERVAL_MS),
+    }
+    timerRef.current = timer
+    return () => {
+      if (timerRef.current === timer) {
+        window.clearTimeout(timer.id)
+        timerRef.current = null
+      }
+    }
+  }, [pendingCycle, pollOnce, view.kind])
+
+  useEffect(
+    () => () => {
+      retainedRef.current = null
+      routeRef.current = null
+      abortRouteOperations()
+      cleanupCompanyHead()
+    },
+    [abortRouteOperations],
+  )
+
+  const displayedView: CompanyReportView =
+    inn && routeKind ? view : { kind: 'invalid_route' }
+  return <CompanyReportContent view={displayedView} onRetry={retry} />
 }
