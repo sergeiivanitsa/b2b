@@ -202,3 +202,59 @@ iterations:
     commit: 0ff1a756aa2787f284f1fb08e32c29245a1e92a1
     merged_at: "2026-08-22T10:36:28+10:00"
     block_reason: null
+  - id: 19
+    slug: company-card-v2-contract-evidence
+    title: "Контракт, проектирование и evidence Company Card v2"
+    status: planned
+    branch: pending
+    commit: pending
+    merged_at: null
+    block_reason: null
+  - id: 20
+    slug: company-card-v2-backend-foundation
+    title: "Backend и данные Company Card v2"
+    status: planned
+    branch: pending
+    commit: pending
+    merged_at: null
+    block_reason: "Ожидает merge итерации 19 и утверждения evidence/schema/privacy/operational gates"
+  - id: 21
+    slug: company-card-v2-ai-narrative
+    title: "Публичное AI-описание Company Card v2"
+    status: planned
+    branch: pending
+    commit: pending
+    merged_at: null
+    block_reason: "Ожидает merge итерации 20 и стабильного versioned factual/evidence contract"
+  - id: 22
+    slug: company-card-v2-page-shell
+    title: "Каркас страницы, SSR и CTA Company Card v2"
+    status: planned
+    branch: pending
+    commit: pending
+    merged_at: null
+    block_reason: "Ожидает merge итераций 20–21 и утверждённого SSR/client-takeover contract"
+  - id: 23
+    slug: company-card-v2-finance-charts
+    title: "Финансовые графики Company Card v2"
+    status: planned
+    branch: pending
+    commit: pending
+    merged_at: null
+    block_reason: "Ожидает merge итерации 22 и finance-unit/chart-input gates итераций 19–20"
+  - id: 24
+    slug: company-card-v2-arbitration-charts
+    title: "Арбитражные графики Company Card v2"
+    status: planned
+    branch: pending
+    commit: pending
+    merged_at: null
+    block_reason: "Ожидает merge итерации 23 и arbitration completeness/outcome/privacy gates итераций 19–20"
+  - id: 25
+    slug: company-card-v2-qa-rollout
+    title: "QA и rollout Company Card v2"
+    status: planned
+    branch: pending
+    commit: pending
+    merged_at: null
+    block_reason: "Ожидает merge итераций 19–24"
