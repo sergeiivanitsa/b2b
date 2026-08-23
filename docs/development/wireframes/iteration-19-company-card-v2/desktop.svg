@@ -1,0 +1,308 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http:&#47;&#47;www.w3.org/2000/svg"
+     viewBox="0 0 1440 4040"
+     width="1440"
+     height="4040"
+     role="img"
+     aria-labelledby="desktop-title desktop-desc">
+  <title id="desktop-title">Company Card v2 — desktop contract wireframe</title>
+  <desc id="desktop-desc">Desktop handoff at 1440 pixels. The main column presents identity, deterministic narrative, navigation, requisites, finance views F1 through F5, arbitration views A1 through A5, sources, limitations and neutral actions. A 320 pixel sticky right rail contains the claim call to action. Synthetic labels demonstrate long, missing, partial, signed, large-set, focus and non-overlap states.</desc>
+  <defs>
+    <pattern id="desktop-neutral-pattern" width="12" height="12" patternUnits="userSpaceOnUse">
+      <rect width="12" height="12" fill="#E5E7EB"/>
+      <path d="M0 12 L12 0" stroke="#9CA3AF" stroke-width="2"/>
+    </pattern>
+    <style>
+      .bg { fill: #F3F4F6; }
+      .card { fill: #FFFFFF; stroke: #9CA3AF; stroke-width: 2; }
+      .subcard { fill: #F9FAFB; stroke: #D1D5DB; stroke-width: 1.5; }
+      .dash { fill: #F9FAFB; stroke: #6B7280; stroke-width: 2; stroke-dasharray: 8 6; }
+      .ink { fill: #111827; font-family: Arial, sans-serif; }
+      .muted { fill: #4B5563; font-family: Arial, sans-serif; }
+      .h1 { font-size: 30px; font-weight: 700; }
+      .h2 { font-size: 22px; font-weight: 700; }
+      .h3 { font-size: 18px; font-weight: 700; }
+      .body { font-size: 15px; }
+      .small { font-size: 13px; }
+      .label { font-size: 12px; font-weight: 700; letter-spacing: .4px; }
+      .line { stroke: #6B7280; stroke-width: 3; fill: none; }
+      .thin { stroke: #9CA3AF; stroke-width: 2; fill: none; }
+      .zero { stroke: #111827; stroke-width: 2; stroke-dasharray: 5 4; }
+      .bar { fill: url(#desktop-neutral-pattern); stroke: #6B7280; stroke-width: 1.5; }
+      .plainbar { fill: #D1D5DB; stroke: #6B7280; stroke-width: 1.5; }
+      .cta { fill: #EE5A2A; stroke: #111827; stroke-width: 1.5; }
+      .ctaText { fill: #111827; font-family: Arial, sans-serif; font-weight: 700; }
+      .focusOuter { fill: none; stroke: #111827; stroke-width: 3; }
+      .focusInner { fill: none; stroke: #FFFFFF; stroke-width: 2; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1440" height="4040"/>
+  <text class="ink label" x="40" y="28">DESKTOP 1440 • flexible main + 32 gap + 320 sticky rail • synthetic contract handoff</text>
+
+  <g id="desktop-hero-status">
+    <rect class="card" x="40" y="44" width="1008" height="184" rx="16"/>
+    <text class="ink h1" x="68" y="82">Синтетическая организация с очень длинным</text>
+    <text class="ink h1" x="68" y="112">наименованием для проверки переноса</text>
+    <text class="muted body" x="68" y="136">LONG • перенос без clipping; полный текст доступен assistive technology</text>
+    <rect class="subcard" x="68" y="152" width="302" height="52" rx="10"/>
+    <text class="ink small" x="86" y="174">Статус: нейтральная формулировка</text>
+    <text class="muted small" x="86" y="192">только при verified effective date</text>
+    <rect class="subcard" x="390" y="152" width="344" height="52" rx="10"/>
+    <text class="ink small" x="408" y="174">Дата отчёта: immutable snapshot date</text>
+    <text class="muted small" x="408" y="192">без browser time и auto-refresh</text>
+    <rect class="subcard" x="754" y="152" width="266" height="52" rx="10"/>
+    <text class="ink small" x="772" y="184">Идентификаторы: contract-safe</text>
+  </g>
+
+  <g id="desktop-narrative">
+    <rect class="card" x="40" y="248" width="1008" height="156" rx="16"/>
+    <text class="ink h2" x="68" y="284">Описание компании</text>
+    <text class="muted body" x="68" y="314">Universal immutable fallback применяется при unavailable/invalid AI artifact.</text>
+    <text class="muted body" x="68" y="342">Только verified public facts и limitations; без score, verdict, advice или скрытых значений.</text>
+    <rect class="subcard" x="68" y="360" width="952" height="24" rx="8"/>
+    <text class="ink small" x="82" y="377">Universal immutable fallback • fallback_profile_any_v1 • exact 691 Unicode scalars</text>
+  </g>
+
+  <g id="desktop-in-page-navigation">
+    <rect class="card" x="40" y="424" width="1008" height="82" rx="16"/>
+    <text class="ink h3" x="68" y="458">Навигация по странице</text>
+    <rect class="subcard" x="68" y="470" width="160" height="24" rx="8"/>
+    <rect class="subcard" x="240" y="470" width="160" height="24" rx="8"/>
+    <rect class="subcard" x="412" y="470" width="160" height="24" rx="8"/>
+    <text class="ink small" x="112" y="487">Реквизиты</text>
+    <text class="ink small" x="291" y="487">Финансы</text>
+    <text class="ink small" x="458" y="487">Арбитраж</text>
+    <text class="muted small" x="608" y="487">FOCUS/TOUCH • anchor links; content is never hidden as tabs</text>
+  </g>
+
+  <g id="desktop-requisites">
+    <rect class="card" x="40" y="526" width="1008" height="216" rx="16"/>
+    <text class="ink h2" x="68" y="562">Реквизиты</text>
+    <rect class="subcard" x="68" y="584" width="460" height="132" rx="10"/>
+    <text class="ink body" x="88" y="612">Юридическое наименование: synthetic LONG label</text>
+    <text class="muted small" x="88" y="640">Адрес: синтетическая длинная строка переносится на следующую строку,</text>
+    <text class="muted small" x="88" y="660">не обрезается fixed-height контейнером и не попадает в telemetry.</text>
+    <text class="muted small" x="88" y="690">Менеджеры/владельцы: только approved safe subset</text>
+    <rect class="subcard" x="548" y="584" width="472" height="132" rx="10"/>
+    <text class="ink body" x="568" y="612">Gate-driven fields</text>
+    <text class="muted small" x="568" y="640">EMPTY/MISSING • «—» не означает 0 и не выводит inferred fact</text>
+    <text class="muted small" x="568" y="666">status / legal form / unit остаются hidden до exact evidence</text>
+    <text class="muted small" x="568" y="692">Текстовая структура доступна без JavaScript</text>
+  </g>
+
+  <g id="desktop-finance-f1">
+    <rect class="card" x="40" y="762" width="1008" height="250" rx="16"/>
+    <text class="ink h2" x="68" y="800">F1 · Хватит ли средств на ближайшие обязательства?</text>
+    <text class="muted body" x="68" y="828">Latest complete common year • exact Decimal arithmetic • neutral comparison</text>
+    <line class="zero" x1="92" y1="900" x2="720" y2="900"/>
+    <rect class="bar" x="128" y="858" width="154" height="42"/>
+    <rect class="plainbar" x="282" y="870" width="112" height="30"/>
+    <rect class="bar" x="394" y="842" width="192" height="58"/>
+    <rect class="plainbar" x="586" y="900" width="108" height="54"/>
+    <text class="ink label" x="128" y="974">AVAILABLE WITHOUT INVENTORY</text>
+    <rect class="subcard" x="752" y="850" width="268" height="124" rx="10"/>
+    <text class="ink small" x="770" y="878">Текстовая сводка</text>
+    <text class="muted small" x="770" y="902">Таблица exact values — в DOM</text>
+    <text class="muted small" x="770" y="926">pattern + label, не цвет</text>
+    <text class="muted small" x="770" y="950">tooltip не единственный источник</text>
+  </g>
+
+  <g id="desktop-finance-f2">
+    <rect class="card" x="40" y="1032" width="1008" height="250" rx="16"/>
+    <text class="ink h2" x="68" y="1070">F2 · Как финансируется бизнес?</text>
+    <text class="muted body" x="68" y="1098">Seven consecutive calendar years; gaps stay visible.</text>
+    <line class="zero" x1="390" y1="1120" x2="390" y2="1242"/>
+    <rect class="bar" x="230" y="1134" width="160" height="24"/>
+    <rect class="plainbar" x="390" y="1134" width="214" height="24"/>
+    <rect class="plainbar" x="308" y="1172" width="82" height="24"/>
+    <rect class="bar" x="390" y="1172" width="124" height="24"/>
+    <rect class="dash" x="262" y="1210" width="252" height="26" rx="6"/>
+    <text class="ink label" x="640" y="1152">NEGATIVE/MIXED SIGN/ZERO DENOMINATOR</text>
+    <text class="muted small" x="640" y="1180">diverging geometry includes zero</text>
+    <text class="muted small" x="640" y="1206">zero denominator → no ratio, not 0%</text>
+    <text class="muted small" x="640" y="1232">gap is distinct from explicit zero</text>
+  </g>
+
+  <g id="desktop-finance-f3">
+    <rect class="card" x="40" y="1302" width="1008" height="250" rx="16"/>
+    <text class="ink h2" x="68" y="1340">F3 · Как менялись выручка и активы?</text>
+    <text class="muted body" x="68" y="1368">Seven-year calendar window; no line crosses a missing point.</text>
+    <polyline class="line" points="92,1470 180,1430 268,1452"/>
+    <polyline class="line" points="444,1444 532,1412 620,1438 708,1398"/>
+    <circle cx="92" cy="1470" r="5" fill="#6B7280"/>
+    <circle cx="180" cy="1430" r="5" fill="#6B7280"/>
+    <circle cx="268" cy="1452" r="5" fill="#6B7280"/>
+    <circle cx="444" cy="1444" r="5" fill="#FFFFFF" stroke="#111827" stroke-width="2"/>
+    <circle cx="532" cy="1412" r="5" fill="#FFFFFF" stroke="#111827" stroke-width="2"/>
+    <circle cx="620" cy="1438" r="5" fill="#FFFFFF" stroke="#111827" stroke-width="2"/>
+    <circle cx="708" cy="1398" r="5" fill="#FFFFFF" stroke="#111827" stroke-width="2"/>
+    <rect class="dash" x="292" y="1400" width="126" height="90" rx="8"/>
+    <text class="ink label" x="312" y="1448">MISSING</text>
+    <text class="muted small" x="752" y="1410">EMPTY/MISSING remains explicit</text>
+    <text class="muted small" x="752" y="1436">each series compares its own complete endpoints</text>
+    <text class="muted small" x="752" y="1462">keyboard point → same text fallback</text>
+  </g>
+
+  <g id="desktop-finance-f4">
+    <rect class="card" x="40" y="1572" width="1008" height="250" rx="16"/>
+    <text class="ink h2" x="68" y="1610">F4 · Что остаётся с каждых 100 единиц выручки?</text>
+    <text class="muted body" x="68" y="1638">Ratios exist only for a strictly positive denominator.</text>
+    <line class="zero" x1="92" y1="1712" x2="714" y2="1712"/>
+    <rect class="plainbar" x="142" y="1658" width="86" height="54"/>
+    <rect class="bar" x="272" y="1680" width="86" height="32"/>
+    <rect class="plainbar" x="402" y="1712" width="86" height="38"/>
+    <rect class="bar" x="532" y="1694" width="86" height="18"/>
+    <text class="ink label" x="752" y="1680">SIGNED STATE</text>
+    <text class="muted small" x="752" y="1708">negative value is preserved</text>
+    <text class="muted small" x="752" y="1734">denominator unavailable → limitation</text>
+    <text class="muted small" x="752" y="1760">no red/green verdict semantics</text>
+  </g>
+
+  <g id="desktop-finance-f5">
+    <rect class="card" x="40" y="1842" width="1008" height="250" rx="16"/>
+    <text class="ink h2" x="68" y="1880">F5 · Финансовые показатели по годам</text>
+    <text class="muted body" x="68" y="1908">Fixed 9 × 7 table; backend display strings, local table fallback.</text>
+    <rect class="subcard" x="68" y="1930" width="952" height="132" rx="10"/>
+    <line class="thin" x1="262" y1="1930" x2="262" y2="2062"/>
+    <line class="thin" x1="68" y1="1963" x2="1020" y2="1963"/>
+    <line class="thin" x1="68" y1="1996" x2="1020" y2="1996"/>
+    <line class="thin" x1="68" y1="2029" x2="1020" y2="2029"/>
+    <text class="ink small" x="86" y="1952">Метрика</text>
+    <text class="muted small" x="286" y="1952">7 consecutive periods →</text>
+    <text class="muted small" x="86" y="1986">Exact / compact display</text>
+    <text class="muted small" x="86" y="2019">Explicit zero</text>
+    <text class="muted small" x="86" y="2052">Missing = —</text>
+    <text class="ink label" x="746" y="2052">LOCAL TABLE SCROLL ONLY WHEN NEEDED</text>
+  </g>
+
+  <g id="desktop-arbitration-a1">
+    <rect class="card" x="40" y="2112" width="1008" height="250" rx="16"/>
+    <text class="ink h2" x="68" y="2150">A1 · Активность по годам и ролям</text>
+    <text class="muted body" x="68" y="2178">Bounded observed calendar; unknown year is separate.</text>
+    <rect class="plainbar" x="110" y="2260" width="50" height="62"/>
+    <rect class="bar" x="174" y="2230" width="50" height="92"/>
+    <rect class="plainbar" x="238" y="2274" width="50" height="48"/>
+    <rect class="bar" x="302" y="2210" width="50" height="112"/>
+    <rect class="dash" x="376" y="2260" width="78" height="62" rx="7"/>
+    <text class="ink label" x="500" y="2226">PARTIAL returned/total</text>
+    <text class="muted small" x="500" y="2254">returned N / total M • exact scope visible</text>
+    <text class="muted small" x="500" y="2280">not “no cases”; no inferred full calendar</text>
+    <text class="muted small" x="500" y="2306">detail list available for keyboard/touch</text>
+  </g>
+
+  <g id="desktop-arbitration-a2">
+    <rect class="card" x="40" y="2382" width="1008" height="250" rx="16"/>
+    <text class="ink h2" x="68" y="2420">A2 · Роли компании</text>
+    <text class="muted body" x="68" y="2448">Four exact categories; zero denominator has no percent.</text>
+    <rect class="bar" x="92" y="2480" width="430" height="28"/>
+    <rect class="plainbar" x="92" y="2518" width="286" height="28"/>
+    <rect class="bar" x="92" y="2556" width="124" height="28"/>
+    <rect class="plainbar" x="92" y="2594" width="64" height="20"/>
+    <text class="ink small" x="548" y="2500">Истец • count + percent + details</text>
+    <text class="muted small" x="548" y="2538">Ответчик • labels accompany patterns</text>
+    <text class="muted small" x="548" y="2576">Другая роль • exact target attribution</text>
+    <text class="muted small" x="548" y="2606">Не атрибутировано • disclosed</text>
+  </g>
+
+  <g id="desktop-arbitration-a3">
+    <rect class="card" x="40" y="2652" width="1008" height="250" rx="16"/>
+    <text class="ink h2" x="68" y="2690">A3 · Исходы</text>
+    <text class="muted body" x="68" y="2718">Won / lost / returned / unknown are source-bound categories, not a verdict.</text>
+    <circle cx="232" cy="2800" r="70" fill="none" stroke="#D1D5DB" stroke-width="34"/>
+    <path d="M232 2730 A70 70 0 0 1 296 2828" fill="none" stroke="url(#desktop-neutral-pattern)" stroke-width="34"/>
+    <line class="thin" x1="342" y1="2746" x2="486" y2="2746"/>
+    <line class="thin" x1="342" y1="2786" x2="534" y2="2786"/>
+    <line class="thin" x1="342" y1="2826" x2="458" y2="2826"/>
+    <line class="thin" x1="342" y1="2866" x2="414" y2="2866"/>
+    <text class="ink label" x="582" y="2770">ACCESSIBLE TEXT ALTERNATIVE + COUNTS</text>
+    <text class="muted small" x="582" y="2800">unknown is explicit</text>
+    <text class="muted small" x="582" y="2828">no color-only meaning</text>
+    <text class="muted small" x="582" y="2856">no probability or advice</text>
+  </g>
+
+  <g id="desktop-arbitration-a4">
+    <rect class="card" x="40" y="2922" width="1008" height="250" rx="16"/>
+    <text class="ink h2" x="68" y="2960">A4 · Суммы дел по валютам</text>
+    <text class="muted body" x="68" y="2988">Exact source currency groups; no FX and missing is not zero.</text>
+    <line class="zero" x1="340" y1="3018" x2="340" y2="3136"/>
+    <rect class="bar" x="214" y="3032" width="126" height="28"/>
+    <rect class="plainbar" x="340" y="3032" width="238" height="28"/>
+    <rect class="plainbar" x="286" y="3074" width="54" height="28"/>
+    <rect class="bar" x="340" y="3074" width="160" height="28"/>
+    <rect class="dash" x="214" y="3116" width="286" height="24" rx="6"/>
+    <text class="ink label" x="620" y="3048">ZERO / NEGATIVE / MISSING</text>
+    <text class="muted small" x="620" y="3076">each currency remains separate</text>
+    <text class="muted small" x="620" y="3104">amount never called debt</text>
+    <text class="muted small" x="620" y="3132">safe case details capped at 20</text>
+  </g>
+
+  <g id="desktop-arbitration-a5">
+    <rect class="card" x="40" y="3192" width="1008" height="250" rx="16"/>
+    <text class="ink h2" x="68" y="3230">A5 · Частые оппоненты</text>
+    <text class="muted body" x="68" y="3258">Safe legal/state aliases or report-scoped masked ordinals only.</text>
+    <rect class="subcard" x="68" y="3280" width="952" height="132" rx="10"/>
+    <text class="ink small" x="88" y="3308">Юридическое лицо A — neutral safe alias</text>
+    <text class="ink small" x="88" y="3338">Физическое лицо N — deterministic report-scoped ordinal</text>
+    <text class="ink small" x="88" y="3368">Сторона скрыта N — unknown/conflict remains masked</text>
+    <text class="ink label" x="600" y="3308">LARGE-N shown N/M</text>
+    <text class="muted small" x="600" y="3338">показано N из M • M = eligible population</text>
+    <text class="muted small" x="600" y="3368">LONG party label wraps; name-only grouping forbidden</text>
+    <text class="muted small" x="600" y="3398">same fact in list, tooltip and accessibility text</text>
+  </g>
+
+  <g id="desktop-sources-limitations">
+    <rect class="card" x="40" y="3462" width="1008" height="230" rx="16"/>
+    <text class="ink h2" x="68" y="3500">Источники и ограничения</text>
+    <rect class="subcard" x="68" y="3522" width="456" height="142" rx="10"/>
+    <text class="ink body" x="88" y="3550">Источники</text>
+    <text class="muted small" x="88" y="3578">counterparty → finance → arbitration</text>
+    <text class="muted small" x="88" y="3604">received / effective / period are separate</text>
+    <text class="muted small" x="88" y="3630">No raw response or hidden payload</text>
+    <rect class="subcard" x="544" y="3522" width="476" height="142" rx="10"/>
+    <text class="ink body" x="564" y="3550">Ограничения</text>
+    <text class="muted small" x="564" y="3578">gate_closed / partial / missing are explicit</text>
+    <text class="muted small" x="564" y="3604">finance unit and provider semantics are never guessed</text>
+    <text class="muted small" x="564" y="3630">FOCUS/TOUCH reveals same bounded detail</text>
+  </g>
+
+  <g id="desktop-neutral-actions">
+    <rect class="card" x="40" y="3712" width="1008" height="150" rx="16"/>
+    <text class="ink h2" x="68" y="3750">Действия</text>
+    <rect class="subcard" x="68" y="3772" width="336" height="58" rx="10"/>
+    <rect class="subcard" x="424" y="3772" width="336" height="58" rx="10"/>
+    <text class="ink body" x="128" y="3808">Проверить другую компанию</text>
+    <text class="ink body" x="492" y="3808">Подготовить претензию</text>
+    <text class="muted small" x="780" y="3792">Exact report binding</text>
+    <text class="muted small" x="780" y="3816">No Claim on click</text>
+  </g>
+
+  <g id="desktop-primary-cta">
+    <rect class="dash" x="1080" y="44" width="320" height="132" rx="14"/>
+    <text class="ink label" x="1098" y="72">RIGHT RAIL • 320 PX • GAP 32 PX</text>
+    <text class="muted small" x="1098" y="98">sticky top 24 annotation</text>
+    <text class="muted small" x="1098" y="122">DOM order follows content contract</text>
+    <text class="muted small" x="1098" y="148">no fixed bottom bar</text>
+    <rect class="card" x="1080" y="196" width="320" height="374" rx="18"/>
+    <text class="ink h2" x="1106" y="240">Вам задолжали?</text>
+    <text class="muted body" x="1106" y="276">Запустите процесс взыскания</text>
+    <text class="muted body" x="1106" y="300">прямо сейчас: создайте</text>
+    <text class="muted body" x="1106" y="324">досудебную претензию онлайн!</text>
+    <rect class="focusOuter" x="1102" y="354" width="276" height="68" rx="12"/>
+    <rect class="focusInner" x="1106" y="358" width="268" height="60" rx="10"/>
+    <rect class="cta" x="1110" y="362" width="260" height="52" rx="8"/>
+    <text class="ctaText body" x="1164" y="394">Создать претензию</text>
+    <text class="ink label" x="1106" y="458">FOCUS/TOUCH</text>
+    <text class="muted small" x="1106" y="484">white separation + dark ring</text>
+    <text class="ink label" x="1106" y="516">NO OVERLAP</text>
+    <text class="muted small" x="1106" y="542">sticky rail never covers main content</text>
+    <rect class="dash" x="1080" y="590" width="320" height="152" rx="14"/>
+    <text class="ink label" x="1098" y="620">RESPONSIVE HANDOFF</text>
+    <text class="muted small" x="1098" y="648">≥1200: sticky rail</text>
+    <text class="muted small" x="1098" y="674">paragraph is desktop-only</text>
+    <text class="muted small" x="1098" y="700">CTA accent #EE5A2A + dark text</text>
+    <text class="muted small" x="1098" y="726">not a chart verdict color</text>
+  </g>
+
+  <text class="muted small" x="40" y="4006">Wireframe only • patterns, labels and text fallbacks are normative handoff; final visual art belongs to later iterations.</text>
+</svg>
