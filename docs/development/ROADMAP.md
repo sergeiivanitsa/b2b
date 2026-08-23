@@ -51,6 +51,13 @@
 | 16 | `company-report-h1-public-contract` | Завершена |
 | 17 | `company-report-h1-backend` | Завершена |
 | 18 | `company-report-h1-frontend` | Завершена |
+| 19 | `company-card-v2-contract-evidence` | Запланирована; следующая DevFlow-итерация |
+| 20 | `company-card-v2-backend-foundation` | Запланирована |
+| 21 | `company-card-v2-ai-narrative` | Запланирована |
+| 22 | `company-card-v2-page-shell` | Запланирована |
+| 23 | `company-card-v2-finance-charts` | Запланирована |
+| 24 | `company-card-v2-arbitration-charts` | Запланирована |
+| 25 | `company-card-v2-qa-rollout` | Запланирована |
 
 ## 3. Инженерные правила roadmap
 
@@ -1072,14 +1079,518 @@ planning/plan-review после merge итерации 17.
 
 ---
 
+## Итерация 19 — Контракт, проектирование и evidence Company Card v2
+
+ID: 19
+Slug: company-card-v2-contract-evidence
+
+Статус: planning input; реализация выполняется отдельным полным DevFlow после
+merge roadmap-пакета.
+
+### Зависимости
+
+- Завершённые и reconciled итерации 16–18.
+- Утверждённые владельцем продуктовые решения Company Card v2.
+
+### Цель
+
+Зафиксировать implementation-ready продуктовый, доказательный и технический
+контракт новой публичной карточки компании до изменения provider, snapshot,
+API, SSR, SPA или AI-контура.
+
+### Scope
+
+- Три согласованных wireframe для desktop, tablet и mobile на основе макета
+  карточки СКС, без преждевременной фиксации декоративного дизайна.
+- Точный content-to-source manifest: hero, описание деятельности, реквизиты,
+  пять финансовых и пять арбитражных представлений, sources, limitations и
+  actions.
+- Status/check date остаётся датой формирования immutable отчёта в
+  `Europe/Moscow`, а не датой открытия страницы; существующие approved H1
+  wordings и distinction missing/negative fact сохраняются.
+- Правый sticky CTA на широком экране и компактная fixed bottom CTA-полоса на
+  tablet/mobile с текстом `Создать претензию`.
+- Desktop CTA содержит fixed UI copy `Вам задолжали?` и `Запустите процесс
+  взыскания прямо сейчас: создайте досудебную претензию онлайн!`; compact
+  tablet/mobile bar сохраняет heading `Вам задолжали?` и кнопку без
+  обязательного supporting paragraph. Этот текст не генерируется AI.
+- Сохранение нижних действий `Проверить другую компанию` и
+  `Подготовить претензию`; accent background всех CTA-кнопок `#EE5A2A`, с
+  отдельно проверяемыми contrast/focus/hover/disabled состояниями.
+- Один Claims target, построенный из `report_id` показанного snapshot, без
+  нового login/prefill choice и без изменения существующего anonymous flow.
+- Versioned contract будущей Public Company Card v2: exact values,
+  chart-ready values, block ordering, coverage, sources, limitations,
+  actions, compatibility и fail-closed parsing.
+- Отдельный coexisting v2 endpoint/schema и точные routing/fallback gates:
+  `company_public_h1_v1`, его strict frontend reader и старые клиенты не
+  расширяются молча и продолжают получать прежние responses.
+- Формулы, closed dictionaries, missing/zero/partial/conflict semantics,
+  formatter policy и accessibility contract для десяти графиков.
+- Signed-value policy: отрицательные значения сохраняют знак, используют общую
+  нулевую ось и расходятся влево; запрещены `abs`, clamp, omission и
+  verdict-coloring. Отдельно фиксируются zero, mixed-sign и
+  zero/negative-denominator cases.
+- Exact finance-period algorithm разрешает неоднозначность исходного chart
+  document: источник окна, required-code set, data-derived max year, общий или
+  per-chart common-year selection и допустимые gaps фиксируются до backend
+  реализации, без browser/current-year inference.
+- Финансовый evidence gate `datanewton_finance_thousand_rub_v1`: vendor
+  contract либо воспроизводимая матрица минимум по трём компаниям против
+  официального бухгалтерского источника; raw provider payload в git не
+  добавляется.
+- Проверенный field-level provider manifest с exact path/type/scope/date и
+  identity semantics для legal status/effective date, legal form dictionary,
+  charter-capital unit/format, tax-mode flags, полного OKVED code/label,
+  руководителя, владельцев/долей, работников, налогового органа,
+  `party_result`, parties/entity type, currency, pagination и KAD URL.
+- Tracked sanitized shape/evidence/decision artifacts с provenance и без raw,
+  секретов или production identifiers; внешние ignored-файлы не являются
+  единственным доказательством контракта.
+- Privacy contract: контакты и персональные идентификаторы не публикуются;
+  адрес, руководитель и владельцы допускаются только в утверждённом safe
+  составе; юридические лица и государственные органы в арбитраже допустимы,
+  физические лица маскируются; Webvisor/telemetry не получают чувствительные
+  данные.
+- Маскирование физических лиц применяется одинаково в DTO, SSR/HTML,
+  embedded state, tooltips и telemetry, сохраняет различимость записей без
+  раскрытия identity и не объединяет разных лиц в одного «контрагента».
+- Маскирование natural persons относится к opposing parties арбитража.
+  Утверждённые manager/owner names и owner share могут показываться в safe
+  management composition, но без personal INN, contacts и иных персональных
+  идентификаторов.
+- Entity type не выводится из display name: unknown/conflicting type
+  fail-closed маскируется; ИНН юридического лица служит internal grouping key,
+  но не показывается в chart UI, embedded presentation или telemetry.
+- Large-N policy: агрегаты по полному доказанно нормализованному набору,
+  detail cap `top-20` после validation/privacy eligibility, deterministic sort
+  и tie-breakers, точная подпись `показано N из M`, где `M` — eligible
+  population данного detail view; partial slice показывает returned/total
+  scope и не экстраполируется.
+- Per-view large-N rules: case-amount details имеют отдельный cap/ranking для
+  каждой source currency, opposing parties сортируются по case count и затем
+  safe stable key/name; каждый `N/M` явно называет свой denominator.
+- Arbitration currency/calendar rules: разные currencies не смешиваются и не
+  FX-convert, missing currency не получает `₽`, explicit amount `0` остаётся
+  видимым, равные суммы не дедуплицируют дела; календарный zero допустим только
+  при доказанно полной pagination, partial slice не создаёт empty years и
+  вывод `дел нет`.
+- Arbitration persistence ADR выбирает воспроизводимую v3 форму: bounded full
+  normalized case set либо write-time aggregates/chart facts плюс
+  deterministic top-20 evidence; hard provider/storage cap, cap exhaustion как
+  `partial`, auditability и privacy определяются до итерации 20.
+- AI narrative contract: generation только вне read path, автоматическая
+  schema/evidence/policy validation, deterministic renderer, immutable
+  artifact key/pin по `report_id`, `snapshot_hash` и всем
+  policy/schema/catalog/prompt/model versions, deterministic fallback, без
+  ручной модерации и без второго AI как trust boundary.
+- SSR/client-takeover ADR: один sanitized versioned embedded DTO, его
+  consumption без второго factual GET, JS-disabled factual document и zero
+  provider/AI/job/write work во время takeover.
+- ADR явно вводит только для v2 узкое исключение из H1-запрета hidden
+  serialized response: разрешена лишь strict public projection с script-safe
+  serialization, CSP/XSS boundary и negative fixtures; raw/provider/private
+  JSON остаётся запрещённым.
+- Version/feature gates, rollback, exact old-report/publication-pin behavior и
+  acceptance matrix будущих итераций 20–25.
+- Новый writer contract использует `CompanyReport.report_version="3"`;
+  versions `"1"|"2"` остаются read-only compatible, не переписываются и
+  получают explicit legacy limitations для отсутствующих v3 facts.
+- Bounded evidence matrix из 3–5 компаний допускается только как отдельно
+  перечисленный scope DevFlow-итерации 19; roadmap-подготовка не выполняет
+  network/live calls. Запрещены production DB, paid AI и публикация
+  raw/provider secrets.
+
+### Вне scope
+
+- Product API, Gateway API, React, nginx, deploy, migration и runtime-код.
+- Создание нового отчёта, refresh/backfill старых snapshots и изменение
+  production publication.
+- Платные AI-вызовы и production rollout.
+- Контакты, scoring, verdict, recovery probability и рекомендации о
+  надёжности компании.
+
+### Критерии приёмки
+
+- Каждый видимый факт и derived value имеет источник, формулу, единицу,
+  missing/partial behavior и public/privacy решение.
+- Finance window/common-year/gap и arbitration persistence/cap algorithms
+  сформулированы так, что итерация 20 не принимает скрытых data-size или period
+  решений.
+- Все три wireframe однозначно показывают breakpoint ownership, desktop CTA
+  rail, tablet/mobile bottom bar, safe-area/reserved padding, content order,
+  все десять views, long/empty/partial/negative/large-N states и отсутствие
+  перекрытия контента.
+- `#EE5A2A` остаётся exact accent background, а выбранные text/font и
+  focus/hover/disabled states проходят применимые contrast requirements.
+- Финансовая денежная единица либо проходит versioned evidence gate, либо
+  денежные графики остаются явно заблокированными; пользовательское решение
+  о `thousand_rub` не подменяет техническое evidence.
+- AI не пишет публичные числа, verdict или неподтверждённые факты: невалидный,
+  отсутствующий или устаревший artifact всегда заменяется deterministic
+  fallback без участия человека.
+- Старые immutable reports не выглядят обогащёнными и не вызывают DataNewton
+  на read path: v1/v2 snapshots не rewrite/backfill/refresh на GET/SSR, нет
+  provider/job/write/AI side effects, unavailable Card-v2 facts имеют explicit
+  legacy limitation либо остаются на H1, active publication pin не меняется
+  молча.
+- SSR и SPA используют один factual projection; прямой canonical hard-load и
+  client navigation не создают две разные карточки; takeover потребляет один
+  sanitized embedded DTO без второго factual GET, content/order mismatch или
+  скрытого paid/provider work.
+- Script-safe embedded projection проходит XSS tests для closing-tag/control/
+  Unicode/long-string cases и не содержит raw/private/unknown keys.
+- V2 endpoint/schema сосуществует с неизменённым H1 v1, а old clients и
+  current production route проходят compatibility tests.
+- Planning inputs 20–25 не требуют новых незафиксированных продуктовых
+  решений, а визуальная композиция подтверждена владельцем проекта.
+
+---
+
+## Итерация 20 — Backend и данные Company Card v2
+
+ID: 20
+Slug: company-card-v2-backend-foundation
+
+Статус: planning input; старт после merge итерации 19 и прохождения её
+evidence/schema gates.
+
+### Зависимости
+
+- Merged контракт/планирование итерации 19.
+- Закрытые finance-unit и provider-field evidence/schema gates.
+
+### Цель
+
+Получать, нормализовать, сохранять и публично проецировать доказанные данные,
+необходимые новой карточке и десяти графикам, сохраняя immutable history и
+совместимость H1 v1 и CompanyReport snapshots `"1"|"2"`.
+
+### Scope
+
+- Verified DataNewton blocks для ОКВЭД/деятельности, руководителя, владельцев,
+  работников и налогового органа; контакты не запрашиваются для публичной
+  карточки и не публикуются.
+- `CompanyReport.report_version="3"` для новых writes, с явным raw
+  discriminator и read-only compatibility path для snapshots `"1"|"2"`;
+  текущий snapshot v2 не перегружается новой несовместимой семантикой и не
+  переписывается.
+- Полная bounded arbitration pagination, non-progress protection,
+  deterministic merge и dedup по `case_id` с документированным fallback.
+- Сохранение `party_result`, case identity, instance/link evidence и safe
+  opposing-party projection; exact-INN role attribution, multiple roles в
+  `other`.
+- Pure versioned Chart Facts для финансов и арбитража: Decimal source truth,
+  safe chart geometry, exact display strings, missing/zero/partial semantics.
+- Активация `datanewton_finance_thousand_rub_v1` только после evidence gate.
+- Versioned Public Company Card v2 API/projection с closed contracts,
+  coverage, sources, limitations, actions и zero-side-effect read path.
+- Feature gate выключен по умолчанию; H1 v1 и существующий Claims handoff не
+  меняются.
+- Unit, provider-fixture, serialization, old-snapshot, disposable PostgreSQL,
+  API/SSR parity и negative contract tests.
+
+### Вне scope
+
+- AI generation, React presentation, графические компоненты, route cutover,
+  deployment, refresh button и production backfill.
+- Scoring/signals changes и вывод новых данных на старом H1 v1.
+
+### Критерии приёмки
+
+- Все chart inputs берутся только из сохранённого immutable snapshot и
+  воспроизводимо формируют тот же versioned projection.
+- Missing не превращается в zero, partial arbitration не экстраполируется, а
+  Decimal не превращается в float source of truth.
+- Старые snapshots остаются читаемыми и не переписываются на read path.
+- Public Card v2 не публикует contacts, raw payload, personal identifiers,
+  scoring или verdict.
+- Feature gate не изменяет production-default H1 до отдельного rollout.
+
+---
+
+## Итерация 21 — Публичное AI-описание Company Card v2
+
+ID: 21
+Slug: company-card-v2-ai-narrative
+
+Статус: planning input; старт после merge backend-контракта итерации 20.
+
+### Зависимости
+
+- Merged Public Card v2 data/projection foundation итерации 20.
+- Доступный, но выключенный по умолчанию task-specific Gateway capability.
+
+### Цель
+
+Создавать доказательное нейтральное описание деятельности компании и не более
+двух комментариев к графикам как сохранённый, бюджетируемый и автоматически
+валидируемый artifact, не вызывая paid AI на публичном read path.
+
+### Scope
+
+- Separate AI job/artifact persistence, immutable cache key по report/snapshot
+  hash и версиям evidence/insights/catalog/prompt/schema/model profile.
+- Отдельный worker, bounded queue, lease/fencing, durable budget reservation,
+  daily/monthly limits, concurrency cap, kill switch и безопасная retry policy.
+- Task-specific structured Gateway profile и минимальный обезличенный evidence
+  envelope без ИНН/ОГРН, адресов, персональных данных, case identities, raw,
+  signals или scoring.
+- Strict JSON schema, allowlisted evidence/statement IDs, автоматическая
+  schema/evidence/policy validation и deterministic Russian renderer.
+- Описание длиной 400–700 знаков и максимум два комментария к выбранным
+  графикам; AI не вычисляет числа, роли, суммы, проценты или verdict.
+- Deterministic fallback при отсутствующем, невалидном, просроченном или
+  недоступном artifact; SSR/API/SPA только читают сохранённый результат.
+- Publication pin связывает artifact с exact `report_id` и `snapshot_hash`;
+  новый artifact не меняет опубликованный текст молча.
+- Unit/integration/Gateway contract tests без paid calls; один отдельный
+  controlled smoke возможен только с явным операционным разрешением.
+
+### Вне scope
+
+- Ручная модерация, admin UI и второй AI-валидатор.
+- Свободный рекламный текст, scoring explanation, recommendations и AI call из
+  GET/SSR/crawler request.
+- Включение генерации для всех anonymous-created reports и production rollout.
+
+### Критерии приёмки
+
+- Повторный public GET не создаёт job и не вызывает Gateway.
+- Любая публичная фраза трассируется к сохранённому evidence/statement ID, а
+  точные значения подставляет локальный renderer.
+- Невалидный AI output fail-closed заменяется fallback и не блокирует страницу.
+- Budget/kill switch/ambiguous timeout не допускают неконтролируемых повторных
+  платных вызовов.
+- AI artifact не изменяет CompanyReport snapshot, signals или scoring.
+
+---
+
+## Итерация 22 — Каркас страницы, SSR и CTA Company Card v2
+
+ID: 22
+Slug: company-card-v2-page-shell
+
+Статус: planning input; старт после merge итераций 20–21.
+
+### Зависимости
+
+- Merged Public Card v2 API/projection итерации 20.
+- Merged narrative artifact/fallback contract итерации 21.
+
+### Цель
+
+Реализовать общий responsive shell новой карточки для прямого canonical SSR и
+React navigation без расхождения factual content, сохранив старый H1 как
+production-default и rollback path.
+
+### Scope
+
+- Hero, checked date/status, narrative/fallback, in-page navigation,
+  requisites, sources, limitations и actions поверх Public Card v2.
+- Desktop main/aside layout со sticky CTA и tablet/mobile fixed bottom bar;
+  CTA `Создать претензию` использует report-specific Claims target.
+- Нижние действия сохраняют labels `Проверить другую компанию` и
+  `Подготовить претензию`; CTA background `#EE5A2A` и доступные interaction
+  states.
+- FastAPI SEO/text shell, shared assets, безопасный embedded DTO и React
+  client takeover без второго factual GET.
+- Canonical/wrong-slug/noindex/error/lifecycle behavior, head ownership,
+  focus/live regions, safe-area, keyboard/touch и reduced-motion support.
+- Contract/lifecycle/SSR/nginx/frontend tests и real-browser visual matrix для
+  утверждённых wireframes.
+- V2 presentation остаётся за выключенным feature gate.
+
+### Вне scope
+
+- Финансовые и арбитражные chart renderers, Claims auth/prefill changes,
+  provider/AI semantics, production activation и удаление H1.
+
+### Критерии приёмки
+
+- Canonical hard-load и SPA navigation показывают один report, content order,
+  facts, narrative, limitations и actions.
+- CTA не перекрывает контент, существует в утверждённых placements и всегда
+  использует `report_id` отображаемого snapshot.
+- JavaScript-disabled SSR остаётся индексируемым factual документом, а
+  interactive client не выполняет повторный paid/provider/factual read.
+- На 320/390/768/1024/1200/1440 px нет page-wide horizontal scroll и
+  недоступных controls.
+
+---
+
+## Итерация 23 — Финансовые графики Company Card v2
+
+ID: 23
+Slug: company-card-v2-finance-charts
+
+Статус: planning input; старт после merge page shell итерации 22 и active
+finance-unit evidence gate.
+
+### Зависимости
+
+- Merged responsive/SSR/client shell итерации 22.
+- Active `datanewton_finance_thousand_rub_v1` и chart-facts contract итерации
+  20; при незакрытом gate итерация не стартует.
+
+### Цель
+
+Показать пять утверждённых финансовых представлений интерактивно, точно и
+доступно, не вычисляя source semantics и monetary truth в браузере.
+
+### Scope
+
+- Средства/инвестиции/дебиторка против краткосрочных обязательств.
+- Собственный капитал против долгов.
+- Динамика выручки и активов за последние семь полных общих периодов.
+- Валовая, операционная и чистая прибыль на 100 рублей выручки.
+- Таблица утверждённых финансовых строк и периодов.
+- Backend-provided exact display strings и safe scaled geometry; gaps/missing,
+  explicit zero, negative/diverging bars и denominator-zero policy.
+- Mouse hover, keyboard focus, touch disclosure, bounded tooltip,
+  textual/table fallback, reduced motion и lazy/error fallback.
+- Targeted contract/component/accessibility/visual/performance tests.
+- Feature gate остаётся выключенным для production-default route.
+
+### Вне scope
+
+- Новые финансовые business thresholds, forecast/interpolation, risk colors,
+  arbitration charts, provider changes и production activation.
+
+### Критерии приёмки
+
+- Ни один missing показатель не отображается как zero и ни один gap не
+  интерполируется.
+- Tooltip/table показывают exact backend strings; JavaScript Number не является
+  источником денежной истины.
+- Денежная подпись появляется только при активном evidence-backed unit policy.
+- Все графики доступны мышью, клавиатурой и touch, а fallback сохраняет факты
+  при отключённом или не загрузившемся chart bundle.
+
+---
+
+## Итерация 24 — Арбитражные графики Company Card v2
+
+ID: 24
+Slug: company-card-v2-arbitration-charts
+
+Статус: planning input; старт после merge finance charts итерации 23 и
+прохождения arbitration completeness/outcome/privacy gates.
+
+### Зависимости
+
+- Merged chart shell/interaction patterns итераций 22–23.
+- Доказанные full-pagination, `party_result`, exact-role и public/privacy
+  contracts итераций 19–20.
+
+### Цель
+
+Показать пять утверждённых арбитражных представлений по доказанно загруженной
+выборке без двойной атрибуции, экстраполяции и раскрытия лишних данных.
+
+### Scope
+
+- Активность по годам и exact-INN roles.
+- Plaintiff/respondent distribution с отдельными `other` и `unattributed`.
+- Outcome distribution только из versioned `party_result` mapping.
+- Суммы по делам с source currency, role, date, result и safe court link; сумма
+  не называется задолженностью.
+- Opposing-party aggregates с exact-INN grouping и deterministic display name.
+- Полные aggregates, top-20 details, `показано N из M`, partial limitations и
+  отсутствие календарных zero без доказанной полноты.
+- Юридические лица/государственные органы допустимы; физические лица
+  маскируются; external HTTPS host allowlist и telemetry/Webvisor protection.
+- Mouse/keyboard/touch interactions, textual fallback, long/large-N fixtures,
+  component/contract/accessibility/visual tests.
+- Feature gate остаётся выключенным для production-default route.
+
+### Вне scope
+
+- Collection probability, прогноз исхода, трактовка claim amount как долга,
+  FX conversion, natural-person publication, новые provider datasets и
+  production activation.
+
+### Критерии приёмки
+
+- Одно дело входит ровно в один role bucket, а multiple roles попадают в
+  `other`.
+- Outcome берётся только из доказанного `party_result`; unknown не подменяется
+  проигрышем или возвратом.
+- Partial page никогда не выглядит полной и не используется для
+  экстраполированных выводов.
+- Large-N UI остаётся ограниченным, доступным и показывает точный scope
+  отображаемых деталей.
+- Публичная страница не раскрывает персональные идентификаторы и физических
+  лиц в opposing parties.
+
+---
+
+## Итерация 25 — QA и rollout Company Card v2
+
+ID: 25
+Slug: company-card-v2-qa-rollout
+
+Статус: planning input; старт после merge полного пути итераций 19–24.
+
+### Зависимости
+
+- Все merged contracts/runtime/UI итераций 19–24 и закрытые evidence gates.
+- Feature flags остаются выключенными до отдельного rollout decision.
+
+### Цель
+
+Доказать готовность всей Company Card v2 end-to-end, подготовить безопасное
+ступенчатое включение и сохранить проверенный rollback на H1.
+
+### Scope
+
+- Полные затронутые Product API/Gateway/frontend/integration suites с
+  disposable PostgreSQL и без paid/provider calls в CI.
+- Browser E2E и visual matrix: 320/390/768/1024/1199/1200/1440 px, keyboard,
+  touch, 200% zoom, reduced motion, safe-area, long/missing/partial/large-N.
+- SSR/API/SPA semantic parity, canonical/wrong-slug/noindex/robots и
+  crawler-safe behavior.
+- Bundle/CLS/performance, lazy-chart failure, AI fallback/budget/kill switch,
+  privacy/telemetry и Claims target verification.
+- Acceptance fixtures: СКС и минимум три обезличенных edge profiles без
+  production raw в git.
+- Feature flag/runbook/observability/rollback rehearsal и staged activation
+  plan: test publications → allowlisted companies → controlled production
+  percentage → general availability.
+- CI gates для обязательных backend, frontend и browser checks.
+
+### Вне scope
+
+- Автоматический refresh/backfill старых reports, удаление H1, массовая
+  production republish и фактический production deploy/flag change без
+  отдельного разрешения владельца.
+
+### Критерии приёмки
+
+- Все обязательные suites и browser/visual/privacy/performance gates проходят
+  без необъяснённых skips или новых baseline failures.
+- V2 можно включить и выключить без изменения immutable reports и без потери
+  canonical/Claims continuity.
+- Paid AI и DataNewton не вызываются crawler/read/test traffic.
+- Runbook содержит точные preflight, canary, smoke, monitoring и rollback
+  действия; production activation остаётся отдельным одобренным действием.
+- Независимое end-to-end review выдаёт `VERDICT: READY` до commit/push и
+  последующего ручного merge.
+
+---
+
 ## 4. Условные и отложенные расширения
 
-Эти работы не получают новый ID без отдельного решения. Мerged path 8–15 не
-пересматривается; H1 runtime выполняется только в явно добавленных 17–18.
+Эти работы не получают новый ID без отдельного решения. Завершённый путь 8–15
+не пересматривается; H1 16–18 сохраняется как совместимый production-default
+и rollback path, а Company Card v2 реализуется только в явно добавленных
+19–25.
 
 ### `finance.reporting_absent`
 
-Может быть добавлен как дополнительный Stage итерации 7 только после появления проверенного evidence fixture, однозначно отличающего отсутствие отчётности от:
+Может получить только отдельную будущую итерацию после появления проверенного
+evidence fixture; завершённая итерация 7 задним числом не расширяется. Evidence
+должен однозначно отличать отсутствие отчётности от:
 
 - access denied;
 - tariff limitation;
@@ -1112,7 +1623,10 @@ provider/probe
 
 ### Persistence signals/scoring/explanation
 
-Решение принимается отдельно. До утверждения допускается вычисление поверх сохранённого immutable `CompanyReport snapshot`. Если результаты сохраняются, обязательны:
+Публичный narrative artifact отдельно маршрутизирован в итерацию 21 и не
+изменяет signals/scoring/recovery explanation. Любое новое persistence или
+перевычисление этих доменов требует отдельного решения. Если такие результаты
+сохраняются, обязательны:
 
 - версия ruleset;
 - версия prompt/model;
