@@ -52,7 +52,7 @@
 | 17 | `company-report-h1-backend` | Завершена |
 | 18 | `company-report-h1-frontend` | Завершена |
 | 19 | `company-card-v2-contract-evidence` | Завершена |
-| 20 | `company-card-v2-backend-foundation` | Запланирована |
+| 20 | `company-card-v2-backend-foundation` | Заблокирована; finance policy v2 и fresh-matrix v3 подготовлены, но не утверждены/не выполнены |
 | 21 | `company-card-v2-ai-narrative` | Запланирована |
 | 22 | `company-card-v2-page-shell` | Запланирована |
 | 23 | `company-card-v2-finance-charts` | Запланирована |
@@ -1134,9 +1134,11 @@ API, SSR, SPA или AI-контура.
   document: источник окна, required-code set, data-derived max year, общий или
   per-chart common-year selection и допустимые gaps фиксируются до backend
   реализации, без browser/current-year inference.
-- Финансовый evidence gate `datanewton_finance_thousand_rub_v1`: vendor
-  contract либо воспроизводимая матрица минимум по трём компаниям против
-  официального бухгалтерского источника; raw provider payload в git не
+- Финансовый evidence gate: immutable
+  `datanewton_finance_thousand_rub_v1` отклонён evidence v2; candidate
+  `datanewton_finance_thousand_rub_v2` разделяет non-zero scale, presence,
+  zero, lexical transport и publication gates и активируется только после
+  заранее утверждённой свежей матрицы. Raw provider payload в git не
   добавляется.
 - Проверенный field-level provider manifest с exact path/type/scope/date и
   identity semantics для legal status/effective date, legal form dictionary,
@@ -1251,8 +1253,12 @@ API, SSR, SPA или AI-контура.
 ID: 20
 Slug: company-card-v2-backend-foundation
 
-Статус: planning input; старт после прохождения evidence/schema/privacy/
-operational gates итерации 19.
+Статус: planning input; заблокирована результатами evidence v2 от 2026-08-24.
+Finance-policy v1 rejected из-за двух конфликтов `zero`/`missing`. Policy v2 и
+fresh-matrix v3 подготовлены как proposed/pre-live artifacts, но ещё не
+утверждены и не выполнены. Counterparty semantic и arbitration
+outcome/currency/entity-type gates остаются незакрытыми. Старт только после
+закрытия versioned policy/evidence gates.
 
 ### Зависимости
 
@@ -1281,7 +1287,9 @@ operational gates итерации 19.
   `other`.
 - Pure versioned Chart Facts для финансов и арбитража: Decimal source truth,
   safe chart geometry, exact display strings, missing/zero/partial semantics.
-- Активация `datanewton_finance_thousand_rub_v1` только после evidence gate.
+- Активация только новой versioned finance-unit policy после независимых
+  scale/presence/zero/lexical/publication gates; отклонённая v1 не
+  переопределяется.
 - Versioned Public Company Card v2 API/projection с closed contracts,
   coverage, sources, limitations, actions и zero-side-effect read path.
 - Feature gate выключен по умолчанию; H1 v1 и существующий Claims handoff не
@@ -1429,8 +1437,8 @@ finance-unit evidence gate.
 ### Зависимости
 
 - Merged responsive/SSR/client shell итерации 22.
-- Active `datanewton_finance_thousand_rub_v1` и chart-facts contract итерации
-  20; при незакрытом gate итерация не стартует.
+- Active versioned finance-unit policy и chart-facts contract итерации 20;
+  отклонённая v1 не используется, при незакрытом gate итерация не стартует.
 
 ### Цель
 
