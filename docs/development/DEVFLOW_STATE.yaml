@@ -205,10 +205,10 @@ iterations:
   - id: 19
     slug: company-card-v2-contract-evidence
     title: "Контракт, проектирование и evidence Company Card v2"
-    status: ready_for_merge
+    status: merged
     branch: feat/iteration-19-company-card-v2-contract-evidence
-    commit: pending
-    merged_at: null
+    commit: 56a48ee30e89b2a45fab6fd088f91aa3cb42e369
+    merged_at: "2026-08-23T23:42:09+10:00"
     block_reason: null
   - id: 20
     slug: company-card-v2-backend-foundation
@@ -217,7 +217,7 @@ iterations:
     branch: pending
     commit: pending
     merged_at: null
-    block_reason: "Ожидает merge итерации 19 и утверждения evidence/schema/privacy/operational gates"
+    block_reason: "Ожидает утверждения evidence/schema/privacy/operational gates итерации 19"
   - id: 21
     slug: company-card-v2-ai-narrative
     title: "Публичное AI-описание Company Card v2"
