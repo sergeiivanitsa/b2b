@@ -51,7 +51,7 @@
 | 16 | `company-report-h1-public-contract` | Завершена |
 | 17 | `company-report-h1-backend` | Завершена |
 | 18 | `company-report-h1-frontend` | Завершена |
-| 19 | `company-card-v2-contract-evidence` | Запланирована; следующая DevFlow-итерация |
+| 19 | `company-card-v2-contract-evidence` | Завершена |
 | 20 | `company-card-v2-backend-foundation` | Запланирована |
 | 21 | `company-card-v2-ai-narrative` | Запланирована |
 | 22 | `company-card-v2-page-shell` | Запланирована |
@@ -1084,8 +1084,7 @@ planning/plan-review после merge итерации 17.
 ID: 19
 Slug: company-card-v2-contract-evidence
 
-Статус: planning input; реализация выполняется отдельным полным DevFlow после
-merge roadmap-пакета.
+Статус: завершена.
 
 ### Зависимости
 
@@ -1252,8 +1251,8 @@ API, SSR, SPA или AI-контура.
 ID: 20
 Slug: company-card-v2-backend-foundation
 
-Статус: planning input; старт после merge итерации 19 и прохождения её
-evidence/schema gates.
+Статус: planning input; старт после прохождения evidence/schema/privacy/
+operational gates итерации 19.
 
 ### Зависимости
 
