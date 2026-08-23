@@ -217,7 +217,7 @@ iterations:
     branch: pending
     commit: pending
     merged_at: null
-    block_reason: "Ожидает утверждения evidence/schema/privacy/operational gates итерации 19"
+    block_reason: "Evidence v2: finance policy v1 rejected; policy v2 и fresh-matrix v3 пока только proposed/inactive, counterparty semantic и arbitration outcome/currency/entity-type gates остаются незакрытыми"
   - id: 21
     slug: company-card-v2-ai-narrative
     title: "Публичное AI-описание Company Card v2"
