@@ -52,7 +52,7 @@
 | 17 | `company-report-h1-backend` | Завершена |
 | 18 | `company-report-h1-frontend` | Завершена |
 | 19 | `company-card-v2-contract-evidence` | Завершена |
-| 20 | `company-card-v2-backend-foundation` | Заблокирована; v3 подтвердила non-zero scale, но protocol deviation и publication/lexical/counterparty/arbitration gates не закрыты |
+| 20 | `company-card-v2-backend-foundation` | Готова к полному DevFlow planning в утверждённом narrowed fail-closed scope |
 | 21 | `company-card-v2-ai-narrative` | Запланирована |
 | 22 | `company-card-v2-page-shell` | Запланирована |
 | 23 | `company-card-v2-finance-charts` | Запланирована |
@@ -1253,46 +1253,44 @@ API, SSR, SPA или AI-контура.
 ID: 20
 Slug: company-card-v2-backend-foundation
 
-Статус: planning input; заблокирована readiness v2 от 2026-08-24.
-Finance-policy v1 остаётся rejected. Fresh-matrix v3 для policy v2 закрыла
-только `unit_scale_gate=verified_nonzero_thousand_rub`: presence имеет
-`conflict_observed`, zero — `blocked_conflict`, lexical transport не проверен,
-а publication policy остаётся inactive до отдельного owner decision.
-Counterparty semantic и arbitration outcome/currency/entity-type gates также
-не закрыты. Кроме того, превышен pre-live лимит FNS metadata reads, поэтому
-evidence promotion заблокирован до явного решения владельца по protocol
-deviation. Старт только после нового закрывающего readiness decision.
+Статус: готова к полному DevFlow planning по owner decision v1 и readiness v3
+от 2026-08-24. Scope намеренно сужен: открытые external semantic gates дают
+`null`/hidden/gate-closed, а не блокируют реализацию backend foundation.
+Production activation, live provider operation и public A1–A5 не разрешены.
 
 ### Зависимости
 
 - Merged контракт/планирование итерации 19.
-- Закрытые finance-unit и provider-field evidence/schema gates.
+- `iteration-20-owner-scope-decision-v1.md` и
+  `iteration-20-gate-readiness-v3.md`.
+- Finance v3 non-zero scale evidence; lexical transport закрывается тестами
+  этой итерации, zero остаётся запрещённым numeric input.
 
 ### Цель
 
-Получать, нормализовать, сохранять и публично проецировать доказанные данные,
-необходимые новой карточке и десяти графикам, сохраняя immutable history и
-совместимость H1 v1 и CompanyReport snapshots `"1"|"2"`.
+Реализовать default-off backend foundation Company Card v2, который сохраняет
+immutable history и совместимость H1/v1/v2, публикует только доказанные факты,
+а каждый открытый gate выражает как явную недоступность без догадок.
 
 ### Scope
 
-- Verified DataNewton blocks для ОКВЭД/деятельности, руководителя, владельцев,
-  работников и налогового органа; контакты не запрашиваются для публичной
-  карточки и не публикуются.
+- Existing approved H1/core identity/address projection. Strict fail-closed
+  parsers/fixtures для наблюдённых counterparty paths; status/form/OKVED,
+  managers/owners, workers, tax modes/authority и charter capital остаются
+  скрытыми до своих semantic gates. Контакты не запрашиваются/не публикуются.
 - `CompanyReport.report_version="3"` для новых writes, с явным raw
   discriminator и read-only compatibility path для snapshots `"1"|"2"`;
   текущий snapshot v2 не перегружается новой несовместимой семантикой и не
   переписывается.
-- Полная bounded arbitration pagination, non-progress protection,
-  deterministic merge и dedup по `case_id` с документированным fallback.
-- Сохранение `party_result`, case identity, instance/link evidence и safe
-  opposing-party projection; exact-INN role attribution, multiple roles в
-  `other`.
-- Pure versioned Chart Facts для финансов и арбитража: Decimal source truth,
-  safe chart geometry, exact display strings, missing/zero/partial semantics.
-- Активация только новой versioned finance-unit policy после независимых
-  scale/presence/zero/lexical/publication gates; отклонённая v1 не
-  переопределяется.
+- Fixture-driven bounded arbitration collector foundation: pre-call registry,
+  caps/non-progress/drift, deterministic dedup/conflict, provenance, exact-INN
+  role attribution и opaque masking. Пока envelope gate закрыт, сеть
+  запрещена, а public A1–A5 равны unavailable/gate-closed.
+- Pure versioned Chart Facts foundation: exact Decimal, deterministic display/
+  geometry and missing/zero/partial semantics. Finance разрешает только
+  non-zero path после lexical transport tests; arbitration facts скрыты.
+- Versioned finance policy v2 как accepted-with-deviation implementation
+  input. Rejected v1 не переопределяется, provider zero не публикуется.
 - Versioned Public Company Card v2 API/projection с closed contracts,
   coverage, sources, limitations, actions и zero-side-effect read path.
 - Feature gate выключен по умолчанию; H1 v1 и существующий Claims handoff не
@@ -1304,6 +1302,10 @@ deviation. Старт только после нового закрывающе�
 
 - AI generation, React presentation, графические компоненты, route cutover,
   deployment, refresh button и production backfill.
+- Live DataNewton/FNS/Gateway/AI calls и runtime enablement расширенных
+  counterparty/arbitration profiles.
+- Visible gated counterparty fields, provider-zero finance и любые public
+  arbitration A1–A5 facts.
 - Scoring/signals changes и вывод новых данных на старом H1 v1.
 
 ### Критерии приёмки
@@ -1312,6 +1314,12 @@ deviation. Старт только после нового закрывающе�
   воспроизводимо формируют тот же versioned projection.
 - Missing не превращается в zero, partial arbitration не экстраполируется, а
   Decimal не превращается в float source of truth.
+- До verified lexical gate finance numeric facts недоступны; после него
+  разрешён только non-zero path, а provider zero остаётся omitted с limitation.
+- Arbitration pre-call registry гарантированно блокирует network при
+  unverified binding; A1–A5 остаются gate-closed.
+- Каждый скрытый counterparty fact имеет explicit coverage/limitation и не
+  появляется в DTO из одного лишь observed key name.
 - Старые snapshots остаются читаемыми и не переписываются на read path.
 - Public Card v2 не публикует contacts, raw payload, personal identifiers,
   scoring или verdict.
@@ -1434,14 +1442,15 @@ production-default и rollback path.
 ID: 23
 Slug: company-card-v2-finance-charts
 
-Статус: planning input; старт после merge page shell итерации 22 и active
-finance-unit evidence gate.
+Статус: planning input; старт после merge page shell итерации 22, verified
+lexical Decimal transport и non-zero-only finance Chart Facts итерации 20.
 
 ### Зависимости
 
 - Merged responsive/SSR/client shell итерации 22.
-- Active versioned finance-unit policy и chart-facts contract итерации 20;
-  отклонённая v1 не используется, при незакрытом gate итерация не стартует.
+- Approved versioned policy v2 и non-zero-only Chart Facts contract итерации
+  20; отклонённая v1 не используется, provider zero остаётся omitted до
+  отдельного verified zero gate.
 
 ### Цель
 
