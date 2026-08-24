@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import logging
 
 import httpx
 import pytest
@@ -40,6 +41,33 @@ def test_result_is_safe_immutable_and_has_defaults():
     assert result.warnings == []
     with pytest.raises(ValidationError):
         result.dataset = "changed"
+
+
+def test_lexical_manifest_excluded_from_model_dump():
+    result = DataNewtonResult(
+        **_result_values(), lexical_number_lexemes={"/x": "1"}, lexical_transport_valid=True
+    )
+    dumped = result.model_dump()
+    assert "lexical_number_lexemes" not in dumped
+    assert "lexical_transport_valid" not in dumped
+
+
+def test_lexical_manifest_absent_from_snapshots_and_journals():
+    result = DataNewtonResult(
+        **_result_values(), lexical_number_lexemes={"/private": "273325"}, lexical_transport_valid=True
+    )
+    persisted_boundary = {"dataset": result.dataset, "result": result.model_dump(mode="json")}
+    assert "lexical_number_lexemes" not in repr(persisted_boundary)
+    assert "273325" not in repr(persisted_boundary)
+
+
+def test_lexical_manifest_absent_from_probe_metadata_and_logs(caplog):
+    result = DataNewtonResult(
+        **_result_values(), lexical_number_lexemes={"/private": "273325"}, lexical_transport_valid=True
+    )
+    logging.getLogger("iteration20.lexical").info("safe result=%r", result)
+    assert "lexical_number_lexemes" not in caplog.text
+    assert "273325" not in caplog.text
 
 
 @pytest.mark.parametrize(

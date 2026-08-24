@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -131,6 +132,19 @@ async def test_run_one_does_not_retry_unexpected_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_v3_job_never_constructs_provider_while_default_off(monkeypatch):
+    report = complete_company_report()
+    claimed = _claimed(report).__class__(
+        **{**_claimed(report).__dict__, "writer_profile": "company_card_v2_writer_v3", "report_version": "3", "presentation_contract": "company_public_h2_v1", "rollout_generation": 1}
+    )
+    fail = AsyncMock(return_value=False)
+    monkeypatch.setattr(worker, "_try_fail_live_owned_job", fail)
+    factory = lambda _settings: (_ for _ in ()).throw(AssertionError("provider must not be constructed"))
+    assert await worker.run_one_claimed_job(claimed, get_settings(), session_factory=_SessionFactory(), client_factory=factory) is False
+    fail.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_worker_pipeline_calls_each_dataset_exactly_once(monkeypatch):
     seed = complete_company_report()
     claimed = _claimed(seed)
@@ -181,3 +195,31 @@ def test_worker_has_no_explanation_or_gateway_dependency():
     source = Path(worker.__file__).read_text(encoding="utf-8")
     assert "explain_scoring_result" not in source
     assert "gateway_client" not in source
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_supervisor_passes_full_captured_claim_tuple(monkeypatch):
+    report = complete_company_report()
+    claimed = _claimed(report)
+    heartbeat = AsyncMock()
+    monkeypatch.setattr(worker, "heartbeat_job", heartbeat)
+    stop = asyncio.Event()
+    ownership_lost = asyncio.Event()
+
+    class Settings:
+        company_report_worker_heartbeat_interval_seconds = 0.001
+        company_report_worker_lease_seconds = 60
+
+    task = asyncio.create_task(
+        worker.heartbeat_supervisor(
+            claimed, Settings(), stop, ownership_lost, session_factory=_SessionFactory()
+        )
+    )
+    for _ in range(50):
+        if heartbeat.await_count:
+            break
+        await asyncio.sleep(0.002)
+    stop.set()
+    await task
+    assert heartbeat.await_count >= 1
+    assert heartbeat.await_args.kwargs["claimed"] == claimed

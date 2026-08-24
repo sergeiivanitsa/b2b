@@ -62,6 +62,7 @@ from product_api.routers.admin_claims import router as admin_claims_router
 from product_api.routers.invites import router as invites_router
 from product_api.routers.public_claims import router as public_claims_router
 from product_api.routers.company_reports import router as company_reports_router
+from product_api.routers.company_report_presentations import router as company_report_presentations_router
 from product_api.routers.company_reports_public import router as company_reports_public_router
 from shared.constants import MODEL_GPT_5_2
 from shared.schemas import ChatMessage, ChatMetadata, ChatRequest
@@ -87,6 +88,7 @@ app.include_router(admin_claims_router)
 app.include_router(invites_router)
 app.include_router(public_claims_router)
 app.include_router(company_reports_router)
+app.include_router(company_report_presentations_router)
 
 
 @app.middleware("http")

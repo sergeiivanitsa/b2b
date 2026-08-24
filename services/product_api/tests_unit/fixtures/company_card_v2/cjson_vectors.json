@@ -1,0 +1,21 @@
+{
+  "profile": "company_public_h2_cjson_v1",
+  "vectors": [
+    {
+      "name": "nfc_cyrillic_and_key_order",
+      "value": {"z": "é", "б": "ёж", "a": "значение"},
+      "canonical": "{\"a\":\"значение\",\"z\":\"é\",\"б\":\"ёж\"}"
+    },
+    {
+      "name": "controls_quotes_slash_backslash",
+      "value": {"text": "\"/\\\u0000\u000a\u001f"},
+      "canonical": "{\"text\":\"\\\"/\\\\\\u0000\\u000a\\u001f\"}"
+    },
+    {
+      "name": "script_safe_characters",
+      "value": {"text": "<>&  "},
+      "canonical": "{\"text\":\"<>&  \"}",
+      "script_safe": "{\"text\":\"\\u003C\\u003E\\u0026\\u2028\\u2029\"}"
+    }
+  ]
+}

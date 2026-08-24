@@ -4,10 +4,11 @@ import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 TESTS_UNIT = Path(__file__).resolve().parents[1] / "tests_unit"
@@ -30,6 +31,11 @@ from product_api.company_reports.persistence.models import (
 from product_api.company_reports.persistence.serialization import (
     calculate_company_report_snapshot_hash,
     company_report_to_snapshot,
+)
+from product_api.company_reports.persistence.public_h1 import get_publication_resolution_record
+from product_api.company_reports.persistence.repository import (
+    get_latest_report_by_identifier,
+    get_latest_run_status_by_identifier,
 )
 from product_api.company_reports.seo import canonical_path
 from product_api.db.session import get_session
@@ -244,3 +250,54 @@ async def test_sitemap_exact_select_ceiling_and_complete_zero_side_effect_matrix
         response = await client.get(path)
     assert response.status_code == expected_status, scenario
     assert_zero_side_effects(guarded, counters, expected_selects=expected_selects)
+
+
+@pytest.mark.parametrize("v3_status", ("pending", "failed", "complete"))
+async def test_actual_db_h1_order_and_public_terminal_ignore_v3_shadow(engine, v3_status: str) -> None:
+    """H2 rows may exist physically, but cannot shadow H1 reads or an H1 pin."""
+    inn, _ = await _seed_public_h1(engine, publication=True)
+    now = datetime(2026, 8, 20, 10, 0, tzinfo=timezone.utc)
+    # UUID ordering is part of the public H1 contract; use the maximum value
+    # and deliberately give it an earlier created_at.
+    highest_h1_id = UUID("ffffffff-ffff-ffff-ffff-ffffffffffff")
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        subject = await session.scalar(select(CompanyReportSubject).where(CompanyReportSubject.normalized_identifier == inn))
+        assert subject is not None
+        report = complete_company_report(
+            counterparty=counterparty_facts().model_copy(update={"inn": inn, "full_name": "ООО Порядок", "short_name": "ООО Порядок"}),
+        ).model_copy(update={"report_id": highest_h1_id, "target_identifier": inn, "generated_at": now})
+        snapshot = company_report_to_snapshot(report)
+        high_h1 = CompanyReportRecord(
+            id=highest_h1_id, subject_id=subject.id, report_version="2", lifecycle_status="complete",
+            started_at=now, generated_at=now, finished_at=now, created_at=now.replace(year=2025),
+            normalized_snapshot=snapshot, snapshot_hash=calculate_company_report_snapshot_hash(snapshot),
+            completeness_snapshot={}, freshness_snapshot={}, warnings_snapshot=[],
+            usable_for_public_page=True, usable_for_future_scoring=False,
+        )
+        v3 = CompanyReportRecord(
+            id=uuid4(), subject_id=subject.id, report_version="3", lifecycle_status=v3_status,
+            writer_profile="company_card_v2_writer_v3", presentation_contract="company_public_h2_v1",
+            rollout_generation=1, started_at=now.replace(year=2027),
+            generated_at=now.replace(year=2027) if v3_status == "complete" else None,
+            finished_at=now.replace(year=2027) if v3_status in {"failed", "complete"} else None,
+            normalized_snapshot={"report_version": "3"} if v3_status == "complete" else None,
+            snapshot_hash="a" * 64 if v3_status == "complete" else None,
+            completeness_snapshot={} if v3_status == "complete" else None,
+            freshness_snapshot={} if v3_status == "complete" else None,
+            safe_error_snapshot={"code": "test"} if v3_status == "failed" else None, warnings_snapshot=[],
+            usable_for_public_page=False, usable_for_future_scoring=False,
+        )
+        session.add_all((high_h1, v3)); await session.flush()
+        publication = await session.scalar(select(CompanyReportPublication).where(CompanyReportPublication.subject_id == subject.id))
+        assert publication is not None
+        # This represents corrupt historical linkage.  The public-H1 query
+        # must expose it as terminal rather than treating v3 as a H1 report.
+        publication.report_id = v3.id
+        await session.commit()
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        latest = await get_latest_report_by_identifier(session, inn)
+        status = await get_latest_run_status_by_identifier(session, inn)
+        pinned = await get_publication_resolution_record(session, inn)
+    assert latest is not None and latest.report_id == highest_h1_id
+    assert status is not None and status.report_id == highest_h1_id
+    assert pinned is not None and pinned.report is None

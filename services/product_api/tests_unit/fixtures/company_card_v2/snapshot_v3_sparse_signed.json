@@ -1,0 +1,17 @@
+{
+  "report_version": "3",
+  "writer_profile": "company_card_v2_writer_v3",
+  "presentation_contract": "company_public_h2_v1",
+  "rollout_config_generation": 1,
+  "report_id": "00000000-0000-4000-8000-000000000002",
+  "subject_inn": "7701234567",
+  "target_inn": "7701234567",
+  "generated_at": "2026-08-24T12:00:00Z",
+  "counterparty": {"inn": "7701234567", "full_name": "Тестовое общество"},
+  "finance_basis": {"unit_policy": "datanewton_finance_thousand_rub_v2", "cells": [{"form": "fixture", "code": "1300", "year": 2025, "state": "available_nonzero", "value": "-10"}, {"form": "fixture", "code": "1500", "year": 2025, "state": "missing", "value": null}]},
+  "arbitration_basis": {"completion_reasons": ["envelope_gate_closed"], "collection_complete": false, "calendar_complete": false, "calendar_scope": "unverified", "unknown_year_count": 0, "zero_years_proven": false, "cases": []},
+  "chart_facts": {"version": "company_card_chart_facts_v1", "unit_policy": "datanewton_finance_thousand_rub_v2", "facts": [{"key": "fixture:1300:2025", "value": "-10", "geometry": "-10", "limitation_codes": []}, {"key": "fixture:1500:2025", "value": null, "geometry": null, "limitation_codes": ["finance_missing"]}], "hash": "f3d3a3c1c12c65392876dd26df2ff62d91181b9e4f4d5acd71b60c9d6e366d18"},
+  "evidence_version": "evidence_v1",
+  "privacy_version": "privacy_v1",
+  "limitations": [{"code": "finance_missing", "field": "finance.fixture.1500.2025"}]
+}

@@ -271,6 +271,10 @@ class DataNewtonResult(BaseModel):
     request_id: str | None = None
     received_at: datetime
     raw_payload: dict[str, Any] = Field(repr=False)
+    # Ephemeral only: exact response-number lexemes for the v3 finance path.
+    # Repository/journal code intentionally never serializes this manifest.
+    lexical_number_lexemes: dict[str, str] = Field(default_factory=dict, repr=False, exclude=True)
+    lexical_transport_valid: bool = Field(default=False, repr=False, exclude=True)
     response_hash: str
     provider_limit_metadata: dict[str, Any] | None = None
     warnings: list[str] = Field(default_factory=list)

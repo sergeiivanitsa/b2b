@@ -8,6 +8,8 @@ from product_api.company_reports.persistence import (
     get_latest_run_status_by_identifier,
     get_or_create_subject,
 )
+from product_api.company_reports.persistence.models import CompanyReportSubject
+from product_api.company_reports.persistence.repository import lock_or_create_subject_for_update
 
 
 @pytest.mark.asyncio
@@ -58,3 +60,25 @@ async def test_get_or_create_subject_returns_existing_record():
 
     assert first.id == second.id
     assert first.identifier_type == "ogrn"
+
+
+@pytest.mark.asyncio
+async def test_lock_or_create_subject_for_update_two_subjects_has_no_cartesian_join():
+    subject = CompanyReportSubject(normalized_identifier="0000000000", identifier_type="legal_entity_inn")
+
+    class Result:
+        def scalar_one_or_none(self):
+            return subject
+
+    class Session:
+        def __init__(self): self.statements = []
+        async def execute(self, statement):
+            self.statements.append(statement)
+            return Result()
+
+    session = Session()
+    resolved = await lock_or_create_subject_for_update(session, "0000000000")
+    select_sql = str(session.statements[-1])
+    assert resolved is subject
+    assert "company_report_subjects" in select_sql
+    assert "company_reports" not in select_sql

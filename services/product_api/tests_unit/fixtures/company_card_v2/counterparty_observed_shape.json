@@ -1,0 +1,19 @@
+{
+  "inn": "7701234567",
+  "ogrn": "1027700000000",
+  "company": {
+    "kpp": "770101001",
+    "company_names": {
+      "short_name": "ООО Синтетический контрагент",
+      "full_name": "Общество с ограниченной ответственностью Синтетический контрагент"
+    },
+    "registration_date": "2020-02-03",
+    "dissolved_date": null,
+    "address": {
+      "line_address": "000000, Синтетический регион, город Макетный, дом 1",
+      "is_inaccuracy": false
+    },
+    "managers": [{"fio": "Скрыто", "innfl": "000000000000"}],
+    "contacts": null
+  }
+}

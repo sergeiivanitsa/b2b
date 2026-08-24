@@ -19,6 +19,21 @@ from product_api.company_reports.persistence.models import (
 from product_api.company_reports.persistence import publications
 from product_api.company_reports.persistence.publications import PublicationBatchClaim, PublicationStateConflictError, _validated_publication_report
 from product_api.company_reports.persistence.serialization import calculate_company_report_snapshot_hash, company_report_to_snapshot
+from product_api.company_reports.persistence.public_h1 import list_report_resolution_records
+
+
+@pytest.mark.asyncio
+async def test_publication_equal_generated_at_uses_id_not_created_at():
+    class Result:
+        def all(self): return []
+    class Session:
+        def __init__(self): self.statement = None
+        async def execute(self, statement): self.statement = statement; return Result()
+    session = Session()
+    assert await list_report_resolution_records(session, "0000000000") == []
+    order_by = str(session.statement).split("ORDER BY", 1)[1]
+    assert "generated_at DESC NULLS LAST" in order_by and "company_reports.id DESC" in order_by
+    assert "created_at" not in order_by
 
 
 def test_publication_schema_has_five_separate_fail_closed_tables():

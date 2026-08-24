@@ -12,8 +12,6 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from product_api.company_reports.persistence.models import CompanyReportJob
-
 _DATABASE_PREFIX = "company_report_jobs_test_"
 _EXISTING_TABLES = {
     "company_report_subjects",
@@ -73,9 +71,10 @@ def test_company_report_jobs_upgrade_inspect_and_downgrade(monkeypatch):
             "ix_company_report_jobs_queued_claim",
             "ix_company_report_jobs_running_lease",
         } <= upgraded["indexes"]
-        assert set(upgraded["columns"]) == {
-            column.name for column in CompanyReportJob.__table__.columns
-        }
+        # This scenario intentionally stops at the historical 0013 revision.
+        # The current ORM additionally owns the 0016 immutable writer/fence
+        # columns; comparing its live table shape here would incorrectly make
+        # a historical migration assertion depend on a later revision.
 
         command.downgrade(config, "0012_company_report_persistence")
         downgraded = asyncio.run(_inspect_database(target_connection_url))

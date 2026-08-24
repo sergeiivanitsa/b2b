@@ -105,6 +105,44 @@ async def test_corrupt_active_pin_never_falls_back_to_history(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_public_h1_missing_exact_publication_report_is_terminal(monkeypatch):
+    pin = _pin()
+    pin.report = None
+    history_calls = 0
+
+    async def publication(*_args): return pin
+    async def history(*_args):
+        nonlocal history_calls
+        history_calls += 1
+        return []
+
+    monkeypatch.setattr("product_api.company_reports.public_h1_service.get_publication_resolution_record", publication)
+    monkeypatch.setattr("product_api.company_reports.public_h1_service.list_report_resolution_records", history)
+    with pytest.raises(PublicProjectionInvalidError):
+        await resolve_public_h1(object(), inn="0000000000")
+    assert history_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_public_h1_corrupt_exact_publication_report_is_terminal(monkeypatch):
+    pin = _pin()
+    pin.report.snapshot_hash = "0" * 64
+    history_calls = 0
+
+    async def publication(*_args): return pin
+    async def history(*_args):
+        nonlocal history_calls
+        history_calls += 1
+        return []
+
+    monkeypatch.setattr("product_api.company_reports.public_h1_service.get_publication_resolution_record", publication)
+    monkeypatch.setattr("product_api.company_reports.public_h1_service.list_report_resolution_records", history)
+    with pytest.raises(PublicProjectionInvalidError):
+        await resolve_public_h1(object(), inn="0000000000")
+    assert history_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_active_h1_read_never_invokes_policy_or_ephemeral_evaluators(monkeypatch):
     pin = _pin()
 
