@@ -61,6 +61,11 @@ TABLES = [
     "company_report_publication_batches",
     "company_report_publications",
     "company_report_publication_control",
+    "company_report_presentation_pins",
+    "company_report_presentations",
+    "company_report_presentation_assignment_journal",
+    "company_report_presentation_assignments",
+    "company_report_presentation_staged_pointers",
     "company_report_jobs",
     "company_report_provider_requests",
     "company_report_datasets",
@@ -85,6 +90,8 @@ SELF_MANAGED_DATABASE_TESTS = {
     "test_company_report_publications_upgrade_inspect_and_downgrade",
     "test_fresh_database_bootstrap_upgrade_current_idempotency_and_round_trip",
     "test_existing_varchar_32_preserves_revision_and_application_state",
+    "test_company_card_v2_clean_0015_upgrade_downgrade_reupgrade",
+    "test_company_card_v2_corrupt_h1_import_aborts_atomically",
 }
 
 

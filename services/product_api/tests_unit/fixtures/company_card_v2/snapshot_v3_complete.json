@@ -1,0 +1,17 @@
+{
+  "report_version": "3",
+  "writer_profile": "company_card_v2_writer_v3",
+  "presentation_contract": "company_public_h2_v1",
+  "rollout_config_generation": 1,
+  "report_id": "00000000-0000-4000-8000-000000000001",
+  "subject_inn": "7701234567",
+  "target_inn": "7701234567",
+  "generated_at": "2026-08-24T12:00:00Z",
+  "counterparty": {"inn": "7701234567", "short_name": "Тест", "full_name": "Тестовое общество", "address": "г. Москва", "address_inaccuracy": false},
+  "finance_basis": {"unit_policy": "datanewton_finance_thousand_rub_v2", "cells": []},
+  "arbitration_basis": {"completion_reasons": ["envelope_gate_closed"], "collection_complete": false, "calendar_complete": false, "calendar_scope": "unverified", "unknown_year_count": 0, "zero_years_proven": false, "cases": []},
+  "chart_facts": {"version": "company_card_chart_facts_v1", "unit_policy": "datanewton_finance_thousand_rub_v2", "facts": [], "hash": "63a81ed815b042ba1d1744468bb45bcf9b1bce7acfd718588c295fd958237836"},
+  "evidence_version": "evidence_v1",
+  "privacy_version": "privacy_v1",
+  "limitations": []
+}

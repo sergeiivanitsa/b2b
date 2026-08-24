@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
@@ -44,6 +45,7 @@ from .models import (
     calculate_response_hash,
 )
 from .transport import DataNewtonTransport, QueryParameter
+from product_api.company_reports.company_card_v2.decimal_transport import json_pointer_escape
 
 logger = logging.getLogger(__name__)
 RequestT = TypeVar("RequestT", bound=SingleIdentifierRequest)
@@ -387,7 +389,7 @@ class DataNewtonClient:
             request_id=request_id,
             identifier_type=identifier_type,
         )
-        raw_payload = self._parse_payload(
+        raw_payload, lexical_number_lexemes, lexical_transport_valid = self._parse_payload(
             response,
             dataset=dataset,
             endpoint=endpoint,
@@ -408,6 +410,8 @@ class DataNewtonClient:
             request_id=request_id,
             received_at=datetime.now(timezone.utc),
             raw_payload=raw_payload,
+            lexical_number_lexemes=lexical_number_lexemes,
+            lexical_transport_valid=lexical_transport_valid,
             response_hash=response_hash,
             provider_limit_metadata=_extract_provider_limit_metadata(
                 raw_payload, response.headers
@@ -553,7 +557,7 @@ class DataNewtonClient:
         endpoint: str,
         attempts: int,
         request_id: str | None,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], dict[str, str], bool]:
         context = {
             "dataset": dataset,
             "endpoint": endpoint,
@@ -572,7 +576,57 @@ class DataNewtonClient:
             raise DataNewtonInvalidResponseError(
                 "DataNewton response root must be an object", **context
             )
-        return payload
+        try:
+            manifest = _parse_number_lexeme_manifest(response.content, payload)
+        except (TypeError, ValueError, UnicodeDecodeError):
+            # The legacy H1 result remains usable. V3 has an explicit
+            # transport gate and cannot consume a failed manifest.
+            return payload, {}, False
+        return payload, manifest, True
+
+
+class _NumberLexeme(str):
+    pass
+
+
+def _parse_number_lexeme_manifest(content: bytes, decoded: dict[str, Any]) -> dict[str, str]:
+    """Map JSON pointers to exact number tokens without altering legacy decode."""
+    text = content.decode("utf-8")
+    def pairs(values: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in values:
+            if key in result:
+                raise ValueError("duplicate JSON key")
+            result[key] = value
+        return result
+    def constant(_: str) -> None:
+        raise ValueError("nonfinite JSON constant")
+    lexical = json.loads(text, parse_int=_NumberLexeme, parse_float=_NumberLexeme, parse_constant=constant, object_pairs_hook=pairs)
+    manifest: dict[str, str] = {}
+    _collect_and_verify_lexemes(lexical, decoded, "", manifest)
+    return manifest
+
+
+def _collect_and_verify_lexemes(lexical: object, decoded: object, pointer: str, manifest: dict[str, str]) -> None:
+    if isinstance(lexical, _NumberLexeme):
+        if isinstance(decoded, bool) or not isinstance(decoded, (int, float)):
+            raise ValueError("numeric topology mismatch")
+        manifest[pointer] = str(lexical)
+        return
+    if isinstance(lexical, dict):
+        if not isinstance(decoded, dict) or tuple(lexical) != tuple(decoded):
+            raise ValueError("object topology mismatch")
+        for key, value in lexical.items():
+            _collect_and_verify_lexemes(value, decoded[key], f"{pointer}/{json_pointer_escape(key)}", manifest)
+        return
+    if isinstance(lexical, list):
+        if not isinstance(decoded, list) or len(lexical) != len(decoded):
+            raise ValueError("array topology mismatch")
+        for index, value in enumerate(lexical):
+            _collect_and_verify_lexemes(value, decoded[index], f"{pointer}/{index}", manifest)
+        return
+    if type(lexical) is not type(decoded) or lexical != decoded:
+        raise ValueError("scalar topology mismatch")
 
 
 def _extract_provider_limit_metadata(

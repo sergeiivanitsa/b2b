@@ -20,6 +20,7 @@ from product_api.company_reports.persistence.models import (
     CompanyReportRecord,
     CompanyReportSubject,
 )
+from .presentations import append_presentation_pin
 from product_api.company_reports.persistence.serialization import (
     calculate_company_report_snapshot_hash,
     company_report_from_snapshot,
@@ -75,6 +76,9 @@ def _validated_publication_report(
         or subject.id != report.subject_id
         or report.lifecycle_status not in {"complete", "partial"}
         or report.report_version not in {"1", "2"}
+        or getattr(report, "writer_profile", "h1_legacy_writer_v2") not in {None, "h1_legacy_writer_v2"}
+        or getattr(report, "presentation_contract", "company_public_h1_v1") not in {None, "company_public_h1_v1"}
+        or getattr(report, "rollout_generation", 0) not in {None, 0}
         or report.generated_at is None
         or not subject.normalized_identifier.isascii()
         or not subject.normalized_identifier.isdigit()
@@ -147,7 +151,11 @@ async def create_batch(session: AsyncSession, *, limit: int, max_limit: int) -> 
             CompanyReportRecord.lifecycle_status.in_(("complete", "partial")),
             CompanyReportRecord.normalized_snapshot.is_not(None),
             CompanyReportRecord.snapshot_hash.is_not(None),
-        ).order_by(CompanyReportRecord.created_at.desc(), CompanyReportRecord.id.desc())
+            CompanyReportRecord.writer_profile == "h1_legacy_writer_v2",
+            CompanyReportRecord.presentation_contract == "company_public_h1_v1",
+            CompanyReportRecord.report_version.in_(("1", "2")),
+            CompanyReportRecord.rollout_generation == 0,
+        ).order_by(CompanyReportRecord.generated_at.desc().nullslast(), CompanyReportRecord.id.desc())
     )).scalars().all()
     latest_by_subject: dict[UUID, CompanyReportRecord] = {}
     for record in records:
@@ -161,7 +169,7 @@ async def create_batch(session: AsyncSession, *, limit: int, max_limit: int) -> 
         ).limit(1))
         if terminal is None:
             candidates.append(record)
-    candidates.sort(key=lambda record: (record.created_at, record.id))
+    candidates.sort(key=lambda record: (record.generated_at is not None, record.generated_at, record.id), reverse=True)
     candidates = candidates[:limit]
     batch = CompanyReportPublicationBatch(
         state="running" if candidates else "completed", requested_limit=limit,
@@ -351,21 +359,37 @@ async def finalize_batch_claim(
         report_model = _validated_publication_report(batch=batch, item=item, report=report, subject=subject)
         decision = evaluate_publication(report_model)
         if decision.indexable and decision.projection:
-            path = canonical_path(decision.projection.inn, decision.projection.name)
-            lastmod = _utc(report.generated_at)
-            slug = path[len(f"/company/{decision.projection.inn}-"):]
-            _, applied = await _upsert_publication(
-                session,
-                subject_id=report.subject_id,
-                report_id=report.id,
-                canonical_slug=slug,
-                canonical_path_value=path,
-                snapshot_hash=report.snapshot_hash,
-                policy_version=item.policy_version,
-                batch_generation=batch.generation,
-                sufficiency_status=decision.sufficiency_status,
-                published_lastmod=lastmod,
-            )
+            # A pin conflict must roll back the preceding upsert.  Keep both
+            # writes under this outer savepoint; the upsert's own savepoint is
+            # only for its conflict-resolution protocol.
+            async with session.begin_nested():
+                path = canonical_path(decision.projection.inn, decision.projection.name)
+                lastmod = _utc(report.generated_at)
+                slug = path[len(f"/company/{decision.projection.inn}-"):]
+                _, applied = await _upsert_publication(
+                    session,
+                    subject_id=report.subject_id,
+                    report_id=report.id,
+                    canonical_slug=slug,
+                    canonical_path_value=path,
+                    snapshot_hash=report.snapshot_hash,
+                    policy_version=item.policy_version,
+                    batch_generation=batch.generation,
+                    sufficiency_status=decision.sufficiency_status,
+                    published_lastmod=lastmod,
+                )
+                if applied:
+                    await append_presentation_pin(
+                        session,
+                        subject_id=report.subject_id,
+                        report=report,
+                        contract="company_public_h1_v1",
+                        generation=batch.generation,
+                        publication_policy_version=item.policy_version,
+                        canonical_path=path,
+                        published_lastmod=lastmod,
+                        indexable=True,
+                    )
             terminal, reason = (("published", "sufficient") if applied else ("skipped", "superseded_by_newer_batch"))
         else:
             terminal, reason = "skipped", decision.sufficiency_status

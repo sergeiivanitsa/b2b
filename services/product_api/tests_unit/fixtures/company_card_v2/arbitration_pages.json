@@ -1,0 +1,35 @@
+{
+  "registry": {
+    "arbitration_total_path": "verified",
+    "arbitration_total_type": "verified",
+    "total_scope": "verified",
+    "data_path": "verified",
+    "offset_path": "verified",
+    "limit_path": "verified",
+    "shape_version": "verified"
+  },
+  "pages": [
+    {
+      "total_cases": 2,
+      "offset": 0,
+      "limit": 100,
+      "data": [
+        {
+          "case_id": "fixture-case-a",
+          "first_number": "А00-1/2026",
+          "respondents": [{"inn": "7701234567"}],
+          "date_start": "2026-01-01",
+          "date_update": "2026-01-03",
+          "year": 2026,
+          "sum": "12.50"
+        },
+        {
+          "id": "fixture-case-b",
+          "plaintiffs": [{"inn": "7701234567"}],
+          "year": 2025,
+          "sum": "0"
+        }
+      ]
+    }
+  ]
+}

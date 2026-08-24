@@ -10,6 +10,20 @@ from product_api.claims.company_report_handoff import (
     HandoffResolution,
     resolve_company_report_handoff,
 )
+from product_api.company_reports.company_card_v2.models import (
+    ArbitrationBasisV1,
+    CompanyCardCounterpartyCoreV1,
+    CompanyCardV2Snapshot,
+    FinanceBasisV1,
+)
+from product_api.company_reports.company_card_v2.finance import build_chart_facts
+from product_api.company_reports.persistence.v3 import (
+    calculate_company_card_v2_snapshot_hash,
+    company_card_v2_from_snapshot,
+    company_card_v2_to_snapshot,
+)
+from product_api.company_reports.company_card_v2.arbitration import collect_fixture_arbitration_pages
+from product_api.company_reports.company_card_v2.evidence import EvidenceGate
 from product_api.claims.extraction import build_empty_normalized_data
 from product_api.claims.repository import apply_claim_extraction_result
 from product_api.models import Claim, User
@@ -65,6 +79,86 @@ async def test_resolver_rejects_pending_before_snapshot_access():
     session = SimpleNamespace(execute=lambda _statement: _async(Result()))
     result = await resolve_company_report_handoff(session, uuid4())
     assert result.reason == "report_pending"
+
+
+def _v3_card(report_id):
+    return CompanyCardV2Snapshot(
+        report_id=str(report_id),
+        rollout_config_generation=1,
+        subject_inn="7700000000",
+        target_inn="7700000000",
+        generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        counterparty=CompanyCardCounterpartyCoreV1(
+            inn="7700000000", short_name="ООО Вектор", full_name="ООО Вектор"
+        ),
+        finance_basis=FinanceBasisV1(),
+        arbitration_basis=ArbitrationBasisV1(),
+        chart_facts=build_chart_facts(FinanceBasisV1()),
+        evidence_version="evidence_v1",
+        privacy_version="privacy_v1",
+    )
+
+
+def _verified_arbitration_registry() -> dict[str, object]:
+    return {
+        name: EvidenceGate(name=name, state="verified", reason="fixture_only")
+        for name in (
+            "arbitration_total_path", "arbitration_total_type", "total_scope",
+            "data_path", "offset_path", "limit_path", "shape_version",
+        )
+    }
+
+
+def test_v3_snapshot_roundtrips_private_arbitration_collection_metadata_and_hash() -> None:
+    report_id = uuid4()
+    collection = collect_fixture_arbitration_pages(
+        [{"total_cases": 1, "offset": 0, "limit": 100, "data": [
+            {"case_id": "private-case", "respondents": [{"inn": "7700000000"}], "year": 2025},
+        ]}], registry=_verified_arbitration_registry(), secret=b"a" * 32,
+        key_id="key_1", target_inn="7700000000", report_id=report_id,
+    )
+    card = _v3_card(report_id).model_copy(update={"arbitration_basis": collection.basis})
+
+    snapshot = company_card_v2_to_snapshot(card)
+    restored = company_card_v2_from_snapshot(snapshot)
+
+    assert restored.arbitration_basis == collection.basis
+    assert calculate_company_card_v2_snapshot_hash(restored) == calculate_company_card_v2_snapshot_hash(card)
+    persisted = str(snapshot)
+    for forbidden in ("raw_payload", "raw_headers", "https://"):
+        assert forbidden not in persisted
+
+
+@pytest.mark.asyncio
+async def test_v3_handoff_requires_exact_record_tuple_and_exposes_identity_only():
+    report_id = uuid4()
+    card = _v3_card(report_id)
+    record = SimpleNamespace(
+        id=report_id,
+        report_version="3",
+        writer_profile="company_card_v2_writer_v3",
+        presentation_contract="company_public_h2_v1",
+        rollout_generation=1,
+        lifecycle_status="complete",
+        normalized_snapshot=card.model_dump(mode="json"),
+        snapshot_hash=calculate_company_card_v2_snapshot_hash(card),
+    )
+    subject = SimpleNamespace(normalized_identifier="7700000000")
+
+    class Result:
+        def one_or_none(self):
+            return record, subject
+
+    session = SimpleNamespace(execute=lambda _statement: _async(Result()))
+    result = await resolve_company_report_handoff(session, report_id)
+
+    assert result.available
+    assert result.handoff is not None
+    assert result.handoff.debtor_fields() == {"debtor_name": "ООО Вектор", "debtor_inn": "7700000000"}
+
+    record.rollout_generation = 0
+    rejected = await resolve_company_report_handoff(session, report_id)
+    assert rejected.reason == "invalid_report"
 
 
 @pytest.mark.asyncio

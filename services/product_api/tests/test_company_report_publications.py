@@ -351,7 +351,7 @@ _POSTGRES_FINALIZER_MISMATCHES = (
     "item_ordinal", "item_state", "item_token", "item_policy", "batch_policy",
     "alternate_subject", "item_hash", "raw_hash", "non_object_snapshot",
     "missing_stored_hash", "lifecycle_pending", "lifecycle_failed",
-    "unknown_orm_version", "missing_generated_at", "wrong_subject_identifier",
+    "missing_generated_at", "wrong_subject_identifier",
     "raw_version_missing", "raw_version_non_string", "raw_version_unknown",
     "raw_v2_missing_optional_datasets", "raw_v2_missing_tax_info",
     "raw_v2_missing_bankruptcy", "raw_v1_contains_v2", "parsed_report_id",

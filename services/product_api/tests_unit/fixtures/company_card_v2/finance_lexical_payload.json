@@ -1,0 +1,4 @@
+{
+  "purpose": "sanitized lexical transport fixture",
+  "values": ["273325.0", "-12.3400", "0", "1e2", "+1", "01", " 1", "1,0"]
+}

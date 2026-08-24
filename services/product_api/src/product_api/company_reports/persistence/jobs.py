@@ -10,6 +10,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from product_api.company_reports.aggregate import CompanyReport, CURRENT_COMPANY_REPORT_VERSION
+from product_api.company_reports.company_card_v2.models import CompanyCardV2Snapshot
 from product_api.company_reports.ephemeral_evaluation import (
     evaluate_report_ephemerally,
 )
@@ -37,6 +38,7 @@ from .models import (
     CompanyReportSubject,
 )
 from .repository import (
+    finalize_company_card_v2_report,
     finalize_report,
     lock_or_create_subject_for_update,
 )
@@ -44,6 +46,10 @@ from .repository import (
 REPORT_EXECUTION_FAILED_CODE = "report_execution_failed"
 REPORT_EXECUTION_INTERRUPTED_CODE = "report_execution_interrupted"
 REPORT_JOB_PRECONDITION_FAILED_CODE = "report_job_precondition_failed"
+H1_WRITER_PROFILE = "h1_legacy_writer_v2"
+H1_PRESENTATION_CONTRACT = "company_public_h1_v1"
+H2_WRITER_PROFILE = "company_card_v2_writer_v3"
+H2_PRESENTATION_CONTRACT = "company_public_h2_v1"
 
 _SAFE_FAILURE_MESSAGES = {
     REPORT_EXECUTION_FAILED_CODE: "company report execution failed",
@@ -62,6 +68,20 @@ class EnqueuedReportJob:
 
 
 @dataclass(frozen=True)
+class WriterDecision:
+    writer_profile: str = H1_WRITER_PROFILE
+    report_version: str = CURRENT_COMPANY_REPORT_VERSION
+    presentation_contract: str = H1_PRESENTATION_CONTRACT
+    rollout_generation: int = 0
+
+    def __post_init__(self) -> None:
+        h1 = (self.writer_profile, self.report_version, self.presentation_contract, self.rollout_generation) == (H1_WRITER_PROFILE, CURRENT_COMPANY_REPORT_VERSION, H1_PRESENTATION_CONTRACT, 0)
+        h2 = self.writer_profile == H2_WRITER_PROFILE and self.report_version == "3" and self.presentation_contract == H2_PRESENTATION_CONTRACT and self.rollout_generation > 0
+        if not (h1 or h2):
+            raise ValueError("writer decision is invalid")
+
+
+@dataclass(frozen=True)
 class ClaimedReportJob:
     job_id: UUID
     report_id: UUID
@@ -70,6 +90,11 @@ class ClaimedReportJob:
     worker_token: UUID
     claimed_at: datetime
     lease_expires_at: datetime
+    writer_profile: str = H1_WRITER_PROFILE
+    report_version: str = CURRENT_COMPANY_REPORT_VERSION
+    presentation_contract: str = H1_PRESENTATION_CONTRACT
+    rollout_generation: int = 0
+    fence_generation: int = 0
 
 
 @dataclass(frozen=True)
@@ -104,6 +129,7 @@ async def enqueue_company_report_job(
     *,
     report_id_factory: Callable[[], UUID] = uuid4,
     job_id_factory: Callable[[], UUID] = uuid4,
+    decision: WriterDecision = WriterDecision(),
 ) -> EnqueuedReportJob:
     """Create a pending report and queued job, or return the matching active pair.
 
@@ -137,6 +163,8 @@ async def enqueue_company_report_job(
             raise CompanyReportJobStateConflictError(
                 "active job does not have a matching pending report"
             )
+        if not _job_matches_decision(job, report, decision):
+            raise CompanyReportJobStateConflictError("report writer profile conflict")
         return EnqueuedReportJob(
             report_id=report.id,
             job_id=job.id,
@@ -167,7 +195,10 @@ async def enqueue_company_report_job(
     report = CompanyReportRecord(
         id=report_id,
         subject_id=subject.id,
-        report_version=CURRENT_COMPANY_REPORT_VERSION,
+        report_version=decision.report_version,
+        writer_profile=decision.writer_profile,
+        presentation_contract=decision.presentation_contract,
+        rollout_generation=decision.rollout_generation,
         lifecycle_status=REPORT_PENDING_STATUS,
         request_id=f"company-report:{report_id}",
         started_at=db_time,
@@ -180,6 +211,10 @@ async def enqueue_company_report_job(
         report_id=report_id,
         subject_id=subject.id,
         state=JOB_QUEUED_STATE,
+        writer_profile=decision.writer_profile,
+        presentation_contract=decision.presentation_contract,
+        rollout_generation=decision.rollout_generation,
+        fence_generation=0,
         attempt_count=0,
     )
     session.add(report)
@@ -221,7 +256,7 @@ async def claim_next_job(
         or subject is None
         or report.subject_id != job.subject_id
         or report.lifecycle_status != REPORT_PENDING_STATUS
-        or report.report_version != CURRENT_COMPANY_REPORT_VERSION
+        or not _valid_stored_job_decision(job, report)
     ):
         await _fail_queued_precondition(
             session,
@@ -231,9 +266,18 @@ async def claim_next_job(
         )
         return None
 
+    if job.attempt_count != 0 or (job.fence_generation or 0) != 0:
+        # Iteration 20 has one claim only.  A mutated/replayed queued row is
+        # terminally invalid rather than a reclaim opportunity.
+        await _fail_queued_precondition(session, job=job, report=report, finished_at=db_time)
+        return None
+
     worker_token = token_factory()
     job.state = JOB_RUNNING_STATE
     job.worker_token = worker_token
+    # This is a one-claim lifecycle, not a reclaim counter. A queued job is
+    # exactly fence 0; its sole successful claim atomically sets fence 1.
+    job.fence_generation = 1
     job.attempt_count = 1
     job.claimed_at = db_time
     job.heartbeat_at = db_time
@@ -248,6 +292,11 @@ async def claim_next_job(
         worker_token=worker_token,
         claimed_at=db_time,
         lease_expires_at=job.lease_expires_at,
+        writer_profile=job.writer_profile or H1_WRITER_PROFILE,
+        report_version=report.report_version,
+        presentation_contract=job.presentation_contract or H1_PRESENTATION_CONTRACT,
+        rollout_generation=0 if job.rollout_generation is None else job.rollout_generation,
+        fence_generation=0 if job.fence_generation is None else job.fence_generation,
     )
 
 
@@ -257,6 +306,7 @@ async def heartbeat_job(
     job_id: UUID,
     worker_token: UUID,
     lease_seconds: int,
+    claimed: ClaimedReportJob | None = None,
 ) -> datetime:
     """Extend a live lease from a fresh DB wall clock read after the job lock."""
 
@@ -265,6 +315,20 @@ async def heartbeat_job(
     if job is None:
         raise CompanyReportJobNotFoundError("company report job was not found")
     db_time = await database_wall_clock(session)
+    if claimed is not None:
+        _assert_claim_matches(job, claimed)
+        report = await _lock_report(session, claimed.report_id)
+        if report is None or not _job_matches_decision(
+            job,
+            report,
+            WriterDecision(
+                writer_profile=claimed.writer_profile,
+                report_version=claimed.report_version,
+                presentation_contract=claimed.presentation_contract,
+                rollout_generation=claimed.rollout_generation,
+            ),
+        ):
+            raise CompanyReportJobStateConflictError("company report job decision does not match the claim")
     _assert_live_owner(job, worker_token=worker_token, db_time=db_time)
     job.heartbeat_at = db_time
     job.lease_expires_at = db_time + timedelta(seconds=lease_seconds)
@@ -291,6 +355,14 @@ async def complete_claimed_job(
     _assert_live_owner(job, worker_token=claimed.worker_token, db_time=db_time)
     if stored_report is None:
         raise CompanyReportJobStateConflictError("company report was not found")
+    if (
+        claimed.writer_profile != H1_WRITER_PROFILE
+        or claimed.presentation_contract != H1_PRESENTATION_CONTRACT
+        or claimed.report_version not in {"1", "2"}
+        or claimed.rollout_generation != 0
+        or not _valid_stored_job_decision(job, stored_report)
+    ):
+        raise CompanyReportJobStateConflictError("H1 completion decision does not match the claim")
     if (
         stored_report.id != report.report_id
         or stored_report.subject_id != claimed.subject_id
@@ -326,6 +398,30 @@ async def complete_claimed_job(
     )
 
 
+async def complete_claimed_company_card_v2_job(
+    session: AsyncSession,
+    *,
+    claimed: ClaimedReportJob,
+    snapshot: CompanyCardV2Snapshot,
+) -> CompletedReportJob:
+    """Finalize an injected v3 artifact without provider/signals/scoring."""
+    job = await _lock_job(session, claimed.job_id)
+    record = await _lock_report(session, claimed.report_id)
+    db_time = await database_wall_clock(session)
+    if job is None or record is None:
+        raise CompanyReportJobNotFoundError("company card v2 job was not found")
+    _assert_claim_matches(job, claimed)
+    _assert_live_owner(job, worker_token=claimed.worker_token, db_time=db_time)
+    if claimed.writer_profile != H2_WRITER_PROFILE or not _valid_stored_job_decision(job, record):
+        raise CompanyReportJobStateConflictError("company card v2 writer decision does not match")
+    finalized = await finalize_company_card_v2_report(
+        session, snapshot, report_id=claimed.report_id, subject_id=claimed.subject_id, finished_at=db_time
+    )
+    job.state, job.finished_at, job.safe_failure_code, job.updated_at = JOB_SUCCEEDED_STATE, db_time, None, db_time
+    await session.flush()
+    return CompletedReportJob(report_id=finalized.id, lifecycle_status=finalized.lifecycle_status, signals=None, scoring=None)
+
+
 async def fail_owned_job(
     session: AsyncSession,
     *,
@@ -340,6 +436,8 @@ async def fail_owned_job(
     db_time = await database_wall_clock(session)
     _assert_claim_matches(job, claimed)
     _assert_live_owner(job, worker_token=claimed.worker_token, db_time=db_time)
+    if report is not None and not _valid_stored_job_decision(job, report):
+        raise CompanyReportJobStateConflictError("company report job decision does not match the claim")
     if (
         report is None
         or report.subject_id != claimed.subject_id
@@ -385,6 +483,10 @@ async def reconcile_expired_jobs(
             report is None
             or report.subject_id != job.subject_id
             or report.lifecycle_status != REPORT_PENDING_STATUS
+            or not _has_immutable_job_binding(job, report)
+            or job.attempt_count != 1
+            or (job.fence_generation or 0) != 1
+            or job.worker_token is None
         ):
             raise CompanyReportJobStateConflictError(
                 "expired job does not match a pending report"
@@ -419,9 +521,15 @@ async def get_latest_finalized_report_record(
         .where(
             CompanyReportSubject.normalized_identifier == normalized,
             CompanyReportRecord.lifecycle_status.in_(REPORT_FINAL_STATUSES),
+            # Legacy public/status callers are H1-only.  In particular, do not
+            # let a newer v3/H2 artifact hide an eligible v1/v2 report.
+            CompanyReportRecord.writer_profile == H1_WRITER_PROFILE,
+            CompanyReportRecord.presentation_contract == H1_PRESENTATION_CONTRACT,
+            CompanyReportRecord.report_version.in_(("1", "2")),
+            CompanyReportRecord.rollout_generation == 0,
         )
         .order_by(
-            desc(CompanyReportRecord.created_at),
+            CompanyReportRecord.generated_at.desc().nullslast(),
             desc(CompanyReportRecord.id),
         )
         .limit(1)
@@ -559,6 +667,11 @@ def _assert_claim_matches(
         job.id != claimed.job_id
         or job.report_id != claimed.report_id
         or job.subject_id != claimed.subject_id
+        or job.worker_token != claimed.worker_token
+        or (job.writer_profile or H1_WRITER_PROFILE) != claimed.writer_profile
+        or (job.presentation_contract or H1_PRESENTATION_CONTRACT) != claimed.presentation_contract
+        or (0 if job.rollout_generation is None else job.rollout_generation) != claimed.rollout_generation
+        or (0 if job.fence_generation is None else job.fence_generation) != claimed.fence_generation
     ):
         raise CompanyReportJobStateConflictError(
             "company report job does not match the claim"
@@ -574,6 +687,8 @@ def _assert_live_owner(
     if (
         job.state != JOB_RUNNING_STATE
         or job.worker_token != worker_token
+        or job.attempt_count != 1
+        or (job.fence_generation or 0) != 1
         or job.lease_expires_at is None
         or _as_utc(job.lease_expires_at) <= db_time
     ):
@@ -596,9 +711,71 @@ def _normalize_inn(
     return normalized, identifier_type
 
 
+def _job_matches_decision(
+    job: CompanyReportJob,
+    report: CompanyReportRecord,
+    decision: WriterDecision,
+) -> bool:
+    # SQLAlchemy column defaults are applied on flush, while existing unit
+    # callers construct legacy model objects in memory. Treat only absent
+    # in-memory metadata as the immutable H1 default; persisted v3 never
+    # receives this compatibility normalization.
+    job_profile = job.writer_profile or H1_WRITER_PROFILE
+    record_profile = report.writer_profile or H1_WRITER_PROFILE
+    job_contract = job.presentation_contract or H1_PRESENTATION_CONTRACT
+    record_contract = report.presentation_contract or H1_PRESENTATION_CONTRACT
+    job_generation = 0 if job.rollout_generation is None else job.rollout_generation
+    record_generation = 0 if report.rollout_generation is None else report.rollout_generation
+    return (
+        job_profile == record_profile == decision.writer_profile
+        and job_contract == record_contract == decision.presentation_contract
+        and job_generation == record_generation == decision.rollout_generation
+        and report.report_version == decision.report_version
+    )
+
+
 def _validate_safe_failure_code(value: str) -> None:
     if value not in _SAFE_FAILURE_MESSAGES:
         raise ValueError("safe failure code is not allowed")
+
+
+def _valid_stored_job_decision(job: CompanyReportJob, report: CompanyReportRecord) -> bool:
+    try:
+        decision = WriterDecision(
+            writer_profile=job.writer_profile or H1_WRITER_PROFILE,
+            report_version=report.report_version,
+            presentation_contract=job.presentation_contract or H1_PRESENTATION_CONTRACT,
+            rollout_generation=0 if job.rollout_generation is None else job.rollout_generation,
+        )
+    except ValueError:
+        return False
+    return _job_matches_decision(job, report, decision)
+
+
+def _has_immutable_job_binding(job: CompanyReportJob, report: CompanyReportRecord) -> bool:
+    """Validate a stored tuple before terminal reconciliation.
+
+    An old H1/v1 pending row is not eligible for a new writer claim, but an
+    already-owned, expired row must still be terminally failed rather than
+    left running forever.  This deliberately does not broaden `WriterDecision`
+    or the enqueue/claim path.
+    """
+    job_profile = job.writer_profile or H1_WRITER_PROFILE
+    report_profile = report.writer_profile or H1_WRITER_PROFILE
+    job_contract = job.presentation_contract or H1_PRESENTATION_CONTRACT
+    report_contract = report.presentation_contract or H1_PRESENTATION_CONTRACT
+    job_generation = 0 if job.rollout_generation is None else job.rollout_generation
+    report_generation = 0 if report.rollout_generation is None else report.rollout_generation
+    return (
+        job.subject_id == report.subject_id
+        and job_profile == report_profile
+        and job_contract == report_contract
+        and job_generation == report_generation
+        and (
+            (job_profile == H1_WRITER_PROFILE and job_contract == H1_PRESENTATION_CONTRACT and job_generation == 0 and report.report_version in {"1", "2"})
+            or (job_profile == H2_WRITER_PROFILE and job_contract == H2_PRESENTATION_CONTRACT and job_generation > 0 and report.report_version == "3")
+        )
+    )
 
 
 def _require_positive_lease(value: int) -> None:
@@ -616,12 +793,18 @@ __all__ = [
     "ClaimedReportJob",
     "CompletedReportJob",
     "EnqueuedReportJob",
+    "H1_PRESENTATION_CONTRACT",
+    "H1_WRITER_PROFILE",
+    "H2_PRESENTATION_CONTRACT",
+    "H2_WRITER_PROFILE",
     "LatestFinalizedReportRecord",
     "REPORT_EXECUTION_FAILED_CODE",
     "REPORT_EXECUTION_INTERRUPTED_CODE",
     "REPORT_JOB_PRECONDITION_FAILED_CODE",
+    "WriterDecision",
     "claim_next_job",
     "complete_claimed_job",
+    "complete_claimed_company_card_v2_job",
     "database_wall_clock",
     "enqueue_company_report_job",
     "fail_owned_job",
