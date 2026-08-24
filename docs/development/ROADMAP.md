@@ -52,7 +52,7 @@
 | 17 | `company-report-h1-backend` | Завершена |
 | 18 | `company-report-h1-frontend` | Завершена |
 | 19 | `company-card-v2-contract-evidence` | Завершена |
-| 20 | `company-card-v2-backend-foundation` | Готова к полному DevFlow planning в утверждённом narrowed fail-closed scope |
+| 20 | `company-card-v2-backend-foundation` | Завершена |
 | 21 | `company-card-v2-ai-narrative` | Запланирована |
 | 22 | `company-card-v2-page-shell` | Запланирована |
 | 23 | `company-card-v2-finance-charts` | Запланирована |
@@ -1253,10 +1253,8 @@ API, SSR, SPA или AI-контура.
 ID: 20
 Slug: company-card-v2-backend-foundation
 
-Статус: готова к полному DevFlow planning по owner decision v1 и readiness v3
-от 2026-08-24. Scope намеренно сужен: открытые external semantic gates дают
-`null`/hidden/gate-closed, а не блокируют реализацию backend foundation.
-Production activation, live provider operation и public A1–A5 не разрешены.
+Статус: завершена. Production activation, live provider operation и public
+A1–A5 по-прежнему не разрешены.
 
 ### Зависимости
 
@@ -1332,7 +1330,7 @@ immutable history и совместимость H1/v1/v2, публикует т�
 ID: 21
 Slug: company-card-v2-ai-narrative
 
-Статус: planning input; старт после merge backend-контракта итерации 20.
+Статус: planning input; готова к отдельному полному DevFlow.
 
 ### Зависимости
 

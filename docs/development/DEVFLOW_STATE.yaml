@@ -213,10 +213,10 @@ iterations:
   - id: 20
     slug: company-card-v2-backend-foundation
     title: "Backend и данные Company Card v2"
-    status: ready_for_merge
+    status: merged
     branch: feat/iteration-20-company-card-v2-backend-foundation-continuation
-    commit: pending
-    merged_at: null
+    commit: 80dc524c77a98e611aaed8446069a091dfe0f537
+    merged_at: "2026-08-24T22:52:46+10:00"
     block_reason: null
   - id: 21
     slug: company-card-v2-ai-narrative
@@ -225,7 +225,7 @@ iterations:
     branch: pending
     commit: pending
     merged_at: null
-    block_reason: "Ожидает merge итерации 20 и стабильного versioned factual/evidence contract"
+    block_reason: null
   - id: 22
     slug: company-card-v2-page-shell
     title: "Каркас страницы, SSR и CTA Company Card v2"
