@@ -178,6 +178,13 @@ class Settings(BaseSettings):
     company_card_v2_rollout_generation: int = Field(default=0, validation_alias="COMPANY_CARD_V2_ROLLOUT_GENERATION")
     company_card_v2_allowlist_inns: Annotated[list[str], NoDecode] = Field(default=[], validation_alias="COMPANY_CARD_V2_ALLOWLIST_INNS")
     company_card_v2_percentage_basis_points: int = Field(default=0, validation_alias="COMPANY_CARD_V2_PERCENTAGE_BASIS_POINTS")
+    company_card_v2_narrative_enabled: bool = Field(default=False, validation_alias="COMPANY_CARD_AI_NARRATIVE_ENABLED")
+    company_card_v2_narrative_kill_switch: bool = Field(default=True, validation_alias="COMPANY_CARD_AI_NARRATIVE_KILL_SWITCH")
+    company_card_v2_narrative_daily_limit: int = Field(default=0, validation_alias="COMPANY_CARD_AI_NARRATIVE_DAILY_DISPATCH_CREDITS")
+    company_card_v2_narrative_monthly_limit: int = Field(default=0, validation_alias="COMPANY_CARD_AI_NARRATIVE_MONTHLY_DISPATCH_CREDITS")
+    company_card_v2_narrative_concurrency: int = Field(default=0, validation_alias="COMPANY_CARD_AI_NARRATIVE_WORKER_CONCURRENCY")
+    company_card_v2_narrative_gateway_timeout_seconds: int = Field(default=20, validation_alias="COMPANY_CARD_AI_NARRATIVE_GATEWAY_TIMEOUT_SECONDS")
+    company_card_v2_narrative_max_output_tokens: int = Field(default=600, validation_alias="COMPANY_CARD_AI_NARRATIVE_MAX_OUTPUT_TOKENS")
 
     @model_validator(mode="after")
     def _no_openai_key_in_product_api(self) -> "Settings":
@@ -224,6 +231,15 @@ class Settings(BaseSettings):
                 raise ValueError("COMPANY_CARD_V2_ALLOWLIST_INNS must contain INNs only")
         if self.company_card_v2_allowlist_inns != sorted(set(self.company_card_v2_allowlist_inns)):
             raise ValueError("COMPANY_CARD_V2_ALLOWLIST_INNS must be sorted and unique")
+        if min(self.company_card_v2_narrative_daily_limit, self.company_card_v2_narrative_monthly_limit, self.company_card_v2_narrative_concurrency) < 0:
+            raise ValueError("Company Card narrative limits must be non-negative")
+        if self.company_card_v2_narrative_enabled and (
+            self.company_card_v2_narrative_kill_switch
+            or not all((self.company_card_v2_narrative_daily_limit, self.company_card_v2_narrative_monthly_limit, self.company_card_v2_narrative_concurrency))
+        ):
+            raise ValueError("enabled Company Card narrative requires open kill switch and positive limits")
+        if not 1 <= self.company_card_v2_narrative_gateway_timeout_seconds <= 20 or not 1 <= self.company_card_v2_narrative_max_output_tokens <= 600:
+            raise ValueError("Company Card narrative gateway options are out of bounds")
         return self
 
     @field_validator("company_card_v2_allowlist_inns", mode="before")

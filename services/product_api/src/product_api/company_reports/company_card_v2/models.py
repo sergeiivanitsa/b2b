@@ -193,7 +193,7 @@ class ArbitrationBasisV1(V2Model):
         return self
 
 
-class CompanyCardV2Snapshot(V2Model):
+class CompanyCardV2SnapshotV1(V2Model):
     report_version: Literal["3"] = "3"
     writer_profile: Literal["company_card_v2_writer_v3"] = "company_card_v2_writer_v3"
     presentation_contract: Literal["company_public_h2_v1"] = "company_public_h2_v1"
@@ -224,7 +224,7 @@ class CompanyCardV2Snapshot(V2Model):
         return value
 
     @model_validator(mode="after")
-    def _same_subject(self) -> "CompanyCardV2Snapshot":
+    def _same_subject(self) -> "CompanyCardV2SnapshotV1":
         if not (self.subject_inn == self.target_inn == self.counterparty.inn):
             raise ValueError("snapshot subject, target and counterparty INN must match")
         try:
@@ -247,9 +247,52 @@ class CompanyCardV2Snapshot(V2Model):
         return self
 
 
+class NarrativeEvidenceV1(V2Model):
+    """Only the one approved primary-activity fact may enter a v2 snapshot."""
+    schema_version: Literal["company_card_v2_narrative_evidence_v1"] = "company_card_v2_narrative_evidence_v1"
+    primary_activity_parser_version: Literal["company_card_v2_primary_activity_parser_v1"] = "company_card_v2_primary_activity_parser_v1"
+    primary_activity_evidence_version: Literal["company_card_v2_okved_primary_activity_evidence_v1"] = "company_card_v2_okved_primary_activity_evidence_v1"
+    source_profile_version: Literal["company_card_v2_counterparty_okved_primary_v1"] = "company_card_v2_counterparty_okved_primary_v1"
+    primary_activity: "PrimaryActivitySnapshotV1 | None" = None
+    limitation_code: Literal["primary_activity_not_admitted"] | None = None
+
+    @model_validator(mode="after")
+    def _closed_shape(self) -> "NarrativeEvidenceV1":
+        if (self.primary_activity is None) == (self.limitation_code is None):
+            raise ValueError("narrative evidence must contain exactly one result")
+        return self
+
+
+class PrimaryActivitySnapshotV1(V2Model):
+    code: str = Field(pattern=r"^[0-9]{2}(?:\.[0-9]{1,2}){0,2}$", min_length=2, max_length=8)
+    label: str = Field(min_length=1, max_length=128)
+    is_primary: Literal[True] = True
+
+    @field_validator("label")
+    @classmethod
+    def _admitted_label_is_normalized(cls, value: str) -> str:
+        import unicodedata
+        if value != " ".join(unicodedata.normalize("NFC", value).replace("\r\n", "\n").replace("\r", "\n").split()):
+            raise ValueError("primary activity label must be normalized")
+        if len(value.encode("utf-8")) > 512 or any(ord(c) == 0 or 0xD800 <= ord(c) <= 0xDFFF or 0x202A <= ord(c) <= 0x202E or (ord(c) < 32 and c not in "\t\n\r") or 0x7F <= ord(c) <= 0x9F for c in value):
+            raise ValueError("primary activity label is unsafe")
+        return value
+
+
+class CompanyCardV2SnapshotV2(CompanyCardV2SnapshotV1):
+    snapshot_schema_version: Literal["company_card_v2_snapshot_v2"] = "company_card_v2_snapshot_v2"
+    narrative_evidence: NarrativeEvidenceV1
+
+
+# Backward compatible import name for callers that construct the frozen v1
+# shape.  Parsers below explicitly dispatch V1/V2 and never infer a shape.
+CompanyCardV2Snapshot = CompanyCardV2SnapshotV1
+
+
 __all__ = [
     "ArbitrationBasisV1", "ArbitrationCollectionCountersV1", "ArbitrationPageManifestV1",
     "ChartFactV1", "ChartFactsV1", "CompanyCardCounterpartyCoreV1",
-    "CompanyCardV2Snapshot", "FinanceBasisV1", "FinanceCellV1", "InternalCaseIdentityV1",
+    "CompanyCardV2Snapshot", "CompanyCardV2SnapshotV1", "CompanyCardV2SnapshotV2",
+    "NarrativeEvidenceV1", "PrimaryActivitySnapshotV1", "FinanceBasisV1", "FinanceCellV1", "InternalCaseIdentityV1",
     "LimitationV1", "PrivateArbitrationCaseV1", "PrivateOpponentTokenV1",
 ]

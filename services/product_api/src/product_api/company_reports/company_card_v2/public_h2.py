@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import timezone
 from decimal import Decimal
+from hashlib import sha256
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
+from product_api.company_reports.aggregate import CompanyReport
+
 from .canonical_json import canonical_digest, canonical_json_bytes
-from .models import CompanyCardV2Snapshot
+from .models import CompanyCardV2Snapshot, CompanyCardV2SnapshotV2
+from .narrative.catalog import (
+    FALLBACK_DESCRIPTION,
+    FALLBACK_PROFILE_ID,
+    FALLBACK_RENDERER_VERSION,
+)
 from .privacy import assert_public_boundary_safe
 from .public_h2_models import (
     BLOCK_ORDER, COVERAGE_BLOCKS, CompanyPublicH2Response, PublicH2Action,
@@ -14,11 +23,29 @@ from .public_h2_models import (
     PublicF2Period, PublicF3, PublicF3Point, PublicF3SeriesSummary, PublicF4,
     PublicF5, PublicF5Cell, PublicF5Row, PublicFinanceMoney, PublicFinanceSegment,
     PublicH2Blocks, PublicH2Breadcrumb, PublicH2ClaimCta, PublicH2CoverageItem,
-    PublicH2Address, PublicH2Identity, PublicH2Limitation, PublicH2Narrative, PublicH2Requisites,
+    PublicActivity, PublicH2Address, PublicH2Identity, PublicH2Limitation, PublicH2Narrative, PublicH2Requisites,
     PublicH2SourceItem,
 )
 
 _MOSCOW = ZoneInfo("Europe/Moscow")
+EMPTY_CHART_FACTS_VERSION = "company_card_chart_facts_v1"
+EMPTY_CHART_FACTS_HASH = canonical_digest({
+    "version": EMPTY_CHART_FACTS_VERSION,
+    "unit_policy": "datanewton_finance_thousand_rub_v2",
+    "facts": [],
+})
+
+
+@dataclass(frozen=True)
+class LegacySnapshotBinding:
+    """Exact immutable record identity already loaded by the SELECT-only resolver."""
+
+    report_id: str
+    report_version: str
+    inn: str
+    lifecycle_status: str
+    stored_snapshot_hash: str
+    calculated_snapshot_hash: str
 
 
 class NarrativeBindingProtocol(Protocol):
@@ -83,6 +110,10 @@ def build_public_h2(
             coverage.append(PublicH2CoverageItem(block_id=block, state="available", population_scope="not_applicable", limitation_codes=()))
         else:
             coverage.append(PublicH2CoverageItem(block_id=block, state="gate_closed", population_scope="not_applicable", limitation_codes=(f"{block}_gate_closed",)))
+    primary_activity = None
+    if isinstance(snapshot, CompanyCardV2SnapshotV2) and snapshot.narrative_evidence.primary_activity is not None:
+        admitted = snapshot.narrative_evidence.primary_activity
+        primary_activity = PublicActivity(code=admitted.code, label=admitted.label, is_primary=True)
     payload = {
         "contract_version": "company_public_h2_v1", "report_id": snapshot.report_id, "report_version": "3",
         "chart_facts_version": snapshot.chart_facts.version, "chart_facts_hash": snapshot.chart_facts.hash,
@@ -94,7 +125,7 @@ def build_public_h2(
             dissolution_date=snapshot.counterparty.dissolution_date.isoformat() if snapshot.counterparty.dissolution_date else None).model_dump(mode="json"),
         "narrative": narrative.model_dump(mode="json"), "block_order": BLOCK_ORDER,
         "blocks": PublicH2Blocks(
-            requisites=PublicH2Requisites(address=(PublicH2Address(display=snapshot.counterparty.address, is_inaccuracy=snapshot.counterparty.address_inaccuracy) if snapshot.counterparty.address else None)),
+            requisites=PublicH2Requisites(address=(PublicH2Address(display=snapshot.counterparty.address, is_inaccuracy=snapshot.counterparty.address_inaccuracy) if snapshot.counterparty.address else None), primary_activity=primary_activity),
             **finance_blocks,
         ).model_dump(mode="json"),
         "coverage": [item.model_dump(mode="json") for item in coverage],
@@ -109,6 +140,220 @@ def build_public_h2(
         raise ValueError("public_projection_too_large")
     assert_public_boundary_safe(response.model_dump(mode="json"))
     return response
+
+
+def build_legacy_public_h2(
+    snapshot: CompanyReport,
+    *,
+    snapshot_binding: LegacySnapshotBinding,
+    narrative_binding: NarrativeBindingProtocol,
+) -> CompanyPublicH2Response:
+    """Project a frozen v1/v2 report without upgrading or deriving Card-v2 facts.
+
+    The caller supplies the hash calculated from the exact stored JSON and the
+    persisted record identity.  This pure adapter only accepts equality across
+    those values and the strict legacy snapshot.  It performs no I/O, fallback
+    rendering, finance/arbitration calculation, provider access, or mutation.
+    """
+    if not isinstance(snapshot, CompanyReport):
+        raise ValueError("legacy snapshot binding is invalid")
+    hashes_match = (
+        snapshot_binding.stored_snapshot_hash
+        == snapshot_binding.calculated_snapshot_hash
+        and len(snapshot_binding.stored_snapshot_hash) == 64
+        and all(character in "0123456789abcdef" for character in snapshot_binding.stored_snapshot_hash)
+    )
+    counterparty = snapshot.counterparty
+    if (
+        not hashes_match
+        or snapshot.report_version not in {"1", "2"}
+        or snapshot.report_version != snapshot_binding.report_version
+        or str(snapshot.report_id) != snapshot_binding.report_id
+        or snapshot.target_identifier != snapshot_binding.inn
+        or getattr(snapshot.target_identifier_type, "value", snapshot.target_identifier_type)
+        != "legal_entity_inn"
+        or snapshot.status.value != snapshot_binding.lifecycle_status
+        or snapshot_binding.lifecycle_status not in {"complete", "partial"}
+        or counterparty is None
+        or counterparty.inn != snapshot_binding.inn
+        or not isinstance(counterparty.full_name, str)
+        or not counterparty.full_name.strip()
+    ):
+        raise ValueError("legacy snapshot binding is invalid")
+
+    narrative = _saved_fallback_narrative(narrative_binding)
+    checked_at = _utc_z(snapshot.generated_at)
+    checked_date = snapshot.generated_at.astimezone(_MOSCOW).date().isoformat()
+    canonical_path = f"/company/{snapshot_binding.inn}-company"
+    address = None
+    if counterparty.address is not None and counterparty.address.line_address:
+        address = PublicH2Address(
+            display=counterparty.address.line_address,
+            region=counterparty.address.region,
+            is_inaccuracy=counterparty.address.is_inaccuracy,
+        )
+
+    limitations = _legacy_limitations()
+    coverage = _legacy_coverage()
+    sources = _legacy_sources(snapshot)
+    payload = {
+        "contract_version": "company_public_h2_v1",
+        "report_id": snapshot_binding.report_id,
+        "report_version": snapshot_binding.report_version,
+        "chart_facts_version": EMPTY_CHART_FACTS_VERSION,
+        "chart_facts_hash": EMPTY_CHART_FACTS_HASH,
+        "snapshot_capability": "legacy_read_only",
+        "projection_scope": "latest_unpublished",
+        "canonical_path": canonical_path,
+        "indexable": False,
+        "checked_at": checked_at,
+        "checked_date": checked_date,
+        "checked_date_display": checked_date,
+        "identity": PublicH2Identity(
+            display_name=counterparty.full_name,
+            legal_full_name=counterparty.full_name,
+            short_name=counterparty.short_name,
+            inn=counterparty.inn,
+            ogrn=counterparty.ogrn,
+            kpp=counterparty.kpp,
+            registration_date=(
+                counterparty.registration_date.isoformat()
+                if counterparty.registration_date is not None
+                else None
+            ),
+            dissolution_date=(
+                counterparty.dissolved_date.isoformat()
+                if counterparty.dissolved_date is not None
+                else None
+            ),
+            status=None,
+        ).model_dump(mode="json"),
+        "narrative": narrative.model_dump(mode="json"),
+        "block_order": BLOCK_ORDER,
+        "blocks": PublicH2Blocks(
+            requisites=PublicH2Requisites(address=address),
+        ).model_dump(mode="json"),
+        "coverage": [item.model_dump(mode="json") for item in coverage],
+        "sources": [item.model_dump(mode="json") for item in sources],
+        "limitations": [item.model_dump(mode="json") for item in limitations],
+        "actions": [
+            PublicH2Action(
+                action_id="check_another_company",
+                label="Проверить другую компанию",
+                path="/company",
+            ).model_dump(mode="json"),
+            PublicH2Action(
+                action_id="prepare_claim",
+                label="Подготовить претензию",
+                path=f"/claims?report_id={snapshot_binding.report_id}",
+            ).model_dump(mode="json"),
+        ],
+        "breadcrumbs": [
+            PublicH2Breadcrumb(
+                label="Компании", path="/company", current=False
+            ).model_dump(mode="json"),
+            PublicH2Breadcrumb(
+                label=counterparty.full_name,
+                path=canonical_path,
+                current=True,
+            ).model_dump(mode="json"),
+        ],
+        "primary_claim_cta": PublicH2ClaimCta(
+            path=f"/claims?report_id={snapshot_binding.report_id}"
+        ).model_dump(mode="json"),
+    }
+    response = CompanyPublicH2Response(
+        **payload, projection_digest=canonical_digest(payload)
+    )
+    if len(canonical_json_bytes(response.model_dump(mode="json"))) > 524288:
+        raise ValueError("public_projection_too_large")
+    assert_public_boundary_safe(response.model_dump(mode="json"))
+    return response
+
+
+def _saved_fallback_narrative(
+    narrative_binding: NarrativeBindingProtocol,
+) -> PublicH2Narrative:
+    narrative = narrative_binding.narrative
+    expected_digest = sha256(FALLBACK_DESCRIPTION.encode("utf-8")).hexdigest()
+    if (
+        not isinstance(narrative, PublicH2Narrative)
+        or narrative.mode != "deterministic_fallback"
+        or narrative.renderer_version != FALLBACK_RENDERER_VERSION
+        or narrative.description != FALLBACK_DESCRIPTION
+        or narrative.statement_ids != (FALLBACK_PROFILE_ID,)
+        or narrative.comments != ()
+        or narrative.render_digest != expected_digest
+    ):
+        raise ValueError("saved fallback binding is invalid")
+    return narrative
+
+
+def _legacy_limitations() -> tuple[PublicH2Limitation, ...]:
+    limitations = [
+        PublicH2Limitation(
+            code="requisites_partial",
+            block_id="requisites",
+            field_id=None,
+            message="Часть реквизитов недоступна в текущем подтверждённом контуре.",
+        )
+    ]
+    for block in (*COVERAGE_BLOCKS[2:7], *COVERAGE_BLOCKS[7:12]):
+        limitations.append(PublicH2Limitation(
+            code=f"{block}_gate_closed",
+            block_id=block,
+            field_id=None,
+            message="Раздел недоступен до закрытия обязательного evidence gate.",
+        ))
+    return tuple(limitations)
+
+
+def _legacy_coverage() -> tuple[PublicH2CoverageItem, ...]:
+    coverage: list[PublicH2CoverageItem] = []
+    for block in COVERAGE_BLOCKS:
+        if block == "requisites":
+            coverage.append(PublicH2CoverageItem(
+                block_id=block,
+                state="partial",
+                population_scope="not_applicable",
+                limitation_codes=("requisites_partial",),
+            ))
+        elif block in {"narrative", "sources_limitations"}:
+            coverage.append(PublicH2CoverageItem(
+                block_id=block,
+                state="available",
+                population_scope="not_applicable",
+                limitation_codes=(),
+            ))
+        else:
+            coverage.append(PublicH2CoverageItem(
+                block_id=block,
+                state="gate_closed",
+                population_scope="not_applicable",
+                limitation_codes=(f"{block}_gate_closed",),
+            ))
+    return tuple(coverage)
+
+
+def _legacy_sources(snapshot: CompanyReport) -> tuple[PublicH2SourceItem, ...]:
+    """Expose only the contiguous, exact source prefix present in the snapshot."""
+    result: list[PublicH2SourceItem] = []
+    for dataset in ("counterparty", "finance", "arbitration"):
+        dataset_report = snapshot.datasets[dataset]
+        if dataset_report.status.value != "available":
+            break
+        source = dataset_report.source
+        if source is None or source.dataset != dataset:
+            raise ValueError("legacy snapshot binding is invalid")
+        result.append(PublicH2SourceItem(
+            dataset=dataset,
+            received_at=_utc_z(source.received_at),
+            normalization_version="company_card_v2_v1",
+            evidence_version="evidence_v1",
+        ))
+    if not result:
+        raise ValueError("legacy snapshot binding is invalid")
+    return tuple(result)
 
 
 def _decimal(value: Decimal) -> str:
@@ -292,4 +537,11 @@ def _f5(value: object) -> PublicF5:
     return PublicF5(anchor_year=item["anchor_year"], years=tuple(item["years"]), rows=tuple(rows))
 
 
-__all__ = ["NarrativeBindingProtocol", "build_public_h2"]
+__all__ = [
+    "EMPTY_CHART_FACTS_HASH",
+    "EMPTY_CHART_FACTS_VERSION",
+    "LegacySnapshotBinding",
+    "NarrativeBindingProtocol",
+    "build_legacy_public_h2",
+    "build_public_h2",
+]

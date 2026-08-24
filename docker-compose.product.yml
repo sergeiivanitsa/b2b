@@ -20,3 +20,16 @@ services:
       - python
       - -m
       - product_api.company_reports.worker
+
+  company_card_narrative_worker:
+    image: b2b-product-api:${PRODUCT_IMAGE_TAG:-local}
+    profiles:
+      - company-card-narrative
+    env_file:
+      - .env.product
+    restart: unless-stopped
+    stop_grace_period: 40s
+    command:
+      - python
+      - -m
+      - product_api.company_reports.company_card_v2.narrative.worker

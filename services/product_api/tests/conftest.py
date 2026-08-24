@@ -56,6 +56,12 @@ from product_api.db.session import get_session
 from product_api.main import app
 
 TABLES = [
+    "company_card_narrative_outbox",
+    "company_card_narrative_budget_reservations",
+    "company_card_narrative_budget_windows",
+    "company_card_narrative_artifacts",
+    "company_card_narrative_jobs",
+    "company_card_narrative_runtime_control",
     "company_report_publication_journal",
     "company_report_publication_batch_items",
     "company_report_publication_batches",
@@ -92,6 +98,10 @@ SELF_MANAGED_DATABASE_TESTS = {
     "test_existing_varchar_32_preserves_revision_and_application_state",
     "test_company_card_v2_clean_0015_upgrade_downgrade_reupgrade",
     "test_company_card_v2_corrupt_h1_import_aborts_atomically",
+    "test_company_card_narrative_clean_0016_upgrade_downgrade_reupgrade",
+    "test_company_card_narrative_populated_legacy_backfill_and_downgrade_refusal",
+    "test_company_card_narrative_corrupt_backfill_aborts_atomically",
+    "test_company_card_narrative_resolved_pin_refuses_downgrade",
 }
 
 
@@ -173,6 +183,13 @@ async def _clean_db(engine, request):
                         "(1, 'paused', 'publication_sufficiency_v1')"
                     )
                 )
+            if "company_card_narrative_runtime_control" in existing:
+                await conn.execute(
+                    text(
+                        "INSERT INTO company_card_narrative_runtime_control "
+                        "(singleton_id) VALUES (1)"
+                    )
+                )
     yield
     async with engine.begin() as conn:
         existing = (
@@ -195,5 +212,12 @@ async def _clean_db(engine, request):
                         "INSERT INTO company_report_publication_control "
                         "(id, state, policy_version) VALUES "
                         "(1, 'paused', 'publication_sufficiency_v1')"
+                    )
+                )
+            if "company_card_narrative_runtime_control" in existing:
+                await conn.execute(
+                    text(
+                        "INSERT INTO company_card_narrative_runtime_control "
+                        "(singleton_id) VALUES (1)"
                     )
                 )

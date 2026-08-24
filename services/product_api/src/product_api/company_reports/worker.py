@@ -5,6 +5,7 @@ import logging
 import signal
 from collections.abc import Callable
 from contextlib import suppress
+from datetime import UTC, datetime
 from types import FrameType
 from typing import Any
 
@@ -35,6 +36,53 @@ SessionFactory = async_sessionmaker[AsyncSession]
 ClientFactory = Callable[[Settings], Any]
 ReportBuilder = Callable[..., Any]
 V3Builder = Callable[[ClaimedReportJob], Any]
+Clock = Callable[[], datetime]
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _is_exact_v3_claim(claimed: ClaimedReportJob) -> bool:
+    return (
+        claimed.writer_profile == "company_card_v2_writer_v3"
+        and claimed.report_version == "3"
+        and claimed.presentation_contract == "company_public_h2_v1"
+        and claimed.rollout_generation > 0
+    )
+
+
+async def _build_production_v3_outcome(
+    claimed: ClaimedReportJob,
+    *,
+    settings: Settings,
+    client_factory: ClientFactory,
+    clock: Clock,
+) -> object:
+    """Open the provider only for the enabled, exact V3 write path.
+
+    The writer owns the narrow provider protocol and receives both the client
+    and an explicit timestamp.  Importing it lazily avoids making any public
+    path or default-off worker cycle construct a provider client.
+    """
+    from product_api.company_reports.company_card_v2.writer import (
+        build_company_card_v2_snapshot_v2_outcome,
+    )
+
+    client = client_factory(settings)
+    async with client:
+        return await build_company_card_v2_snapshot_v2_outcome(
+            provider=client,
+            report_id=claimed.report_id,
+            subject_inn=claimed.normalized_identifier,
+            target_inn=claimed.normalized_identifier,
+            writer_profile=claimed.writer_profile,
+            report_version=claimed.report_version,
+            presentation_contract=claimed.presentation_contract,
+            rollout_config_generation=claimed.rollout_generation,
+            now=clock(),
+            request_id=f"company-report:{claimed.report_id}",
+        )
 
 
 async def run_one_claimed_job(
@@ -60,22 +108,35 @@ async def run_one_claimed_job(
         )
     )
     try:
-        # The shipped worker must never accidentally turn a stored H2 job into
-        # an external provider request. A future enabled v3 builder is an
-        # explicitly injected, separately reviewed path.
+        # The shipped worker keeps V3 disabled until the setting and the full
+        # immutable writer tuple are both present.  This branch is the only
+        # write-side provider boundary for Company Card V2.
         if claimed.writer_profile != "h1_legacy_writer_v2":
             if (
-                claimed.writer_profile != "company_card_v2_writer_v3"
+                not _is_exact_v3_claim(claimed)
                 or not settings.company_card_v2_writer_enabled
                 or v3_builder is None
             ):
                 return await _try_fail_live_owned_job(claimed, session_factory=session_factory)
-            snapshot = await v3_builder(claimed)
+            outcome = await v3_builder(claimed)
+            snapshot = getattr(outcome, "snapshot", None)
+            lifecycle_status = getattr(outcome, "lifecycle_status", None)
+            if snapshot is None or lifecycle_status not in {"complete", "partial"}:
+                raise RuntimeError("company card v2 builder outcome is invalid")
             if ownership_lost.is_set():
                 return False
             async with session_factory() as session:
-                await complete_claimed_company_card_v2_job(session, claimed=claimed, snapshot=snapshot)
-                await session.commit()
+                try:
+                    await complete_claimed_company_card_v2_job(
+                        session,
+                        claimed=claimed,
+                        snapshot=snapshot,
+                        lifecycle_status=lifecycle_status,
+                    )
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                    raise
             return True
         client = client_factory(settings)
         async with client:
@@ -171,7 +232,20 @@ async def run_worker(
     session_factory: SessionFactory = AsyncSessionMaker,
     client_factory: ClientFactory = DataNewtonClient,
     report_builder: ReportBuilder = build_company_report,
+    v3_builder: V3Builder | None = None,
+    clock: Clock = _utc_now,
 ) -> None:
+    if v3_builder is None:
+        async def production_v3_builder(claimed: ClaimedReportJob) -> object:
+            return await _build_production_v3_outcome(
+                claimed,
+                settings=settings,
+                client_factory=client_factory,
+                clock=clock,
+            )
+
+        v3_builder = production_v3_builder
+
     while not shutdown_event.is_set():
         claimed: ClaimedReportJob | None = None
         async with session_factory() as session:
@@ -200,6 +274,7 @@ async def run_worker(
                 session_factory=session_factory,
                 client_factory=client_factory,
                 report_builder=report_builder,
+                v3_builder=v3_builder,
             )
         )
         shutdown_wait = asyncio.create_task(shutdown_event.wait())
@@ -321,6 +396,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "_build_production_v3_outcome",
     "heartbeat_supervisor",
     "install_signal_handlers",
     "main",

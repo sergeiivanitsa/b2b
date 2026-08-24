@@ -43,12 +43,41 @@ def _extract_error(payload: dict) -> tuple[str, str]:
 
 async def create_chat_completion(
     settings: Settings,
-    model: str,
+    model: str | None,
     messages: list[dict],
     timeout_seconds: int | None = None,
     response_format: dict | None = None,
     max_output_tokens: int | None = None,
 ) -> tuple[str, dict | None]:
+    # The model is intentionally unset while the narrative profile is
+    # disabled.  Keep that fail-closed invariant at the final paid boundary,
+    # even if a future caller bypasses the HTTP profile checks.
+    if not isinstance(model, str) or not model.strip():
+        raise OpenAIError(
+            status_code=503,
+            message="missing OpenAI model",
+            code="missing_model",
+            retryable=False,
+            err_type="gateway_error",
+        )
+    if response_format is not None and not isinstance(response_format, dict):
+        raise OpenAIError(
+            status_code=400,
+            message="invalid structured response format",
+            code="invalid_response_format",
+            retryable=False,
+            err_type="gateway_error",
+        )
+    if max_output_tokens is not None and (
+        type(max_output_tokens) is not int or max_output_tokens <= 0
+    ):
+        raise OpenAIError(
+            status_code=400,
+            message="invalid structured output limit",
+            code="invalid_output_limit",
+            retryable=False,
+            err_type="gateway_error",
+        )
     if not settings.openai_api_key:
         raise OpenAIError(
             status_code=503,

@@ -1,22 +1,78 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import asdict, dataclass
+from datetime import timezone
 import hashlib
+import json
 
-from sqlalchemy import desc, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from product_api.company_reports.persistence.models import CompanyReportH2LifecycleHead, CompanyReportPresentation, CompanyReportPresentationAssignment, CompanyReportPresentationPin, CompanyReportPresentationStagedPointer, CompanyReportRecord, CompanyReportSubject
-from product_api.company_reports.persistence.v3 import calculate_company_card_v2_snapshot_hash, company_card_v2_from_snapshot
-from product_api.company_reports.persistence.serialization import calculate_company_report_snapshot_hash, company_report_from_snapshot
-from product_api.company_reports.company_card_v2.canonical_json import canonical_digest
-from .public_h2 import build_public_h2
-from .public_h2_models import (
-    BLOCK_ORDER, COVERAGE_BLOCKS, CompanyPublicH2Response, PublicH2Action,
-    PublicH2Blocks, PublicH2Breadcrumb, PublicH2ClaimCta, PublicH2CoverageItem,
-    PublicH2Identity, PublicH2Limitation, PublicH2Narrative, PublicH2Requisites,
-    PublicH2SourceItem,
+from product_api.company_reports.persistence.jobs import (
+    H2_PRESENTATION_CONTRACT,
+    H2_WRITER_PROFILE,
 )
+from product_api.company_reports.persistence.models import (
+    CompanyCardNarrativeArtifact,
+    CompanyCardNarrativeJob,
+    CompanyCardNarrativeOutbox,
+    CompanyReportH2LifecycleHead,
+    CompanyReportPresentation,
+    CompanyReportPresentationAssignment,
+    CompanyReportPresentationPin,
+    CompanyReportPresentationStagedPointer,
+    CompanyReportRecord,
+    CompanyReportSubject,
+)
+from product_api.company_reports.persistence.presentations import (
+    H2_PUBLICATION_POLICY_VERSION,
+)
+from product_api.company_reports.persistence.v3 import (
+    calculate_company_card_v2_snapshot_hash,
+    company_card_v2_from_snapshot,
+    validate_company_card_v2_finalization,
+)
+from product_api.company_reports.persistence.serialization import calculate_company_report_snapshot_hash, company_report_from_snapshot
+from .canonical_json import canonical_json_bytes
+from .models import CompanyCardV2SnapshotV1, CompanyCardV2SnapshotV2
+from .narrative.catalog import (
+    CONNECTOR_CATALOG_VERSION,
+    EVIDENCE_BY_STATEMENT,
+    FALLBACK_CATALOG_VERSION,
+    FALLBACK_DESCRIPTION,
+    FALLBACK_PROFILE_ID,
+    FALLBACK_RENDERER_VERSION,
+    FROZEN_V3_SNAPSHOT_VERSION,
+    GATEWAY_PROFILE_VERSION,
+    INPUT_SCHEMA_VERSION,
+    INSIGHT_CATALOG_VERSION,
+    LEGACY_SNAPSHOT_VERSIONS,
+    NARRATIVE_EVIDENCE_ABSENT,
+    NOT_APPLICABLE,
+    OUTPUT_SCHEMA_VERSION,
+    POLICY_VERSION,
+    PROMPT_VERSION,
+    PUBLIC_STATEMENT_IDS,
+    RENDERER_VERSION,
+    STATEMENT_CATALOG_VERSION,
+    TEMPLATE_CATALOG_VERSION,
+)
+from .narrative.identity import (
+    ArtifactIdentityV1,
+    FallbackIdentityV1,
+    GenerationIdentityV2,
+    identity_key,
+)
+from .narrative.models import NarrativeEvidenceEnvelope, RenderPlan
+from .narrative.validation import normalize_text, validate_render_plan
+from .public_h2 import (
+    EMPTY_CHART_FACTS_HASH,
+    LegacySnapshotBinding,
+    build_legacy_public_h2,
+    build_public_h2,
+)
+from .public_h2_models import CompanyPublicH2Response, PublicH2Narrative
 
 
 class PublicH2Error(RuntimeError):
@@ -28,7 +84,7 @@ class PublicH2NotFound(PublicH2Error):
 
 
 class PublicH2Invalid(PublicH2Error):
-    code = "company_public_h2_invalid"
+    code = "public_projection_invalid"
 
 
 class PublicH2NotEligible(PublicH2Error):
@@ -90,7 +146,13 @@ async def resolve_public_h2(session: AsyncSession, *, inn: str) -> CompanyPublic
             if pin is None:
                 raise PublicH2Invalid("company card v2 binding is invalid")
             record = await session.get(CompanyReportRecord, pin.report_id)
-            return _resolve_exact_v3(record, expected_hash=pin.snapshot_hash)
+            return await _resolve_exact_v3(
+                session,
+                record,
+                pin=pin,
+                expected_subject_id=subject.id,
+                expected_inn=inn,
+            )
     head = await session.get(CompanyReportH2LifecycleHead, subject.id)
     if head is not None:
         presentation = await session.get(CompanyReportPresentation, head.presentation_id)
@@ -114,8 +176,8 @@ async def resolve_public_h2(session: AsyncSession, *, inn: str) -> CompanyPublic
     ).limit(1))
     if has_v3 is not None:
         raise PublicH2NotEligible("report_not_eligible")
-    rows = (await session.execute(select(CompanyReportRecord).join(CompanyReportSubject, CompanyReportSubject.id == CompanyReportRecord.subject_id).where(
-        CompanyReportSubject.normalized_identifier == inn,
+    record = await session.scalar(select(CompanyReportRecord).where(
+        CompanyReportRecord.subject_id == subject.id,
         CompanyReportRecord.writer_profile == "h1_legacy_writer_v2",
         CompanyReportRecord.presentation_contract == "company_public_h1_v1",
         CompanyReportRecord.report_version.in_(("1", "2")),
@@ -123,38 +185,604 @@ async def resolve_public_h2(session: AsyncSession, *, inn: str) -> CompanyPublic
         CompanyReportRecord.normalized_snapshot.is_not(None),
     ).order_by(
         CompanyReportRecord.generated_at.desc().nullslast(),
-        desc(CompanyReportRecord.id),
-    ))).scalars().all()
-    if not rows:
+        CompanyReportRecord.id.desc(),
+    ).limit(1))
+    if record is None:
         raise PublicH2NotEligible("company card v2 has no eligible binding")
-    for record in rows:
-        try:
-            return _legacy_preview(record, inn)
-        except PublicH2Invalid:
-            continue
-    raise PublicH2Invalid("legacy company report is invalid")
+    return await _legacy_preview(session, record, inn)
 
 
-def _resolve_exact_v3(record: CompanyReportRecord | None, *, expected_hash: str) -> CompanyPublicH2Response:
+async def _resolve_exact_v3(
+    session: AsyncSession,
+    record: CompanyReportRecord | None,
+    *,
+    pin: CompanyReportPresentationPin,
+    expected_subject_id: object,
+    expected_inn: str,
+) -> CompanyPublicH2Response:
+    """Resolve one exact V3 saved result and reproduce its pinned projection.
+
+    A resolved pin is a promise about the complete immutable report,
+    generation, job and artifact tuple.  Once that promise exists, any absent
+    or mismatched member is corruption rather than a reason to select a
+    different report or synthesize fallback text.
+    """
     if record is None:
         raise PublicH2Invalid("company card v2 binding is invalid")
     try:
         snapshot = company_card_v2_from_snapshot(deepcopy(record.normalized_snapshot))
-        if record.snapshot_hash != expected_hash or record.snapshot_hash != calculate_company_card_v2_snapshot_hash(snapshot) or snapshot.report_id != str(record.id):
-            raise PublicH2Invalid("company card v2 is invalid")
-        # No runtime narrative binding exists in iteration 20.  A stored H2
-        # pin is deliberately unresolved, therefore it cannot become public.
-        raise PublicH2NotEligible("report_not_eligible")
+        _serialized, calculated_hash = validate_company_card_v2_finalization(
+            snapshot,
+            report_id=record.id,
+            subject_inn=expected_inn,
+            writer_profile=record.writer_profile,
+            report_version=record.report_version,
+            presentation_contract=record.presentation_contract,
+            rollout_config_generation=record.rollout_generation,
+        )
+        presentation = await session.scalar(
+            select(CompanyReportPresentation).where(
+                CompanyReportPresentation.subject_id == expected_subject_id,
+                CompanyReportPresentation.report_id == record.id,
+                CompanyReportPresentation.presentation_contract
+                == H2_PRESENTATION_CONTRACT,
+            )
+        )
+        if (
+            record.subject_id != expected_subject_id
+            or record.report_version != "3"
+            or record.writer_profile != H2_WRITER_PROFILE
+            or record.presentation_contract != H2_PRESENTATION_CONTRACT
+            or not isinstance(record.rollout_generation, int)
+            or record.rollout_generation <= 0
+            or record.lifecycle_status not in {"complete", "partial"}
+            or not _is_hex64(record.snapshot_hash)
+            or record.snapshot_hash != pin.snapshot_hash
+            or record.snapshot_hash != calculated_hash
+            or record.snapshot_hash != calculate_company_card_v2_snapshot_hash(snapshot)
+            or record.generated_at is None
+            or record.generated_at.tzinfo is None
+            or record.generated_at.utcoffset() is None
+            or snapshot.generated_at != record.generated_at.astimezone(timezone.utc)
+            or presentation is None
+            or presentation.subject_id != expected_subject_id
+            or presentation.report_id != record.id
+            or presentation.presentation_contract != H2_PRESENTATION_CONTRACT
+            or presentation.rollout_generation != record.rollout_generation
+            or pin.subject_id != expected_subject_id
+            or pin.report_id != record.id
+            or pin.presentation_contract != H2_PRESENTATION_CONTRACT
+            or not isinstance(pin.generation, int)
+            or pin.generation <= 0
+            or pin.chart_facts_version != snapshot.chart_facts.version
+            or pin.chart_facts_hash != snapshot.chart_facts.hash
+            or pin.evidence_registry_version != snapshot.evidence_version
+            or pin.publication_policy_version != H2_PUBLICATION_POLICY_VERSION
+            or pin.indexable is not False
+            or pin.canonical_path is not None
+            or pin.published_lastmod is not None
+        ):
+            raise ValueError("company card v2 pin identity is invalid")
+
+        if pin.narrative_binding_status == "unresolved":
+            if (
+                pin.narrative_binding_kind is None
+                and pin.narrative_binding_key is None
+                and pin.projection_digest is None
+            ):
+                raise PublicH2NotEligible("report_not_eligible")
+            raise ValueError("company card v2 unresolved pin shape is invalid")
+        if (
+            pin.narrative_binding_status != "resolved"
+            or pin.narrative_binding_kind not in {"artifact", "fallback"}
+            or not _is_hex64(pin.narrative_binding_key)
+            or not _is_hex64(pin.projection_digest)
+        ):
+            raise ValueError("company card v2 resolved pin shape is invalid")
+
+        job = await session.scalar(
+            select(CompanyCardNarrativeJob)
+            .join(
+                CompanyCardNarrativeArtifact,
+                (CompanyCardNarrativeArtifact.id == CompanyCardNarrativeJob.artifact_id)
+                & (
+                    CompanyCardNarrativeArtifact.generation_key
+                    == CompanyCardNarrativeJob.generation_key
+                ),
+            )
+            .where(
+                CompanyCardNarrativeArtifact.binding_kind
+                == pin.narrative_binding_kind,
+                CompanyCardNarrativeArtifact.binding_key
+                == pin.narrative_binding_key,
+            )
+        )
+        if job is None or job.artifact_id is None:
+            raise ValueError("company card v2 saved result is missing")
+        artifact = await session.get(CompanyCardNarrativeArtifact, job.artifact_id)
+        if artifact is None:
+            raise ValueError("company card v2 saved artifact is missing")
+
+        narrative_binding = _validated_v3_saved_result(
+            record=record,
+            snapshot=snapshot,
+            pin=pin,
+            job=job,
+            artifact=artifact,
+        )
+        response = build_public_h2(
+            snapshot,
+            narrative_binding=narrative_binding,
+        )
+        if response.projection_digest != pin.projection_digest:
+            raise ValueError("company card v2 projection digest is invalid")
+        return response
     except PublicH2Error:
         raise
     except Exception as exc:
         raise PublicH2Invalid("company card v2 is invalid") from exc
 
 
-def _legacy_preview(record: CompanyReportRecord, inn: str) -> CompanyPublicH2Response:
-    # A legacy preview would also require a validated in-memory narrative
-    # binding. Iteration 20 intentionally has no runtime source for one.
-    raise PublicH2NotEligible("report_not_eligible")
+async def _legacy_preview(session: AsyncSession, record: CompanyReportRecord, inn: str) -> CompanyPublicH2Response:
+    """Resolve one exact saved fallback without a pin, mutation, or renderer."""
+    try:
+        raw_snapshot = deepcopy(record.normalized_snapshot)
+        calculated_hash = calculate_company_report_snapshot_hash(raw_snapshot)
+        snapshot = company_report_from_snapshot(raw_snapshot)
+        if (
+            record.snapshot_hash != calculated_hash
+            or record.report_version != snapshot.report_version
+            or str(record.id) != str(snapshot.report_id)
+            or record.lifecycle_status != snapshot.status.value
+            or snapshot.target_identifier != inn
+            or snapshot.counterparty is None
+            or snapshot.counterparty.inn != inn
+            or record.generated_at is None
+            or record.generated_at.tzinfo is None
+            or record.generated_at.utcoffset() is None
+            or snapshot.generated_at != record.generated_at.astimezone(timezone.utc)
+        ):
+            raise ValueError("legacy generated_at is invalid")
+        snapshot_binding = LegacySnapshotBinding(
+            report_id=str(record.id),
+            report_version=record.report_version,
+            inn=inn,
+            lifecycle_status=record.lifecycle_status,
+            stored_snapshot_hash=record.snapshot_hash,
+            calculated_snapshot_hash=calculated_hash,
+        )
+    except Exception as exc:
+        raise PublicH2Invalid("legacy company report is invalid") from exc
+
+    outbox = await session.scalar(select(CompanyCardNarrativeOutbox).where(
+        CompanyCardNarrativeOutbox.report_id == record.id,
+        CompanyCardNarrativeOutbox.snapshot_hash == record.snapshot_hash,
+        CompanyCardNarrativeOutbox.event_kind == "initialize_narrative_v1",
+    ).limit(1))
+    if outbox is None or outbox.state != "processed":
+        raise PublicH2NotEligible("report_not_eligible")
+    try:
+        if (
+            str(outbox.report_id) != str(record.id)
+            or outbox.snapshot_hash != record.snapshot_hash
+            or outbox.event_kind != "initialize_narrative_v1"
+            or not _is_hex64(outbox.generation_key)
+            or outbox.processed_at is None
+            or outbox.failure_code is not None
+            or outbox.lease_token is not None
+            or outbox.lease_expires_at is not None
+        ):
+            raise ValueError("legacy narrative outbox identity is invalid")
+        job = await session.scalar(
+            select(CompanyCardNarrativeJob)
+            .join(
+                CompanyCardNarrativeArtifact,
+                (CompanyCardNarrativeArtifact.id == CompanyCardNarrativeJob.artifact_id)
+                & (
+                    CompanyCardNarrativeArtifact.generation_key
+                    == CompanyCardNarrativeJob.generation_key
+                ),
+            )
+            .where(CompanyCardNarrativeJob.generation_key == outbox.generation_key)
+        )
+        if job is None or job.artifact_id is None:
+            raise ValueError("legacy saved narrative job is missing")
+        artifact = await session.get(CompanyCardNarrativeArtifact, job.artifact_id)
+        if artifact is None:
+            raise ValueError("legacy saved narrative artifact is missing")
+        narrative_binding = _validated_legacy_saved_result(
+            record=record,
+            job=job,
+            artifact=artifact,
+            outbox_generation_key=outbox.generation_key,
+        )
+        return build_legacy_public_h2(
+            snapshot,
+            snapshot_binding=snapshot_binding,
+            narrative_binding=narrative_binding,
+        )
+    except Exception as exc:
+        raise PublicH2Invalid("legacy company report is invalid") from exc
+
+
+@dataclass(frozen=True)
+class _NarrativeBinding:
+    narrative: PublicH2Narrative
+
+
+def _validated_legacy_saved_result(
+    *,
+    record: CompanyReportRecord,
+    job: CompanyCardNarrativeJob,
+    artifact: CompanyCardNarrativeArtifact,
+    outbox_generation_key: str,
+) -> _NarrativeBinding:
+    expected_identity = _legacy_generation_identity(record=record)
+    expected_generation_key = identity_key(expected_identity)
+    if (
+        outbox_generation_key != expected_generation_key
+        or str(job.report_id) != str(record.id)
+        or job.snapshot_hash != record.snapshot_hash
+        or job.generation_key != expected_generation_key
+        or job.identity_version != "GenerationIdentityV2"
+        or job.generation_identity != asdict(expected_identity)
+        or job.state != "fallback_finalized"
+        or job.artifact_id != artifact.id
+        or job.lease_token is not None
+        or job.lease_expires_at is not None
+        or not _one_safe_validation_code(job.validation_codes)
+        or any(
+            value is not None
+            for value in (
+                job.gateway_dispatch_id,
+                job.dispatch_started_at,
+                job.response_received_at,
+                job.resolved_model_version,
+            )
+        )
+        or str(artifact.report_id) != str(record.id)
+        or artifact.snapshot_hash != record.snapshot_hash
+        or artifact.generation_key != expected_generation_key
+    ):
+        raise ValueError("legacy saved narrative generation identity is invalid")
+    return _validated_saved_fallback(
+        artifact,
+        report_id=str(record.id),
+        snapshot_hash=record.snapshot_hash,
+    )
+
+
+def _legacy_generation_identity(
+    *,
+    record: CompanyReportRecord,
+) -> GenerationIdentityV2:
+    snapshot_schema_version = LEGACY_SNAPSHOT_VERSIONS.get(record.report_version)
+    if snapshot_schema_version is None or not _is_hex64(record.snapshot_hash):
+        raise ValueError("legacy narrative snapshot identity is invalid")
+    return GenerationIdentityV2(
+        report_id=str(record.id),
+        snapshot_hash=record.snapshot_hash,
+        chart_facts_hash=EMPTY_CHART_FACTS_HASH,
+        evidence_registry_version=NARRATIVE_EVIDENCE_ABSENT,
+        statement_catalog_version=STATEMENT_CATALOG_VERSION,
+        template_catalog_version=TEMPLATE_CATALOG_VERSION,
+        prompt_version=PROMPT_VERSION,
+        json_schema_version=OUTPUT_SCHEMA_VERSION,
+        policy_version=POLICY_VERSION,
+        renderer_version=RENDERER_VERSION,
+        gateway_profile_version=GATEWAY_PROFILE_VERSION,
+        fallback_catalog_version=FALLBACK_CATALOG_VERSION,
+        snapshot_schema_version=snapshot_schema_version,
+        narrative_evidence_schema_version=NARRATIVE_EVIDENCE_ABSENT,
+        primary_activity_parser_version=NOT_APPLICABLE,
+        primary_activity_evidence_version=NOT_APPLICABLE,
+        insight_catalog_version=INSIGHT_CATALOG_VERSION,
+        connector_catalog_version=CONNECTOR_CATALOG_VERSION,
+        input_schema_version=INPUT_SCHEMA_VERSION,
+    )
+
+
+def _validated_v3_saved_result(
+    *,
+    record: CompanyReportRecord,
+    snapshot: CompanyCardV2SnapshotV1,
+    pin: CompanyReportPresentationPin,
+    job: CompanyCardNarrativeJob,
+    artifact: CompanyCardNarrativeArtifact,
+) -> _NarrativeBinding:
+    expected_identity = _v3_generation_identity(
+        record=record,
+        snapshot=snapshot,
+    )
+    expected_generation_key = identity_key(expected_identity)
+    if (
+        job.report_id != record.id
+        or job.snapshot_hash != record.snapshot_hash
+        or job.generation_key != expected_generation_key
+        or job.identity_version != "GenerationIdentityV2"
+        or job.generation_identity != asdict(expected_identity)
+        or job.artifact_id != artifact.id
+        or job.lease_token is not None
+        or job.lease_expires_at is not None
+        or artifact.report_id != record.id
+        or artifact.snapshot_hash != record.snapshot_hash
+        or artifact.generation_key != expected_generation_key
+        or artifact.binding_kind != pin.narrative_binding_kind
+        or artifact.binding_key != pin.narrative_binding_key
+    ):
+        raise ValueError("saved narrative generation identity is invalid")
+
+    if artifact.binding_kind == "fallback":
+        if (
+            job.state != "fallback_finalized"
+            or not _one_safe_validation_code(job.validation_codes)
+            or (job.response_received_at is None)
+            != (job.resolved_model_version is None)
+            or (
+                job.gateway_dispatch_id is None
+                and any(
+                    value is not None
+                    for value in (
+                        job.dispatch_started_at,
+                        job.response_received_at,
+                        job.resolved_model_version,
+                    )
+                )
+            )
+            or (
+                job.gateway_dispatch_id is not None
+                and job.dispatch_started_at is None
+            )
+        ):
+            raise ValueError("saved fallback job state is invalid")
+        return _validated_saved_fallback(
+            artifact,
+            report_id=str(record.id),
+            snapshot_hash=record.snapshot_hash,
+        )
+
+    if (
+        artifact.binding_kind != "artifact"
+        or job.state != "finalized"
+        or job.gateway_dispatch_id is None
+        or job.dispatch_started_at is None
+        or job.response_received_at is None
+        or not isinstance(job.resolved_model_version, str)
+        or job.resolved_model_version != artifact.resolved_model_version
+        or job.validation_codes != []
+    ):
+        raise ValueError("saved narrative artifact job state is invalid")
+    return _validated_ai_artifact(
+        snapshot=snapshot,
+        job=job,
+        artifact=artifact,
+    )
+
+
+def _v3_generation_identity(
+    *,
+    record: CompanyReportRecord,
+    snapshot: CompanyCardV2SnapshotV1,
+) -> GenerationIdentityV2:
+    if isinstance(snapshot, CompanyCardV2SnapshotV2):
+        evidence = snapshot.narrative_evidence
+        snapshot_schema_version = snapshot.snapshot_schema_version
+        narrative_evidence_schema_version = evidence.schema_version
+        primary_activity_parser_version = evidence.primary_activity_parser_version
+        primary_activity_evidence_version = evidence.primary_activity_evidence_version
+    else:
+        snapshot_schema_version = FROZEN_V3_SNAPSHOT_VERSION
+        narrative_evidence_schema_version = NARRATIVE_EVIDENCE_ABSENT
+        primary_activity_parser_version = NOT_APPLICABLE
+        primary_activity_evidence_version = NOT_APPLICABLE
+    return GenerationIdentityV2(
+        report_id=str(record.id),
+        snapshot_hash=record.snapshot_hash,
+        chart_facts_hash=snapshot.chart_facts.hash,
+        evidence_registry_version=snapshot.evidence_version,
+        statement_catalog_version=STATEMENT_CATALOG_VERSION,
+        template_catalog_version=TEMPLATE_CATALOG_VERSION,
+        prompt_version=PROMPT_VERSION,
+        json_schema_version=OUTPUT_SCHEMA_VERSION,
+        policy_version=POLICY_VERSION,
+        renderer_version=RENDERER_VERSION,
+        gateway_profile_version=GATEWAY_PROFILE_VERSION,
+        fallback_catalog_version=FALLBACK_CATALOG_VERSION,
+        snapshot_schema_version=snapshot_schema_version,
+        narrative_evidence_schema_version=narrative_evidence_schema_version,
+        primary_activity_parser_version=primary_activity_parser_version,
+        primary_activity_evidence_version=primary_activity_evidence_version,
+        insight_catalog_version=INSIGHT_CATALOG_VERSION,
+        connector_catalog_version=CONNECTOR_CATALOG_VERSION,
+        input_schema_version=INPUT_SCHEMA_VERSION,
+    )
+
+
+def _validated_ai_artifact(
+    *,
+    snapshot: CompanyCardV2SnapshotV1,
+    job: CompanyCardNarrativeJob,
+    artifact: CompanyCardNarrativeArtifact,
+) -> _NarrativeBinding:
+    if (
+        not isinstance(snapshot, CompanyCardV2SnapshotV2)
+        or snapshot.narrative_evidence.primary_activity is None
+        or artifact.binding_key != artifact.artifact_identity
+        or artifact.fallback_identity is not None
+        or not _is_hex64(artifact.artifact_identity)
+        or not isinstance(artifact.resolved_model_version, str)
+        or not artifact.resolved_model_version.strip()
+        or len(artifact.resolved_model_version) > 255
+        or not isinstance(artifact.raw_model_output, str)
+        or len(artifact.raw_model_output.encode("utf-8")) > 16384
+        or artifact.validated_render_plan_cjson is None
+        or artifact.validated_render_plan_bytes_sha256 is None
+    ):
+        raise ValueError("saved narrative artifact shape is invalid")
+
+    plan_bytes = bytes(artifact.validated_render_plan_cjson)
+    if (
+        len(plan_bytes) > 16384
+        or not _is_hex64(artifact.validated_render_plan_bytes_sha256)
+        or hashlib.sha256(plan_bytes).hexdigest()
+        != artifact.validated_render_plan_bytes_sha256
+    ):
+        raise ValueError("saved narrative plan hash is invalid")
+    raw_plan = _json_without_duplicate_keys(artifact.raw_model_output)
+    stored_plan = _json_without_duplicate_keys(plan_bytes.decode("utf-8"))
+    raw_model = RenderPlan.model_validate(raw_plan)
+    stored_model = RenderPlan.model_validate(stored_plan)
+    canonical_plan = canonical_json_bytes(stored_model.model_dump(mode="json"))
+    if raw_model != stored_model or canonical_plan != plan_bytes:
+        raise ValueError("saved narrative plan bytes are invalid")
+
+    evidence = NarrativeEvidenceEnvelope(
+        evidence_registry_version=snapshot.evidence_version,
+        primary_activity_label=(
+            snapshot.narrative_evidence.primary_activity.label
+        ),
+    )
+    rendered = validate_render_plan(stored_plan, evidence)
+    if normalize_text(rendered.description) != rendered.description:
+        raise ValueError("saved narrative description is not normalized")
+
+    phrase_trace: list[dict[str, object]] = []
+    evidence_ids: list[str] = []
+    for index, trace in enumerate(rendered.phrase_trace):
+        statement_id = rendered.statement_ids[index]
+        expected_evidence_ids = EVIDENCE_BY_STATEMENT.get(statement_id)
+        if (
+            statement_id != trace.statement_id
+            or expected_evidence_ids is None
+            or trace.evidence_ids != expected_evidence_ids
+        ):
+            raise ValueError("saved narrative catalog evidence is invalid")
+        phrase_trace.append({
+            "scalar_start": trace.start,
+            "scalar_end": trace.end,
+            "statement_id": trace.statement_id,
+            "evidence_ids": list(trace.evidence_ids),
+        })
+        for evidence_id in trace.evidence_ids:
+            if evidence_id not in evidence_ids:
+                evidence_ids.append(evidence_id)
+
+    rendered_digest = hashlib.sha256(
+        rendered.description.encode("utf-8")
+    ).hexdigest()
+    expected_artifact_identity = identity_key(ArtifactIdentityV1(
+        generation_key=job.generation_key,
+        resolved_model_version=artifact.resolved_model_version,
+        validated_render_plan_bytes_sha256=(
+            artifact.validated_render_plan_bytes_sha256
+        ),
+        rendered_output_bytes_sha256=rendered_digest,
+    ))
+    if (
+        tuple(rendered.statement_ids) != PUBLIC_STATEMENT_IDS
+        or artifact.artifact_identity != expected_artifact_identity
+        or artifact.rendered_description != rendered.description
+        or artifact.rendered_comments != []
+        or artifact.statement_ids != list(rendered.statement_ids)
+        or artifact.evidence_ids != evidence_ids
+        or artifact.phrase_trace != phrase_trace
+        or artifact.validation_codes != []
+        or artifact.renderer_version != RENDERER_VERSION
+        or artifact.rendered_output_bytes_sha256 != rendered_digest
+        or rendered.render_digest != rendered_digest
+    ):
+        raise ValueError("saved narrative render identity is invalid")
+
+    return _NarrativeBinding(PublicH2Narrative(
+        mode="artifact",
+        renderer_version=RENDERER_VERSION,
+        description=rendered.description,
+        statement_ids=rendered.statement_ids,
+        comments=(),
+        render_digest=rendered_digest,
+    ))
+
+
+def _json_without_duplicate_keys(raw: str) -> object:
+    def pairs_hook(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON object key")
+            result[key] = value
+        return result
+
+    return json.loads(raw, object_pairs_hook=pairs_hook)
+
+
+def _one_safe_validation_code(value: object) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) == 1
+        and isinstance(value[0], str)
+        and bool(value[0])
+        and len(value[0]) <= 64
+    )
+
+
+def _validated_saved_fallback(
+    artifact: CompanyCardNarrativeArtifact,
+    *,
+    report_id: str,
+    snapshot_hash: str,
+) -> _NarrativeBinding:
+    digest = hashlib.sha256(FALLBACK_DESCRIPTION.encode("utf-8")).hexdigest()
+    fallback_identity = identity_key(FallbackIdentityV1(
+        generation_key=artifact.generation_key,
+        fallback_catalog_version=FALLBACK_CATALOG_VERSION,
+        fallback_profile_id=FALLBACK_PROFILE_ID,
+        renderer_version=FALLBACK_RENDERER_VERSION,
+        rendered_output_bytes_sha256=digest,
+    )) if _is_hex64(artifact.generation_key) else None
+    expected_trace = [{
+        "scalar_start": 0,
+        "scalar_end": len(FALLBACK_DESCRIPTION),
+        "statement_id": FALLBACK_PROFILE_ID,
+        "evidence_ids": [],
+    }]
+    if (
+        str(artifact.report_id) != report_id
+        or artifact.snapshot_hash != snapshot_hash
+        or artifact.binding_kind != "fallback"
+        or fallback_identity is None
+        or artifact.binding_key != fallback_identity
+        or artifact.fallback_identity != fallback_identity
+        or artifact.artifact_identity is not None
+        or artifact.resolved_model_version is not None
+        or artifact.raw_model_output is not None
+        or artifact.validated_render_plan_cjson is not None
+        or artifact.validated_render_plan_bytes_sha256 is not None
+        or artifact.rendered_description != FALLBACK_DESCRIPTION
+        or artifact.rendered_comments != []
+        or artifact.statement_ids != [FALLBACK_PROFILE_ID]
+        or artifact.evidence_ids != []
+        or artifact.phrase_trace != expected_trace
+        or artifact.validation_codes != []
+        or artifact.renderer_version != FALLBACK_RENDERER_VERSION
+        or artifact.rendered_output_bytes_sha256 != digest
+    ):
+        raise ValueError("saved fallback binding is invalid")
+    return _NarrativeBinding(PublicH2Narrative(
+        mode="deterministic_fallback",
+        renderer_version=FALLBACK_RENDERER_VERSION,
+        description=FALLBACK_DESCRIPTION,
+        statement_ids=(FALLBACK_PROFILE_ID,),
+        comments=(),
+        render_digest=digest,
+    ))
+
+
+def _is_hex64(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
 
 
 __all__ = ["PublicH2Error", "PublicH2Failed", "PublicH2Invalid", "PublicH2NotEligible", "PublicH2NotFound", "PublicH2Pending", "h2_cohort_selected", "resolve_public_h2"]

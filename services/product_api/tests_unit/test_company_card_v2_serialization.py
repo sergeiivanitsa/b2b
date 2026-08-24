@@ -13,7 +13,11 @@ from product_api.company_reports.company_card_v2.decimal_transport import (
 )
 from product_api.company_reports.company_card_v2.canonical_json import canonical_json_bytes
 from product_api.company_reports.company_card_v2.canonical_json import canonical_digest
-from product_api.company_reports.company_card_v2.models import CompanyCardV2Snapshot
+from product_api.company_reports.company_card_v2.models import (
+    CompanyCardV2Snapshot,
+    CompanyCardV2SnapshotV1,
+    CompanyCardV2SnapshotV2,
+)
 from product_api.company_reports.company_card_v2.public_h2 import build_public_h2
 from product_api.company_reports.company_card_v2.public_h2_models import (
     CompanyPublicH2Response,
@@ -49,6 +53,59 @@ def test_v3_complete_and_sparse_signed_fixtures_are_strict_round_trips() -> None
         assert emitted["report_version"] == "3"
         assert emitted["finance_basis"]["unit_policy"] == "datanewton_finance_thousand_rub_v2"
         assert emitted["chart_facts"]["unit_policy"] == "datanewton_finance_thousand_rub_v2"
+
+
+def test_frozen_v3_v1_parser_never_materializes_new_discriminator_or_evidence() -> None:
+    raw = _json("company_card_v2", "snapshot_v3_complete.json")
+    original = copy.deepcopy(raw)
+
+    restored = company_card_v2_from_snapshot(copy.deepcopy(raw))
+    emitted = company_card_v2_to_snapshot(restored)
+
+    assert type(restored) is CompanyCardV2SnapshotV1
+    assert "snapshot_schema_version" not in emitted
+    assert "narrative_evidence" not in emitted
+    assert raw == original
+    assert calculate_company_card_v2_snapshot_hash(emitted) == "bd8a44a8388779bd28b44b2990f0776d9e0b2dc219d53a8affa5db414d129f43"
+    assert len(canonical_json_bytes(emitted)) == 1517
+
+
+def test_discriminated_v3_v2_fixture_has_exact_round_trip_hash_and_bytes() -> None:
+    raw = _json("company_card_v2", "snapshot_v3_narrative_v2.json")
+    restored = company_card_v2_from_snapshot(copy.deepcopy(raw))
+    emitted = company_card_v2_to_snapshot(restored)
+
+    assert type(restored) is CompanyCardV2SnapshotV2
+    assert company_card_v2_to_snapshot(company_card_v2_from_snapshot(emitted)) == emitted
+    assert emitted["snapshot_schema_version"] == "company_card_v2_snapshot_v2"
+    assert emitted["narrative_evidence"]["primary_activity"] == {
+        "code": "62.01",
+        "label": "Разработка компьютерного программного обеспечения",
+        "is_primary": True,
+    }
+    assert calculate_company_card_v2_snapshot_hash(emitted) == "508bcb51730fc1745c5718583dc6118412893d7dbef7bbbf70140c8aeba2911a"
+    assert len(canonical_json_bytes(emitted)) == 2077
+
+
+@pytest.mark.parametrize("discriminator", [None, True, 2, "unknown_v1", " company_card_v2_snapshot_v2"])
+def test_v3_parser_rejects_unknown_or_coerced_snapshot_discriminators(discriminator: object) -> None:
+    raw = _json("company_card_v2", "snapshot_v3_narrative_v2.json")
+    raw["snapshot_schema_version"] = discriminator
+
+    with pytest.raises(CompanyReportSnapshotError):
+        company_card_v2_from_snapshot(raw)
+
+
+def test_v1_v2_cross_shapes_fail_closed_instead_of_inferring_a_schema() -> None:
+    frozen = _json("company_card_v2", "snapshot_v3_complete.json")
+    frozen["snapshot_schema_version"] = "company_card_v2_snapshot_v2"
+    with pytest.raises(CompanyReportSnapshotError):
+        company_card_v2_from_snapshot(frozen)
+
+    narrative = _json("company_card_v2", "snapshot_v3_narrative_v2.json")
+    narrative.pop("snapshot_schema_version")
+    with pytest.raises(CompanyReportSnapshotError):
+        company_card_v2_from_snapshot(narrative)
 
 
 def test_v3_snapshot_rejects_noncanonical_writer_identity_timestamp_and_chart_facts() -> None:

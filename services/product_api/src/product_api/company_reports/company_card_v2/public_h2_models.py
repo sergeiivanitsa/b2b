@@ -138,10 +138,9 @@ class PublicActivity(PublicH2Model):
     code: str
     label: str
     is_primary: bool
-    effective_date: str | None = None
     @model_validator(mode="after")
     def _valid(self) -> "PublicActivity":
-        if not _ACTIVITY.fullmatch(self.code) or (self.effective_date and not _DATE.fullmatch(self.effective_date)):
+        if not _ACTIVITY.fullmatch(self.code):
             raise ValueError("invalid activity")
         _text(self.label)
         return self

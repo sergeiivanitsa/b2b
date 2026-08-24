@@ -10,7 +10,14 @@ from gateway_api.openai_client import OpenAIError, create_chat_completion, strea
 from gateway_api.request_id import REQUEST_ID_HEADER, set_request_id
 from gateway_api.security import verify_gateway_signature
 from gateway_api.settings import get_settings
-from shared.constants import AI_EXPLANATION_MODEL_PROFILE, MODEL_GPT_5_2
+from shared.constants import (
+    AI_EXPLANATION_MODEL_PROFILE,
+    COMPANY_CARD_NARRATIVE_MAX_REQUEST_BYTES,
+    COMPANY_CARD_NARRATIVE_MAX_RESPONSE_BYTES,
+    COMPANY_CARD_NARRATIVE_MODEL_PROFILE,
+    COMPANY_CARD_NARRATIVE_OUTPUT_SCHEMA_NAME,
+    MODEL_GPT_5_2,
+)
 from shared.schemas import ChatRequest, ChatResponse
 
 settings = get_settings()
@@ -53,7 +60,7 @@ async def internal_ping():
 
 
 @app.post("/v1/chat")
-async def chat(payload: ChatRequest):
+async def chat(payload: ChatRequest, request: Request):
     def _format_sse(event: str, data: dict) -> str:
         return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -70,6 +77,10 @@ async def chat(payload: ChatRequest):
         )
         return await _legacy_chat(payload, _format_sse)
 
+    if payload.model_profile == COMPANY_CARD_NARRATIVE_MODEL_PROFILE:
+        if len(await request.body()) > COMPANY_CARD_NARRATIVE_MAX_REQUEST_BYTES:
+            raise HTTPException(status_code=413, detail="narrative request is too large")
+        return await _narrative_chat(payload, request)
     if payload.model_profile != AI_EXPLANATION_MODEL_PROFILE:
         raise HTTPException(status_code=400, detail="unsupported model profile")
     # The logging formatter adds request_id. Do not log structured metadata,
@@ -97,12 +108,41 @@ async def chat(payload: ChatRequest):
                 }
             },
         )
-    return ChatResponse(
+    response = ChatResponse(
         text=text,
         usage=usage,
         model_profile=payload.model_profile,
         resolved_model=settings.ai_explanation_model,
     )
+    # Preserve the byte-level legacy structured response contract.
+    payload_data = response.model_dump(mode="json")
+    payload_data.pop("gateway_dispatch_id", None)
+    return JSONResponse(content=payload_data)
+
+
+async def _narrative_chat(payload: ChatRequest, request: Request):
+    if not settings.company_card_narrative_gateway_enabled:
+        raise HTTPException(status_code=503, detail="company card narrative profile is disabled")
+    if payload.gateway_dispatch_id is None:
+        raise HTTPException(status_code=400, detail="narrative dispatch id is required")
+    if request.headers.get("X-Gateway-Dispatch-ID") != str(payload.gateway_dispatch_id):
+        raise HTTPException(status_code=400, detail="narrative dispatch id mismatch")
+    if payload.response_format is None or payload.response_format.json_schema.name != COMPANY_CARD_NARRATIVE_OUTPUT_SCHEMA_NAME:
+        raise HTTPException(status_code=400, detail="unsupported narrative schema")
+    logger.info("narrative structured request model_profile=%s", payload.model_profile)
+    try:
+        text, usage = await create_chat_completion(settings, settings.company_card_narrative_model, [msg.model_dump() for msg in payload.messages], payload.timeout, response_format=payload.response_format.model_dump(by_alias=True), max_output_tokens=payload.max_output_tokens)
+    except OpenAIError as exc:
+        return JSONResponse(status_code=exc.status_code, content={"error": {"type": exc.err_type, "code": exc.code, "message": exc.message, "retryable": exc.retryable}})
+    if len(text.encode("utf-8")) > COMPANY_CARD_NARRATIVE_MAX_RESPONSE_BYTES:
+        raise HTTPException(status_code=502, detail="narrative response too large")
+    return JSONResponse(content=ChatResponse(
+        text=text,
+        usage=usage,
+        model_profile=payload.model_profile,
+        resolved_model=settings.company_card_narrative_model,
+        gateway_dispatch_id=payload.gateway_dispatch_id,
+    ).model_dump(mode="json"))
 
 
 async def _legacy_chat(payload: ChatRequest, _format_sse):
@@ -158,4 +198,8 @@ async def _legacy_chat(payload: ChatRequest, _format_sse):
                 }
             },
         )
-    return ChatResponse(text=text, usage=usage)
+    response = ChatResponse(text=text, usage=usage)
+    payload_data = response.model_dump(mode="json")
+    # The optional iteration-21 dispatch field must not alter legacy JSON.
+    payload_data.pop("gateway_dispatch_id", None)
+    return JSONResponse(content=payload_data)

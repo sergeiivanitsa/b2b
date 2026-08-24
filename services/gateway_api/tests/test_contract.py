@@ -36,6 +36,7 @@ def test_contract_non_stream(client, monkeypatch):
     payload = resp.json()
     assert payload["text"] == "ok"
     assert payload["usage"]["total_tokens"] == 1
+    assert "gateway_dispatch_id" not in payload
 
 
 def test_contract_error_normalization(client, monkeypatch):
