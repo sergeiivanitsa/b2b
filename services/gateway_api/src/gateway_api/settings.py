@@ -1,9 +1,9 @@
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from shared.constants import AI_EXPLANATION_MODEL_PROFILE, MODEL_GPT_5_2
+from shared.constants import AI_EXPLANATION_MODEL_PROFILE, COMPANY_CARD_NARRATIVE_MODEL_PROFILE, MODEL_GPT_5_2
 
 
 class Settings(BaseSettings):
@@ -28,6 +28,9 @@ class Settings(BaseSettings):
         default=MODEL_GPT_5_2,
         validation_alias="AI_EXPLANATION_MODEL",
     )
+    company_card_narrative_gateway_enabled: bool = Field(default=False, validation_alias="COMPANY_CARD_NARRATIVE_GATEWAY_ENABLED")
+    company_card_narrative_model_profile: str = Field(default=COMPANY_CARD_NARRATIVE_MODEL_PROFILE, validation_alias="COMPANY_CARD_NARRATIVE_MODEL_PROFILE")
+    company_card_narrative_model: str | None = Field(default=None, validation_alias="COMPANY_CARD_NARRATIVE_MODEL")
 
     @field_validator("gateway_shared_secret")
     @classmethod
@@ -51,6 +54,28 @@ class Settings(BaseSettings):
         if normalized != MODEL_GPT_5_2:
             raise ValueError("AI_EXPLANATION_MODEL is not supported")
         return normalized
+
+    @field_validator("company_card_narrative_model_profile")
+    @classmethod
+    def _validate_narrative_profile(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized != COMPANY_CARD_NARRATIVE_MODEL_PROFILE:
+            raise ValueError("COMPANY_CARD_NARRATIVE_MODEL_PROFILE is not supported")
+        return normalized
+
+    @field_validator("company_card_narrative_model")
+    @classmethod
+    def _normalize_narrative_model(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @model_validator(mode="after")
+    def _validate_narrative(self) -> "Settings":
+        if self.company_card_narrative_gateway_enabled and not (self.company_card_narrative_model and self.company_card_narrative_model.strip()):
+            raise ValueError("enabled Company Card narrative requires a model")
+        return self
 
 
 @lru_cache

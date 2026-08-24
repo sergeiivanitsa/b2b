@@ -1,10 +1,15 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime
+from sqlalchemy import CHAR, JSON, DateTime, LargeBinary, SmallInteger
 
 from product_api.company_reports.persistence.models import (
+    CompanyCardNarrativeArtifact,
+    CompanyCardNarrativeJob,
+    CompanyCardNarrativeOutbox,
+    CompanyCardNarrativeRuntimeControl,
     CompanyReportDataset,
+    CompanyReportPresentationPin,
     CompanyReportProviderRequest,
     CompanyReportRecord,
     CompanyReportSubject,
@@ -67,3 +72,81 @@ def test_orm_repr_is_safe():
     assert "0000000000" not in repr(subject)
     assert "secret_marker" not in repr(report)
     assert "secret_marker" not in repr(dataset)
+
+
+def test_narrative_orm_matches_resolved_pin_and_runtime_migration_shape():
+    pin = CompanyReportPresentationPin.__table__
+    pin_shape = next(
+        constraint
+        for constraint in pin.constraints
+        if constraint.name.endswith("company_report_presentation_pins_contract_shape")
+    )
+    pin_shape_sql = str(pin_shape.sqltext)
+    assert "narrative_binding_status = 'resolved'" in pin_shape_sql
+    assert "projection_digest ~ '^[0-9a-f]{64}$'" in pin_shape_sql
+    assert "AND projection_digest IS NULL AND chart_facts_version" not in pin_shape_sql
+    binding_fk = next(
+        constraint
+        for constraint in pin.constraints
+        if constraint.name == "fk_company_report_h2_pin_narrative_binding"
+    )
+    assert binding_fk.deferrable is True
+    assert binding_fk.initially == "DEFERRED"
+
+    assert isinstance(
+        CompanyCardNarrativeArtifact.__table__.c.validated_render_plan_cjson.type,
+        LargeBinary,
+    )
+    assert isinstance(
+        CompanyCardNarrativeJob.__table__.c.local_attempt_count.type,
+        SmallInteger,
+    )
+    artifact_fk = next(
+        foreign_key
+        for foreign_key in CompanyCardNarrativeJob.__table__.c.artifact_id.foreign_keys
+        if foreign_key.constraint.name == "fk_company_card_narrative_job_artifact"
+    )
+    assert artifact_fk.constraint.deferrable is True
+    assert artifact_fk.constraint.initially == "DEFERRED"
+    assert isinstance(
+        CompanyCardNarrativeOutbox.__table__.c.attempt_count.type,
+        SmallInteger,
+    )
+    for table, columns in (
+        (CompanyCardNarrativeOutbox.__table__, ("snapshot_hash", "generation_key")),
+        (CompanyCardNarrativeJob.__table__, ("snapshot_hash", "generation_key")),
+        (
+            CompanyCardNarrativeArtifact.__table__,
+            (
+                "snapshot_hash",
+                "generation_key",
+                "binding_key",
+                "artifact_identity",
+                "fallback_identity",
+                "validated_render_plan_bytes_sha256",
+                "rendered_output_bytes_sha256",
+            ),
+        ),
+    ):
+        assert all(
+            isinstance(table.c[column].type, CHAR)
+            and table.c[column].type.length == 64
+            for column in columns
+        )
+    assert {
+        "ix_company_card_narrative_jobs_ready_selection",
+        "ix_company_card_narrative_jobs_expired_selection",
+    } <= {index.name for index in CompanyCardNarrativeJob.__table__.indexes}
+    assert "ix_company_card_narrative_outbox_pending_selection" in {
+        index.name for index in CompanyCardNarrativeOutbox.__table__.indexes
+    }
+    assert "ix_company_card_narrative_artifacts_exact_lookup" in {
+        index.name for index in CompanyCardNarrativeArtifact.__table__.indexes
+    }
+    runtime_check = next(
+        constraint
+        for constraint in CompanyCardNarrativeRuntimeControl.__table__.constraints
+        if constraint.name.endswith("company_card_narrative_runtime_nonnegative")
+    )
+    assert "concurrency_limit = 0" in str(runtime_check.sqltext)
+    assert "concurrency_limit >= leased_count" in str(runtime_check.sqltext)

@@ -81,3 +81,19 @@ def test_v1_raw_snapshot_rejects_v2_only_fields_instead_of_silently_rewriting():
     raw["optional_datasets"] = {}
     with pytest.raises(CompanyReportSnapshotError, match="v2 fields"):
         company_report_from_snapshot(raw)
+
+
+def test_fixed_legacy_v2_fixture_never_acquires_company_card_narrative_fields() -> None:
+    path = Path(__file__).parent / "fixtures" / "company_reports" / "snapshot_v2_exact.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    original = copy.deepcopy(raw)
+
+    emitted = company_report_to_snapshot(company_report_from_snapshot(raw))
+    wire = json.dumps(emitted, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    assert raw == original
+    assert calculate_company_report_snapshot_hash(emitted) == "d29a97aedc4a24bc13047f3304d5e3e20fd1e9833d113190e5dd044b37b39e58"
+    assert "snapshot_schema_version" not in wire
+    assert "narrative_evidence" not in wire
+    assert "primary_activity" not in wire
+    assert company_report_to_snapshot(company_report_from_snapshot(emitted)) == emitted

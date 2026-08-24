@@ -7,33 +7,44 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from product_api.company_reports.company_card_v2.canonical_json import canonical_digest
-from product_api.company_reports.company_card_v2.models import CompanyCardV2Snapshot
+from product_api.company_reports.company_card_v2.models import (
+    CompanyCardV2Snapshot, CompanyCardV2SnapshotV1, CompanyCardV2SnapshotV2,
+)
 from .errors import CompanyReportSnapshotError
 
 
-def company_card_v2_to_snapshot(snapshot: CompanyCardV2Snapshot) -> dict[str, Any]:
+CompanyCardV2SnapshotAny = CompanyCardV2SnapshotV1 | CompanyCardV2SnapshotV2
+
+
+def company_card_v2_to_snapshot(snapshot: CompanyCardV2SnapshotAny) -> dict[str, Any]:
     data = snapshot.model_dump(mode="json")
     if data.get("report_version") != "3":
         raise CompanyReportSnapshotError("company card v2 snapshot version is invalid")
     return data
 
 
-def company_card_v2_from_snapshot(snapshot: object) -> CompanyCardV2Snapshot:
+def company_card_v2_from_snapshot(snapshot: object) -> CompanyCardV2SnapshotAny:
     if not isinstance(snapshot, dict) or snapshot.get("report_version") != "3" or type(snapshot.get("report_version")) is not str:
         raise CompanyReportSnapshotError("company card v2 snapshot version is invalid")
     try:
-        return CompanyCardV2Snapshot.model_validate(snapshot)
+        # V1 is a frozen byte shape: a discriminator is only legal for the
+        # explicitly new sub-schema, and no default field is materialized.
+        if "snapshot_schema_version" not in snapshot:
+            return CompanyCardV2SnapshotV1.model_validate(snapshot)
+        if snapshot.get("snapshot_schema_version") == "company_card_v2_snapshot_v2":
+            return CompanyCardV2SnapshotV2.model_validate(snapshot)
+        raise CompanyReportSnapshotError("company card v2 snapshot schema is invalid")
     except ValidationError as exc:
         raise CompanyReportSnapshotError("company card v2 snapshot is invalid") from exc
 
 
-def calculate_company_card_v2_snapshot_hash(snapshot: CompanyCardV2Snapshot | dict[str, Any]) -> str:
-    payload = company_card_v2_to_snapshot(snapshot) if isinstance(snapshot, CompanyCardV2Snapshot) else snapshot
+def calculate_company_card_v2_snapshot_hash(snapshot: CompanyCardV2SnapshotAny | dict[str, Any]) -> str:
+    payload = company_card_v2_to_snapshot(snapshot) if isinstance(snapshot, (CompanyCardV2SnapshotV1, CompanyCardV2SnapshotV2)) else snapshot
     return canonical_digest(payload)
 
 
 def validate_company_card_v2_finalization(
-    snapshot: CompanyCardV2Snapshot,
+    snapshot: CompanyCardV2SnapshotAny,
     *,
     report_id: UUID,
     subject_inn: str,

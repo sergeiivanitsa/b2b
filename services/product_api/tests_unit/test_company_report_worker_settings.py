@@ -27,6 +27,13 @@ def test_company_report_worker_settings_have_safe_defaults():
     assert settings.company_report_worker_lease_seconds == 60
     assert settings.company_report_worker_heartbeat_interval_seconds == 10
     assert settings.company_report_worker_shutdown_grace_seconds == 30
+    assert settings.company_card_v2_narrative_enabled is False
+    assert settings.company_card_v2_narrative_kill_switch is True
+    assert settings.company_card_v2_narrative_daily_limit == 0
+    assert settings.company_card_v2_narrative_monthly_limit == 0
+    assert settings.company_card_v2_narrative_concurrency == 0
+    assert settings.company_card_v2_narrative_gateway_timeout_seconds == 20
+    assert settings.company_card_v2_narrative_max_output_tokens == 600
 
 
 @pytest.mark.parametrize(
@@ -60,3 +67,53 @@ def test_company_report_worker_settings_have_safe_defaults():
 def test_company_report_worker_settings_reject_invalid_timing(override, message):
     with pytest.raises(ValidationError, match=message):
         Settings.model_validate(_base_settings_payload(**override))
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"COMPANY_CARD_AI_NARRATIVE_ENABLED": True},
+        {
+            "COMPANY_CARD_AI_NARRATIVE_ENABLED": True,
+            "COMPANY_CARD_AI_NARRATIVE_KILL_SWITCH": False,
+            "COMPANY_CARD_AI_NARRATIVE_DAILY_DISPATCH_CREDITS": 1,
+            "COMPANY_CARD_AI_NARRATIVE_MONTHLY_DISPATCH_CREDITS": 1,
+            "COMPANY_CARD_AI_NARRATIVE_WORKER_CONCURRENCY": 0,
+        },
+        {"COMPANY_CARD_AI_NARRATIVE_DAILY_DISPATCH_CREDITS": -1},
+        {"COMPANY_CARD_AI_NARRATIVE_MONTHLY_DISPATCH_CREDITS": -1},
+        {"COMPANY_CARD_AI_NARRATIVE_WORKER_CONCURRENCY": -1},
+    ],
+)
+def test_narrative_worker_controls_fail_closed(overrides: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate(_base_settings_payload(**overrides))
+
+
+@pytest.mark.parametrize(
+    ("timeout", "tokens"),
+    [(1, 1), (20, 600)],
+)
+def test_narrative_gateway_options_accept_exact_closed_boundaries(timeout: int, tokens: int) -> None:
+    settings = Settings.model_validate(
+        _base_settings_payload(
+            COMPANY_CARD_AI_NARRATIVE_GATEWAY_TIMEOUT_SECONDS=timeout,
+            COMPANY_CARD_AI_NARRATIVE_MAX_OUTPUT_TOKENS=tokens,
+        )
+    )
+    assert settings.company_card_v2_narrative_gateway_timeout_seconds == timeout
+    assert settings.company_card_v2_narrative_max_output_tokens == tokens
+
+
+@pytest.mark.parametrize(
+    ("timeout", "tokens"),
+    [(0, 1), (21, 1), (1, 0), (1, 601)],
+)
+def test_narrative_gateway_options_reject_outside_boundaries(timeout: int, tokens: int) -> None:
+    with pytest.raises(ValidationError, match="out of bounds"):
+        Settings.model_validate(
+            _base_settings_payload(
+                COMPANY_CARD_AI_NARRATIVE_GATEWAY_TIMEOUT_SECONDS=timeout,
+                COMPANY_CARD_AI_NARRATIVE_MAX_OUTPUT_TOKENS=tokens,
+            )
+        )

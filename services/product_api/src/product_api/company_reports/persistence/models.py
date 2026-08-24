@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -8,14 +8,18 @@ from sqlalchemy import (
     JSON,
     Boolean,
     BigInteger,
+    CHAR,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
     Integer,
     Identity,
+    LargeBinary,
     Numeric,
+    SmallInteger,
     String,
     UniqueConstraint,
     Text,
@@ -24,6 +28,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import JSONB
 
 from product_api.db.base import Base
 
@@ -330,11 +335,15 @@ class CompanyReportPresentationPin(Base):
             "AND chart_facts_hash IS NULL AND evidence_registry_version IS NULL) "
             "OR (presentation_contract = 'company_public_h2_v1' "
             "AND indexable = false AND canonical_path IS NULL AND published_lastmod IS NULL "
-            "AND projection_digest IS NULL AND chart_facts_version IS NOT NULL "
+            "AND chart_facts_version IS NOT NULL "
             "AND chart_facts_hash IS NOT NULL AND evidence_registry_version IS NOT NULL "
             "AND publication_policy_version IS NOT NULL "
-            "AND narrative_binding_status = 'unresolved' "
-            "AND narrative_binding_kind IS NULL AND narrative_binding_key IS NULL)",
+            "AND ((projection_digest IS NULL AND narrative_binding_status = 'unresolved' "
+            "AND narrative_binding_kind IS NULL AND narrative_binding_key IS NULL) "
+            "OR (projection_digest ~ '^[0-9a-f]{64}$' "
+            "AND narrative_binding_status = 'resolved' "
+            "AND narrative_binding_kind IN ('artifact', 'fallback') "
+            "AND narrative_binding_key ~ '^[0-9a-f]{64}$')))",
             name="company_report_presentation_pins_contract_shape",
         ),
         ForeignKeyConstraint(
@@ -342,6 +351,16 @@ class CompanyReportPresentationPin(Base):
             ["company_reports.id", "company_reports.subject_id"],
             name="fk_company_report_presentation_pins_report_subject",
             ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["narrative_binding_kind", "narrative_binding_key"],
+            [
+                "company_card_narrative_artifacts.binding_kind",
+                "company_card_narrative_artifacts.binding_key",
+            ],
+            name="fk_company_report_h2_pin_narrative_binding",
+            deferrable=True,
+            initially="DEFERRED",
         ),
     )
     subject_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_subjects.id", ondelete="CASCADE"), primary_key=True)
@@ -655,3 +674,261 @@ class CompanyReportProviderRequest(Base):
 
     def __repr__(self) -> str:
         return f"<CompanyReportProviderRequest id={self.id!s} dataset={self.dataset!r} outcome={self.request_outcome!r}>"
+
+
+# Narrative records are intentionally separate from immutable report snapshots.
+class CompanyCardNarrativeOutbox(Base):
+    __tablename__ = "company_card_narrative_outbox"
+    __table_args__ = (
+        CheckConstraint("snapshot_hash ~ '^[0-9a-f]{64}$'", name="snapshot_hash_hex"),
+        CheckConstraint("event_kind = 'initialize_narrative_v1'", name="company_card_narrative_outbox_kind"),
+        CheckConstraint("state IN ('pending', 'leased', 'processed', 'terminal')", name="company_card_narrative_outbox_state"),
+        CheckConstraint("fence_generation >= 0 AND attempt_count BETWEEN 0 AND 3", name="company_card_narrative_outbox_attempts"),
+        CheckConstraint(
+            "(state = 'leased' AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL) OR "
+            "(state <> 'leased' AND lease_token IS NULL AND lease_expires_at IS NULL)",
+            name="company_card_narrative_outbox_lease_shape",
+        ),
+        CheckConstraint(
+            "(state = 'processed' AND processed_at IS NOT NULL AND generation_key IS NOT NULL AND failure_code IS NULL) OR "
+            "(state = 'terminal' AND processed_at IS NULL AND generation_key IS NULL AND failure_code IS NOT NULL) OR "
+            "(state IN ('pending', 'leased') AND processed_at IS NULL AND generation_key IS NULL AND failure_code IS NULL)",
+            name="company_card_narrative_outbox_terminal_shape",
+        ),
+        UniqueConstraint("report_id", "snapshot_hash", "event_kind", name="uq_company_card_narrative_outbox_event"),
+        Index(
+            "ix_company_card_narrative_outbox_pending_selection",
+            "state",
+            "available_at",
+            "lease_expires_at",
+            "id",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    report_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_reports.id", ondelete="RESTRICT"), nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    event_kind: Mapped[str] = mapped_column(String(48), nullable=False, default="initialize_narrative_v1")
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    lease_token: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fence_generation: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    attempt_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    failure_code: Mapped[str | None] = mapped_column(String(64))
+    generation_key: Mapped[str | None] = mapped_column(CHAR(64), ForeignKey("company_card_narrative_jobs.generation_key", deferrable=True, initially="DEFERRED"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CompanyCardNarrativeRuntimeControl(Base):
+    __tablename__ = "company_card_narrative_runtime_control"
+    __table_args__ = (
+        CheckConstraint("singleton_id = 1", name="company_card_narrative_runtime_singleton"),
+        CheckConstraint(
+            "daily_limit >= 0 AND monthly_limit >= 0 AND concurrency_limit >= 0 "
+            "AND leased_count >= 0 AND (concurrency_limit = 0 OR concurrency_limit >= leased_count)",
+            name="company_card_narrative_runtime_nonnegative",
+        ),
+    )
+    singleton_id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    kill_switch: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    daily_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    monthly_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    concurrency_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    leased_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class CompanyCardNarrativeBudgetWindow(Base):
+    __tablename__ = "company_card_narrative_budget_windows"
+    __table_args__ = (
+        CheckConstraint("period_kind IN ('daily', 'monthly')", name="company_card_narrative_window_kind"),
+        CheckConstraint(
+            "starts_at_utc < ends_at_utc AND reserved_count >= 0 AND consumed_count >= 0",
+            name="company_card_narrative_window_shape",
+        ),
+    )
+    period_kind: Mapped[str] = mapped_column(String(7), primary_key=True)
+    period_start_local: Mapped[date] = mapped_column(Date, primary_key=True)
+    starts_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ends_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reserved_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    consumed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class CompanyCardNarrativeBudgetReservation(Base):
+    __tablename__ = "company_card_narrative_budget_reservations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["daily_period_kind", "daily_period_start_local"],
+            ["company_card_narrative_budget_windows.period_kind", "company_card_narrative_budget_windows.period_start_local"],
+            name="fk_company_card_narrative_reservation_daily_window",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["monthly_period_kind", "monthly_period_start_local"],
+            ["company_card_narrative_budget_windows.period_kind", "company_card_narrative_budget_windows.period_start_local"],
+            name="fk_company_card_narrative_reservation_monthly_window",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("generation_key ~ '^[0-9a-f]{64}$'", name="generation_key_hex"),
+        CheckConstraint(
+            "dispatch_credit = 1 AND state IN ('reserved', 'released', 'consumed') "
+            "AND daily_period_kind = 'daily' AND monthly_period_kind = 'monthly' "
+            "AND reservation_epoch BETWEEN 1 AND 3",
+            name="company_card_narrative_reservation_shape",
+        ),
+        CheckConstraint(
+            "(state = 'consumed') = (consumed_at IS NOT NULL)",
+            name="company_card_narrative_reservation_consumed_shape",
+        ),
+    )
+    generation_key: Mapped[str] = mapped_column(CHAR(64), ForeignKey("company_card_narrative_jobs.generation_key", ondelete="RESTRICT"), primary_key=True)
+    dispatch_credit: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)
+    state: Mapped[str] = mapped_column(String(10), nullable=False)
+    daily_period_kind: Mapped[str] = mapped_column(String(7), nullable=False)
+    daily_period_start_local: Mapped[date] = mapped_column(Date, nullable=False)
+    monthly_period_kind: Mapped[str] = mapped_column(String(7), nullable=False)
+    monthly_period_start_local: Mapped[date] = mapped_column(Date, nullable=False)
+    reservation_epoch: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)
+    reserved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    release_code: Mapped[str | None] = mapped_column(String(64))
+
+
+class CompanyCardNarrativeJob(Base):
+    __tablename__ = "company_card_narrative_jobs"
+    __table_args__ = (
+        CheckConstraint("snapshot_hash ~ '^[0-9a-f]{64}$'", name="snapshot_hash_hex"),
+        CheckConstraint("generation_key ~ '^[0-9a-f]{64}$'", name="generation_key_hex"),
+        CheckConstraint(
+            "identity_version IN ('GenerationIdentityV1', 'GenerationIdentityV2')",
+            name="company_card_narrative_job_identity",
+        ),
+        CheckConstraint(
+            "state IN ('ready', 'leased', 'dispatching', 'dispatched', 'validating', 'rendered', "
+            "'finalized', 'pre_dispatch_failed', 'ambiguous_timeout', 'invalid_output', 'fallback_finalized')",
+            name="company_card_narrative_job_state",
+        ),
+        CheckConstraint(
+            "fence_generation >= 0 AND local_attempt_count BETWEEN 0 AND 3",
+            name="company_card_narrative_job_attempts",
+        ),
+        CheckConstraint(
+            "(state IN ('leased', 'dispatching', 'dispatched', 'validating', 'rendered') "
+            "AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL) OR "
+            "(state NOT IN ('leased', 'dispatching', 'dispatched', 'validating', 'rendered') "
+            "AND lease_token IS NULL AND lease_expires_at IS NULL)",
+            name="company_card_narrative_job_lease_shape",
+        ),
+        CheckConstraint(
+            "(state IN ('ready', 'leased', 'pre_dispatch_failed') "
+            "AND gateway_dispatch_id IS NULL AND dispatch_started_at IS NULL "
+            "AND resolved_model_version IS NULL AND response_received_at IS NULL) OR "
+            "(state IN ('dispatching', 'dispatched', 'validating', 'rendered', 'finalized', 'ambiguous_timeout', 'invalid_output') "
+            "AND gateway_dispatch_id IS NOT NULL AND dispatch_started_at IS NOT NULL) OR "
+            "(state = 'fallback_finalized' AND ((gateway_dispatch_id IS NULL AND dispatch_started_at IS NULL "
+            "AND resolved_model_version IS NULL AND response_received_at IS NULL) OR "
+            "(gateway_dispatch_id IS NOT NULL AND dispatch_started_at IS NOT NULL)))",
+            name="company_card_narrative_job_dispatch_shape",
+        ),
+        Index(
+            "ix_company_card_narrative_jobs_ready_selection",
+            "state",
+            "available_at",
+            "id",
+        ),
+        Index(
+            "ix_company_card_narrative_jobs_expired_selection",
+            "state",
+            "lease_expires_at",
+            "id",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    report_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_reports.id", ondelete="RESTRICT"), nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    generation_key: Mapped[str] = mapped_column(CHAR(64), nullable=False, unique=True)
+    identity_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    generation_identity: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    state: Mapped[str] = mapped_column(String(24), nullable=False, default="ready")
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    lease_token: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fence_generation: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    local_attempt_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    gateway_dispatch_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), unique=True)
+    dispatch_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    response_received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_model_version: Mapped[str | None] = mapped_column(String(255))
+    validation_codes: Mapped[list[object]] = mapped_column(JSONB, nullable=False, default=list)
+    artifact_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "company_card_narrative_artifacts.id",
+            name="fk_company_card_narrative_job_artifact",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        unique=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class CompanyCardNarrativeArtifact(Base):
+    __tablename__ = "company_card_narrative_artifacts"
+    __table_args__ = (
+        CheckConstraint("snapshot_hash ~ '^[0-9a-f]{64}$'", name="snapshot_hash_hex"),
+        CheckConstraint("generation_key ~ '^[0-9a-f]{64}$'", name="generation_key_hex"),
+        CheckConstraint("binding_key ~ '^[0-9a-f]{64}$'", name="binding_key_hex"),
+        CheckConstraint("rendered_output_bytes_sha256 ~ '^[0-9a-f]{64}$'", name="rendered_output_bytes_sha256_hex"),
+        CheckConstraint("artifact_identity IS NULL OR artifact_identity ~ '^[0-9a-f]{64}$'", name="company_card_narrative_artifact_identity_hex"),
+        CheckConstraint("fallback_identity IS NULL OR fallback_identity ~ '^[0-9a-f]{64}$'", name="company_card_narrative_fallback_identity_hex"),
+        CheckConstraint("validated_render_plan_bytes_sha256 IS NULL OR validated_render_plan_bytes_sha256 ~ '^[0-9a-f]{64}$'", name="company_card_narrative_artifact_plan_hash_hex"),
+        CheckConstraint("binding_kind IN ('artifact', 'fallback')", name="company_card_narrative_artifact_kind"),
+        CheckConstraint("raw_model_output IS NULL OR octet_length(raw_model_output) <= 16384", name="company_card_narrative_artifact_raw_bound"),
+        CheckConstraint("validated_render_plan_cjson IS NULL OR octet_length(validated_render_plan_cjson) <= 16384", name="company_card_narrative_artifact_plan_bound"),
+        CheckConstraint("rendered_comments = '[]'::jsonb", name="company_card_narrative_artifact_comments_empty"),
+        CheckConstraint(
+            "(binding_kind = 'artifact' AND binding_key = artifact_identity AND artifact_identity IS NOT NULL "
+            "AND fallback_identity IS NULL AND resolved_model_version IS NOT NULL "
+            "AND validated_render_plan_cjson IS NOT NULL AND validated_render_plan_bytes_sha256 IS NOT NULL) OR "
+            "(binding_kind = 'fallback' AND binding_key = fallback_identity AND artifact_identity IS NULL "
+            "AND fallback_identity IS NOT NULL AND resolved_model_version IS NULL AND raw_model_output IS NULL "
+            "AND validated_render_plan_cjson IS NULL AND validated_render_plan_bytes_sha256 IS NULL "
+            "AND renderer_version = 'company_card_h2_fallback_renderer_v1')",
+            name="company_card_narrative_artifact_identity_shape",
+        ),
+        UniqueConstraint("binding_kind", "binding_key", name="uq_company_card_narrative_artifact_binding"),
+        Index(
+            "ix_company_card_narrative_artifacts_exact_lookup",
+            "report_id",
+            "snapshot_hash",
+            "generation_key",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    report_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_reports.id", ondelete="RESTRICT"), nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    generation_key: Mapped[str] = mapped_column(CHAR(64), ForeignKey("company_card_narrative_jobs.generation_key", ondelete="RESTRICT"), nullable=False, unique=True)
+    binding_kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    binding_key: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    artifact_identity: Mapped[str | None] = mapped_column(CHAR(64))
+    fallback_identity: Mapped[str | None] = mapped_column(CHAR(64))
+    resolved_model_version: Mapped[str | None] = mapped_column(String(255))
+    raw_model_output: Mapped[str | None] = mapped_column(Text)
+    validated_render_plan_cjson: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    validated_render_plan_bytes_sha256: Mapped[str | None] = mapped_column(CHAR(64))
+    rendered_description: Mapped[str] = mapped_column(Text, nullable=False)
+    rendered_comments: Mapped[list[object]] = mapped_column(JSONB, nullable=False, default=list)
+    statement_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    evidence_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    phrase_trace: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    validation_codes: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    renderer_version: Mapped[str] = mapped_column(String(96), nullable=False)
+    rendered_output_bytes_sha256: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

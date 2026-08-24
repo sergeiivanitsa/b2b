@@ -114,6 +114,7 @@ def _resolve_v3_handoff(record: CompanyReportRecord, subject_inn: str, snapshot:
             or record.rollout_generation <= 0
             or record.snapshot_hash != calculate_company_card_v2_snapshot_hash(card)
             or card.report_id != str(record.id)
+            or card.rollout_config_generation != record.rollout_generation
             or card.subject_inn != subject_inn
             or card.target_inn != subject_inn
             or card.counterparty.inn != subject_inn

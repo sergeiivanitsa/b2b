@@ -3,14 +3,14 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from uuid import UUID, uuid4
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from product_api.company_reports.aggregate import CompanyReport, CURRENT_COMPANY_REPORT_VERSION
-from product_api.company_reports.company_card_v2.models import CompanyCardV2Snapshot
+from product_api.company_reports.company_card_v2.models import CompanyCardV2SnapshotV2
 from product_api.company_reports.ephemeral_evaluation import (
     evaluate_report_ephemerally,
 )
@@ -402,9 +402,21 @@ async def complete_claimed_company_card_v2_job(
     session: AsyncSession,
     *,
     claimed: ClaimedReportJob,
-    snapshot: CompanyCardV2Snapshot,
+    snapshot: CompanyCardV2SnapshotV2,
+    lifecycle_status: Literal["complete", "partial"] = "complete",
 ) -> CompletedReportJob:
-    """Finalize an injected v3 artifact without provider/signals/scoring."""
+    """Finalize one V2 snapshot and its durable narrative event atomically.
+
+    The caller owns the surrounding transaction.  In particular, an outbox
+    insertion failure must escape this function so that the caller rolls the
+    report, job and outbox transition back together.
+    """
+    if not isinstance(snapshot, CompanyCardV2SnapshotV2):
+        raise CompanyReportJobStateConflictError(
+            "company card v2 completion requires a v2 snapshot"
+        )
+    if lifecycle_status not in {"complete", "partial"}:
+        raise ValueError("company card v2 lifecycle status is invalid")
     job = await _lock_job(session, claimed.job_id)
     record = await _lock_report(session, claimed.report_id)
     db_time = await database_wall_clock(session)
@@ -414,8 +426,30 @@ async def complete_claimed_company_card_v2_job(
     _assert_live_owner(job, worker_token=claimed.worker_token, db_time=db_time)
     if claimed.writer_profile != H2_WRITER_PROFILE or not _valid_stored_job_decision(job, record):
         raise CompanyReportJobStateConflictError("company card v2 writer decision does not match")
+    if record.lifecycle_status != REPORT_PENDING_STATUS:
+        raise CompanyReportJobStateConflictError(
+            "company card v2 report is already finalized"
+        )
     finalized = await finalize_company_card_v2_report(
         session, snapshot, report_id=claimed.report_id, subject_id=claimed.subject_id, finished_at=db_time
+    )
+    # The finalization repository validates the immutable snapshot and owns
+    # its legacy-compatible default.  V2 writer outcome supplies the explicit
+    # complete/partial result for independently normalized datasets.
+    finalized.lifecycle_status = lifecycle_status
+    if finalized.snapshot_hash is None:
+        raise CompanyReportJobStateConflictError(
+            "finalized company card v2 snapshot hash is missing"
+        )
+    # ``narratives`` imports presentation helpers that depend on this module;
+    # defer this narrow write-side dependency until jobs has initialized.
+    from .narratives import insert_narrative_outbox
+
+    await insert_narrative_outbox(
+        session,
+        report_id=finalized.id,
+        snapshot_hash=finalized.snapshot_hash,
+        now=db_time,
     )
     job.state, job.finished_at, job.safe_failure_code, job.updated_at = JOB_SUCCEEDED_STATE, db_time, None, db_time
     await session.flush()

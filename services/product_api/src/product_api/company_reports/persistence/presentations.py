@@ -12,13 +12,37 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
-    CompanyReportH2LifecycleHead, CompanyReportPresentation, CompanyReportPresentationAssignment, CompanyReportPresentationAssignmentJournal,
+    CompanyCardNarrativeArtifact, CompanyReportH2LifecycleHead, CompanyReportPresentation, CompanyReportPresentationAssignment, CompanyReportPresentationAssignmentJournal,
     CompanyReportPresentationPin, CompanyReportPresentationStagedPointer, CompanyReportRecord,
 )
 from .jobs import EnqueuedReportJob, H2_PRESENTATION_CONTRACT, H2_WRITER_PROFILE, WriterDecision, enqueue_company_report_job
 from .v3 import calculate_company_card_v2_snapshot_hash, company_card_v2_from_snapshot
 
 H2_PUBLICATION_POLICY_VERSION = "company_public_h2_publication_v1"
+
+
+def _is_digest(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _has_exact_artifact_binding(artifact: CompanyCardNarrativeArtifact) -> bool:
+    if artifact.binding_kind == "artifact":
+        return (
+            artifact.binding_key == artifact.artifact_identity
+            and artifact.fallback_identity is None
+            and _is_digest(artifact.artifact_identity)
+        )
+    if artifact.binding_kind == "fallback":
+        return (
+            artifact.binding_key == artifact.fallback_identity
+            and artifact.artifact_identity is None
+            and _is_digest(artifact.fallback_identity)
+        )
+    return False
 
 
 class PresentationAssignmentConflict(RuntimeError):
@@ -173,6 +197,110 @@ async def stage_h2_pin(session: AsyncSession, *, subject_id: UUID, pin: CompanyR
     return pointer
 
 
+async def append_resolved_h2_pin(
+    session: AsyncSession,
+    *,
+    report: CompanyReportRecord,
+    artifact: CompanyCardNarrativeArtifact,
+    projection_digest: str,
+) -> tuple[CompanyReportPresentationPin, CompanyReportPresentationStagedPointer]:
+    """Append and stage one exact noindex H2 binding without assignment.
+
+    A resolved pin is immutable.  Repeating finalization for the same artifact
+    reuses the exact row; a different binding for the same immutable report is
+    rejected instead of silently replacing the public text.
+    """
+    if (
+        report.report_version != "3"
+        or report.writer_profile != H2_WRITER_PROFILE
+        or report.presentation_contract != H2_PRESENTATION_CONTRACT
+        or report.rollout_generation <= 0
+        or report.snapshot_hash is None
+        or artifact.report_id != report.id
+        or artifact.snapshot_hash != report.snapshot_hash
+        or not _has_exact_artifact_binding(artifact)
+        or not _is_digest(artifact.binding_key)
+        or not _is_digest(projection_digest)
+    ):
+        raise PresentationAssignmentConflict("resolved H2 pin identity is invalid")
+    try:
+        snapshot = company_card_v2_from_snapshot(deepcopy(report.normalized_snapshot))
+    except Exception as exc:
+        raise PresentationAssignmentConflict("resolved H2 pin snapshot is invalid") from exc
+    if (
+        snapshot.report_id != str(report.id)
+        or snapshot.rollout_config_generation != report.rollout_generation
+        or calculate_company_card_v2_snapshot_hash(snapshot) != report.snapshot_hash
+    ):
+        raise PresentationAssignmentConflict("resolved H2 pin snapshot identity is invalid")
+
+    pins = (
+        await session.scalars(
+            select(CompanyReportPresentationPin)
+            .where(
+                CompanyReportPresentationPin.subject_id == report.subject_id,
+                CompanyReportPresentationPin.presentation_contract == H2_PRESENTATION_CONTRACT,
+            )
+            .order_by(CompanyReportPresentationPin.generation)
+            .with_for_update()
+        )
+    ).all()
+    for existing in pins:
+        if existing.report_id != report.id or existing.narrative_binding_status != "resolved":
+            continue
+        exact = (
+            existing.snapshot_hash == report.snapshot_hash
+            and existing.indexable is False
+            and existing.canonical_path is None
+            and existing.published_lastmod is None
+            and existing.projection_digest == projection_digest
+            and existing.narrative_binding_kind == artifact.binding_kind
+            and existing.narrative_binding_key == artifact.binding_key
+            and existing.chart_facts_version == snapshot.chart_facts.version
+            and existing.chart_facts_hash == snapshot.chart_facts.hash
+            and existing.evidence_registry_version == snapshot.evidence_version
+            and existing.publication_policy_version == H2_PUBLICATION_POLICY_VERSION
+        )
+        if not exact:
+            raise PresentationAssignmentConflict("resolved H2 pin already exists for report")
+        pointer = await stage_h2_pin(
+            session,
+            subject_id=report.subject_id,
+            pin=existing,
+            expected_generation=existing.generation,
+        )
+        return existing, pointer
+
+    generation = max((pin.generation for pin in pins), default=0) + 1
+    pin = CompanyReportPresentationPin(
+        subject_id=report.subject_id,
+        report_id=report.id,
+        presentation_contract=H2_PRESENTATION_CONTRACT,
+        generation=generation,
+        snapshot_hash=report.snapshot_hash,
+        chart_facts_version=snapshot.chart_facts.version,
+        chart_facts_hash=snapshot.chart_facts.hash,
+        evidence_registry_version=snapshot.evidence_version,
+        publication_policy_version=H2_PUBLICATION_POLICY_VERSION,
+        canonical_path=None,
+        indexable=False,
+        published_lastmod=None,
+        projection_digest=projection_digest,
+        narrative_binding_status="resolved",
+        narrative_binding_kind=artifact.binding_kind,
+        narrative_binding_key=artifact.binding_key,
+    )
+    session.add(pin)
+    await session.flush()
+    pointer = await stage_h2_pin(
+        session,
+        subject_id=report.subject_id,
+        pin=pin,
+        expected_generation=generation,
+    )
+    return pin, pointer
+
+
 async def assign_pin_cas(session: AsyncSession, *, subject_id: UUID, pin: CompanyReportPresentationPin, expected_generation: int) -> CompanyReportPresentationAssignment:
     if pin.subject_id != subject_id or expected_generation != pin.generation:
         raise PresentationAssignmentConflict("assignment pin identity is invalid")
@@ -222,4 +350,11 @@ async def assign_pin_cas(session: AsyncSession, *, subject_id: UUID, pin: Compan
     return assignment
 
 
-__all__ = ["PresentationAssignmentConflict", "append_presentation_pin", "assign_pin_cas", "create_or_reuse_h2_presentation", "stage_h2_pin"]
+__all__ = [
+    "PresentationAssignmentConflict",
+    "append_presentation_pin",
+    "append_resolved_h2_pin",
+    "assign_pin_cas",
+    "create_or_reuse_h2_presentation",
+    "stage_h2_pin",
+]

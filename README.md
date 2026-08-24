@@ -287,6 +287,31 @@ Default local values are documented in:
 - `services/product_api/.env.example`
 - `docker-compose.yml`
 
+## Company Card v2 AI narrative (default off)
+
+Iteration 21 adds a separate durable narrative worker. It is not started by
+the default Compose profile and all dispatch controls fail closed: the Product
+feature flag is false, the kill switch is true, daily/monthly/concurrency
+limits are zero, the Gateway profile is disabled, and no model is selected.
+
+For an explicitly approved non-production environment, configure both
+`services/product_api/.env` and `services/gateway_api/.env`, then start the
+worker with the `company-card-narrative` Compose profile. Enabling requires an
+open kill switch and positive daily, monthly, and concurrency limits. The
+Gateway additionally requires an explicitly configured narrative model.
+
+```bash
+docker compose --profile company-card-narrative up -d company_card_narrative_worker
+docker compose -f docker-compose.product.yml --profile company-card-narrative up -d company_card_narrative_worker
+```
+
+Rollback is flag-only and non-destructive: set
+`COMPANY_CARD_AI_NARRATIVE_KILL_SWITCH=true`, set
+`COMPANY_CARD_AI_NARRATIVE_ENABLED=false`, disable
+`COMPANY_CARD_NARRATIVE_GATEWAY_ENABLED`, and stop the narrative worker.
+Saved snapshots, consumed reservations, artifacts, and resolved pins are
+retained; no provider refresh or public-read generation is performed.
+
 Preview header enrichment notes:
 - Step 4 header is returned from backend as `preview_header` (public claim snapshot + preview snapshot).
 - Enrichment is triggered on Step 2 patch when `creditor_inn`, `debtor_inn`, `creditor_name`, or `debtor_name` changes (including INN removal).

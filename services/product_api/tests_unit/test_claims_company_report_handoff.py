@@ -14,7 +14,10 @@ from product_api.company_reports.company_card_v2.models import (
     ArbitrationBasisV1,
     CompanyCardCounterpartyCoreV1,
     CompanyCardV2Snapshot,
+    CompanyCardV2SnapshotV2,
     FinanceBasisV1,
+    NarrativeEvidenceV1,
+    PrimaryActivitySnapshotV1,
 )
 from product_api.company_reports.company_card_v2.finance import build_chart_facts
 from product_api.company_reports.persistence.v3 import (
@@ -156,9 +159,67 @@ async def test_v3_handoff_requires_exact_record_tuple_and_exposes_identity_only(
     assert result.handoff is not None
     assert result.handoff.debtor_fields() == {"debtor_name": "ООО Вектор", "debtor_inn": "7700000000"}
 
-    record.rollout_generation = 0
-    rejected = await resolve_company_report_handoff(session, report_id)
-    assert rejected.reason == "invalid_report"
+    for invalid_generation in (0, 2):
+        record.rollout_generation = invalid_generation
+        rejected = await resolve_company_report_handoff(session, report_id)
+        assert rejected.reason == "invalid_report"
+
+
+@pytest.mark.asyncio
+async def test_v3_v2_handoff_accepts_discriminator_but_never_exposes_narrative_evidence():
+    report_id = uuid4()
+    base = _v3_card(report_id).model_dump(mode="json")
+    card = CompanyCardV2SnapshotV2.model_validate({
+        **base,
+        "snapshot_schema_version": "company_card_v2_snapshot_v2",
+        "narrative_evidence": NarrativeEvidenceV1(
+            primary_activity=PrimaryActivitySnapshotV1(code="62.01", label="Разработка программного обеспечения")
+        ).model_dump(mode="json"),
+    })
+    record = SimpleNamespace(
+        id=report_id, report_version="3", writer_profile="company_card_v2_writer_v3",
+        presentation_contract="company_public_h2_v1", rollout_generation=1,
+        lifecycle_status="complete", normalized_snapshot=card.model_dump(mode="json"),
+        snapshot_hash=calculate_company_card_v2_snapshot_hash(card),
+    )
+    subject = SimpleNamespace(normalized_identifier="7700000000")
+
+    class Result:
+        def one_or_none(self):
+            return record, subject
+
+    result = await resolve_company_report_handoff(
+        SimpleNamespace(execute=lambda _statement: _async(Result())), report_id
+    )
+    assert result.handoff is not None
+    assert result.handoff.debtor_fields() == {"debtor_name": "ООО Вектор", "debtor_inn": "7700000000"}
+    assert "Разработка" not in str(result.handoff)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutate", [
+    lambda raw: raw.__setitem__("snapshot_schema_version", "company_card_v2_snapshot_v2"),
+    lambda raw: raw.__setitem__("narrative_evidence", {"limitation_code": "primary_activity_not_admitted"}),
+])
+async def test_v3_handoff_rejects_v1_v2_cross_shapes(mutate):
+    report_id = uuid4()
+    raw = _v3_card(report_id).model_dump(mode="json")
+    mutate(raw)
+    record = SimpleNamespace(
+        id=report_id, report_version="3", writer_profile="company_card_v2_writer_v3",
+        presentation_contract="company_public_h2_v1", rollout_generation=1,
+        lifecycle_status="complete", normalized_snapshot=raw, snapshot_hash="a" * 64,
+    )
+    subject = SimpleNamespace(normalized_identifier="7700000000")
+
+    class Result:
+        def one_or_none(self):
+            return record, subject
+
+    result = await resolve_company_report_handoff(
+        SimpleNamespace(execute=lambda _statement: _async(Result())), report_id
+    )
+    assert result.reason == "invalid_report"
 
 
 @pytest.mark.asyncio

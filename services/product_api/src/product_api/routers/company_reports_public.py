@@ -1,4 +1,8 @@
-"""Anonymous, read-only SSR endpoints for explicitly published reports."""
+"""Anonymous, read-only SSR endpoints for explicitly published H1 reports.
+
+The saved-result-only H2 resolver introduced in iteration 21 is deliberately
+not routed here: iteration 22 owns the public H2 page shell and SSR wiring.
+"""
 from __future__ import annotations
 
 import re

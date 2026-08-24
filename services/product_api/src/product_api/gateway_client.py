@@ -8,6 +8,10 @@ import httpx
 
 from product_api.request_id import get_request_id_header
 from product_api.settings import Settings
+from shared.constants import (
+    COMPANY_CARD_NARRATIVE_MAX_REQUEST_BYTES,
+    COMPANY_CARD_NARRATIVE_MODEL_PROFILE,
+)
 from shared.schemas import ChatRequest, ChatResponse
 
 SIGNATURE_HEADER = "X-Signature"
@@ -65,13 +69,24 @@ def _sign_headers(secret: str, method: str, path: str, body: bytes) -> dict[str,
 async def send_chat(settings: Settings, payload: ChatRequest) -> ChatResponse:
     path = "/v1/chat"
     url = f"{settings.gateway_url}{path}"
+    payload_data = payload.model_dump(by_alias=True, mode="json")
+    if payload.gateway_dispatch_id is None:
+        # Keep the pre-iteration-21 signed request bytes stable for legacy and
+        # scoring-explanation callers.
+        payload_data.pop("gateway_dispatch_id", None)
     body = json.dumps(
-        payload.model_dump(by_alias=True), separators=(",", ":"), ensure_ascii=False
+        payload_data, separators=(",", ":"), ensure_ascii=False
     ).encode("utf-8")
+    if (
+        payload.model_profile == COMPANY_CARD_NARRATIVE_MODEL_PROFILE
+        and len(body) > COMPANY_CARD_NARRATIVE_MAX_REQUEST_BYTES
+    ):
+        raise GatewayError("gateway request is too large", code="request_too_large")
     headers = _sign_headers(settings.gateway_shared_secret, "POST", path, body)
     headers.update(get_request_id_header())
     headers["Content-Type"] = "application/json"
-
+    if payload.gateway_dispatch_id is not None:
+        headers["X-Gateway-Dispatch-ID"] = str(payload.gateway_dispatch_id)
     timeout_seconds = payload.timeout or settings.gateway_timeout_seconds
     try:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
@@ -101,16 +116,29 @@ async def send_chat(settings: Settings, payload: ChatRequest) -> ChatResponse:
         )
 
     try:
-        return ChatResponse.model_validate(resp.json())
+        response = ChatResponse.model_validate(resp.json())
     except ValueError as exc:
         raise GatewayError("gateway response contract failure") from exc
+    if payload.model_profile == COMPANY_CARD_NARRATIVE_MODEL_PROFILE:
+        if response.gateway_dispatch_id != payload.gateway_dispatch_id:
+            raise GatewayError(
+                "narrative gateway dispatch id mismatch",
+                code="gateway_dispatch_id_mismatch",
+            )
+        if response.model_profile != COMPANY_CARD_NARRATIVE_MODEL_PROFILE or not response.resolved_model:
+            raise GatewayError("narrative gateway response contract failure", code="gateway_contract_mismatch")
+    return response
 
 
 async def stream_chat(settings: Settings, payload: ChatRequest):
     path = "/v1/chat"
     url = f"{settings.gateway_url}{path}"
+    payload_data = payload.model_dump(by_alias=True, mode="json")
+    # Narrative requests cannot stream.  Remove the iteration-21 optional
+    # field so every pre-existing streaming request keeps its signed bytes.
+    payload_data.pop("gateway_dispatch_id", None)
     body = json.dumps(
-        payload.model_dump(by_alias=True), separators=(",", ":"), ensure_ascii=False
+        payload_data, separators=(",", ":"), ensure_ascii=False
     ).encode("utf-8")
     headers = _sign_headers(settings.gateway_shared_secret, "POST", path, body)
     headers.update(get_request_id_header())

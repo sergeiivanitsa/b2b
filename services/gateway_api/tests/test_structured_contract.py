@@ -92,3 +92,27 @@ def test_structured_logging_does_not_include_metadata_values(client, monkeypatch
     assert "model_profile=economy_text_structured_v1" in messages
     for field in ("company_id", "user_id", "conversation_id", "message_id"):
         assert field not in messages
+
+
+def test_existing_structured_profile_keeps_legacy_coercion_and_has_no_narrative_size_cap(
+    client, monkeypatch
+):
+    received = {}
+
+    async def fake_create(_settings, _model, messages, timeout, **kwargs):
+        received.update(messages=messages, timeout=timeout, **kwargs)
+        return ("{}", None)
+
+    monkeypatch.setattr(gateway_main, "create_chat_completion", fake_create)
+    body = _structured_body()
+    body["timeout"] = "20"
+    body["max_output_tokens"] = 600.0
+    body["messages"][1]["content"] = "x" * 40000
+    raw, headers = _signed_headers(body)
+    assert len(raw) > 32768
+
+    response = client.post("/v1/chat", headers=headers, data=raw)
+
+    assert response.status_code == 200
+    assert received["timeout"] == 20
+    assert received["max_output_tokens"] == 600
