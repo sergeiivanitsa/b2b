@@ -53,7 +53,7 @@
 | 18 | `company-report-h1-frontend` | Завершена |
 | 19 | `company-card-v2-contract-evidence` | Завершена |
 | 20 | `company-card-v2-backend-foundation` | Завершена |
-| 21 | `company-card-v2-ai-narrative` | Запланирована |
+| 21 | `company-card-v2-ai-narrative` | Завершена |
 | 22 | `company-card-v2-page-shell` | Запланирована |
 | 23 | `company-card-v2-finance-charts` | Запланирована |
 | 24 | `company-card-v2-arbitration-charts` | Запланирована |
@@ -1330,7 +1330,8 @@ immutable history и совместимость H1/v1/v2, публикует т�
 ID: 21
 Slug: company-card-v2-ai-narrative
 
-Статус: planning input; готова к отдельному полному DevFlow.
+Статус: завершена. AI/narrative pipeline и H2 остаются выключенными по
+умолчанию; production activation не выполнялась.
 
 ### Зависимости
 
@@ -1387,7 +1388,7 @@ Slug: company-card-v2-ai-narrative
 ID: 22
 Slug: company-card-v2-page-shell
 
-Статус: planning input; старт после merge итераций 20–21.
+Статус: planning input; готова к отдельному полному DevFlow.
 
 ### Зависимости
 
