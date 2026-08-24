@@ -221,10 +221,10 @@ iterations:
   - id: 21
     slug: company-card-v2-ai-narrative
     title: "Публичное AI-описание Company Card v2"
-    status: ready_for_merge
+    status: merged
     branch: feat/iteration-21-company-card-v2-ai-narrative
-    commit: pending
-    merged_at: null
+    commit: e5b846d675e0a4525cd3664cc01434a86ac84ae5
+    merged_at: "2026-08-25T08:00:21+10:00"
     block_reason: null
   - id: 22
     slug: company-card-v2-page-shell
@@ -233,7 +233,7 @@ iterations:
     branch: pending
     commit: pending
     merged_at: null
-    block_reason: "Ожидает merge итераций 20–21 и утверждённого SSR/client-takeover contract"
+    block_reason: null
   - id: 23
     slug: company-card-v2-finance-charts
     title: "Финансовые графики Company Card v2"
