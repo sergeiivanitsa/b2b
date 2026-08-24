@@ -52,7 +52,7 @@
 | 17 | `company-report-h1-backend` | Завершена |
 | 18 | `company-report-h1-frontend` | Завершена |
 | 19 | `company-card-v2-contract-evidence` | Завершена |
-| 20 | `company-card-v2-backend-foundation` | Заблокирована; finance policy v2 и fresh-matrix v3 подготовлены, но не утверждены/не выполнены |
+| 20 | `company-card-v2-backend-foundation` | Заблокирована; v3 подтвердила non-zero scale, но protocol deviation и publication/lexical/counterparty/arbitration gates не закрыты |
 | 21 | `company-card-v2-ai-narrative` | Запланирована |
 | 22 | `company-card-v2-page-shell` | Запланирована |
 | 23 | `company-card-v2-finance-charts` | Запланирована |
@@ -1253,12 +1253,15 @@ API, SSR, SPA или AI-контура.
 ID: 20
 Slug: company-card-v2-backend-foundation
 
-Статус: planning input; заблокирована результатами evidence v2 от 2026-08-24.
-Finance-policy v1 rejected из-за двух конфликтов `zero`/`missing`. Policy v2 и
-fresh-matrix v3 подготовлены как proposed/pre-live artifacts, но ещё не
-утверждены и не выполнены. Counterparty semantic и arbitration
-outcome/currency/entity-type gates остаются незакрытыми. Старт только после
-закрытия versioned policy/evidence gates.
+Статус: planning input; заблокирована readiness v2 от 2026-08-24.
+Finance-policy v1 остаётся rejected. Fresh-matrix v3 для policy v2 закрыла
+только `unit_scale_gate=verified_nonzero_thousand_rub`: presence имеет
+`conflict_observed`, zero — `blocked_conflict`, lexical transport не проверен,
+а publication policy остаётся inactive до отдельного owner decision.
+Counterparty semantic и arbitration outcome/currency/entity-type gates также
+не закрыты. Кроме того, превышен pre-live лимит FNS metadata reads, поэтому
+evidence promotion заблокирован до явного решения владельца по protocol
+deviation. Старт только после нового закрывающего readiness decision.
 
 ### Зависимости
 
