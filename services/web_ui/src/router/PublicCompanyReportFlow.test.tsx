@@ -16,6 +16,7 @@ import {
   HEAD_OWNER_VALUE,
 } from '../companyReport/companyReportPresentation'
 import { AppRouter } from './AppRouter'
+import { navigateToCompany } from '../pages/companyLandingNavigation'
 
 vi.mock('../auth/useAuth', () => ({ useAuth: vi.fn() }))
 vi.mock('../companyReport/companyReportApi', () => ({
@@ -23,11 +24,13 @@ vi.mock('../companyReport/companyReportApi', () => ({
   getCompanyPublicH1: vi.fn(),
   getCompanyReportStatus: vi.fn(),
 }))
+vi.mock('../pages/companyLandingNavigation', () => ({ navigateToCompany: vi.fn() }))
 
 const mockedUseAuth = vi.mocked(useAuth)
 const mockedGet = vi.mocked(getCompanyPublicH1)
 const mockedCreate = vi.mocked(createCompanyReport)
 const mockedStatus = vi.mocked(getCompanyReportStatus)
+const mockedNavigate = vi.mocked(navigateToCompany)
 const dto = parseCompanyPublicH1(JSON.parse(publishedFixture))
 
 function LocationProbe() {
@@ -57,7 +60,7 @@ describe('public CompanyReport flow', () => {
     cleanupCompanyHead()
   })
 
-  it('opens a public H1 projection from the landing without login or duplicate read', async () => {
+  it('hands off from landing with one document navigation and no factual SPA read', async () => {
     render(
       <MemoryRouter initialEntries={['/']}>
         <LocationProbe />
@@ -69,18 +72,10 @@ describe('public CompanyReport flow', () => {
       target: { value: dto.identity.inn },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Проверить должника' }))
-
-    expect(
-      await screen.findByRole('heading', {
-        name: `${dto.identity.legal_full_name} — ИНН ${dto.identity.inn}`,
-      }),
-    ).toBeTruthy()
-    expect(screen.getByTestId('location').textContent).toBe(dto.canonical_path)
-    expect(mockedGet).toHaveBeenCalledTimes(1)
-    expect(mockedGet).toHaveBeenCalledWith(
-      dto.identity.inn,
-      expect.any(AbortSignal),
-    )
+    expect(mockedNavigate).toHaveBeenCalledOnce()
+    expect(mockedNavigate).toHaveBeenCalledWith(dto.identity.inn)
+    expect(screen.getByTestId('location').textContent).toBe('/')
+    expect(mockedGet).not.toHaveBeenCalled()
     expect(mockedCreate).not.toHaveBeenCalled()
     expect(mockedStatus).not.toHaveBeenCalled()
     expect(screen.queryByText('Sign in')).toBeNull()

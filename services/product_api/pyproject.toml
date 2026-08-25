@@ -33,3 +33,6 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["product_api*"]
+
+[tool.setuptools.package-data]
+"product_api.company_reports.company_card_v2" = ["public_h2_asset_manifest.json"]

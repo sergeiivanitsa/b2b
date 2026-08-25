@@ -1,10 +1,9 @@
 import { useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 
 import { CompanyReportInnForm } from '../components/company-report/CompanyReportInnForm'
+import { navigateToCompany } from './companyLandingNavigation'
 
 export function CompanyLandingPage() {
-  const navigate = useNavigate()
   const [inn, setInn] = useState('')
   const [isNavigating, setIsNavigating] = useState(false)
   const transitionStarted = useRef(false)
@@ -13,7 +12,7 @@ export function CompanyLandingPage() {
     if (transitionStarted.current) return
     transitionStarted.current = true
     setIsNavigating(true)
-    navigate(`/company/${targetInn}`)
+    navigateToCompany(targetInn)
   }
 
   return (

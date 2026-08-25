@@ -1,0 +1,2319 @@
+{
+  "contract_version": "company_public_h2_v1",
+  "constraint_ids": [
+    "valid_dense",
+    "root_closed_extra_reject",
+    "nested_required_key_reject",
+    "explicit_optional_key_reject",
+    "integer_string_coercion_reject",
+    "integer_boolean_coercion_reject",
+    "integer_max_boundary_accept",
+    "integer_max_adjacent_reject",
+    "integer_arbitrary_precision_reject",
+    "unicode_nfc_reject",
+    "python_strip_nel_blank_reject",
+    "python_strip_feff_nonblank_accept",
+    "identity_twelve_digit_inn_accept",
+    "identity_inn_pattern_reject",
+    "identity_ascii_date_reject",
+    "identity_truthy_optional_empty_accept",
+    "status_nonempty_date_reject",
+    "address_empty_region_accept",
+    "tax_mode_plain_strings_accept",
+    "manager_plain_strings_accept",
+    "owner_plain_strings_accept",
+    "employees_plain_strings_accept",
+    "source_empty_effective_date_accept",
+    "source_nonempty_effective_date_reject",
+    "limitation_empty_field_id_accept",
+    "identity_short_name_blank_reject",
+    "code_length_64_accept",
+    "code_length_65_reject",
+    "decimal_negative_zero_accept",
+    "decimal_noncanonical_adjacent_reject",
+    "canonical_identity_binding_reject",
+    "uuid_pattern_reject",
+    "path_pattern_reject",
+    "utc_ascii_digits_reject",
+    "block_order_reject",
+    "coverage_order_reject",
+    "source_prefix_order_reject",
+    "source_one_boundary_accept",
+    "source_zero_adjacent_reject",
+    "source_four_adjacent_reject",
+    "legacy_version_accept",
+    "v3_capability_reject",
+    "legacy_indexable_reject",
+    "indexable_scope_reject",
+    "navigation_binding_reject",
+    "claims_binding_reject",
+    "coverage_missing_limitation_link_reject",
+    "limitation_duplicate_code_reject",
+    "coverage_unavailable_without_limitation_reject",
+    "block_coverage_equivalence_reject",
+    "owner_share_cooccurrence_reject",
+    "tax_mode_order_reject",
+    "additional_activity_primary_reject",
+    "narrative_statement_duplicate_reject",
+    "comment_evidence_duplicate_reject",
+    "comment_text_empty_reject",
+    "narrative_description_min_boundary_accept",
+    "narrative_description_min_adjacent_reject",
+    "narrative_description_max_boundary_accept",
+    "narrative_description_max_adjacent_reject",
+    "source_normalization_code_reject",
+    "coverage_limitation_duplicate_reject",
+    "coverage_block_id_reject",
+    "limitation_block_id_reject",
+    "comment_evidence_code_reject",
+    "comment_chart_literal_reject",
+    "action_tuple_short_reject",
+    "breadcrumb_tuple_short_reject",
+    "cta_literal_reject",
+    "projection_digest_negative",
+    "projection_digest_format_reject",
+    "coverage_count_zero_boundary_accept",
+    "coverage_count_negative_adjacent_reject",
+    "tax_modes_cap_adjacent_reject",
+    "activities_cap_adjacent_reject",
+    "managers_cap_adjacent_reject",
+    "owners_cap_adjacent_reject",
+    "safe_case_courts_cap_adjacent_reject",
+    "safe_case_opponents_cap_adjacent_reject",
+    "limitations_cap_adjacent_reject",
+    "narrative_statements_min_adjacent_reject",
+    "narrative_comments_cap_adjacent_reject",
+    "comment_evidence_min_adjacent_reject",
+    "f1_year_lower_boundary_accept",
+    "f1_year_lower_adjacent_reject",
+    "f1_segment_order_reject",
+    "f1_arithmetic_reject",
+    "finance_money_units_reject",
+    "axis_must_contain_zero_reject",
+    "interval_decimal_shape_reject",
+    "f2_gap_accept",
+    "f2_gap_shape_reject",
+    "f2_denominator_unavailable_accept",
+    "f2_denominator_shape_reject",
+    "f2_period_tuple_reject",
+    "f2_window_reject",
+    "f2_year_lower_adjacent_reject",
+    "f3_nullable_accept",
+    "f3_window_reject",
+    "f3_summary_id_reject",
+    "f3_points_tuple_reject",
+    "f3_summary_nullable_accept",
+    "f4_denominator_unavailable_accept",
+    "f4_mode_shape_reject",
+    "f4_revenue_literal_reject",
+    "f4_geometry_tuple_reject",
+    "f5_nullable_accept",
+    "f5_year_order_reject",
+    "f5_row_order_reject",
+    "f5_cell_year_reject",
+    "f5_rows_tuple_reject",
+    "f5_cells_tuple_reject",
+    "f5_plain_label_empty_accept",
+    "axis_zero_boundary_accept",
+    "arbitration_summary_source_nullable_accept",
+    "arbitration_summary_count_zero_boundary_accept",
+    "arbitration_summary_count_negative_reject",
+    "arbitration_summary_plain_completion_accept",
+    "arbitration_summary_year_lower_boundary_accept",
+    "arbitration_summary_year_lower_adjacent_reject",
+    "safe_case_nullable_accept",
+    "safe_case_plain_dates_accept",
+    "safe_case_plain_strings_empty_accept",
+    "safe_case_year_lower_adjacent_reject",
+    "safe_case_days_negative_reject",
+    "safe_case_amount_decimal_reject",
+    "safe_opponent_literal_reject",
+    "detail_scope_cap_boundary_accept",
+    "detail_scope_cap_adjacent_reject",
+    "detail_scope_shown_mismatch_reject",
+    "detail_scope_literal_cap_reject",
+    "detail_scope_blank_label_reject",
+    "a1_view_literal_reject",
+    "a1_bucket_count_negative_reject",
+    "a1_role_details_tuple_reject",
+    "a1_role_literal_reject",
+    "a1_buckets_cap_adjacent_reject",
+    "a1_all_time_negative_reject",
+    "a2_denominator_negative_reject",
+    "a2_bars_tuple_reject",
+    "a2_role_literal_reject",
+    "a2_percent_nullable_accept",
+    "a2_cases_cap_adjacent_reject",
+    "a3_denominator_negative_reject",
+    "a3_bars_tuple_reject",
+    "a3_outcome_literal_reject",
+    "a4_view_literal_reject",
+    "a4_currency_axis_reject",
+    "a4_currency_groups_cap_adjacent_reject",
+    "a4_geometries_cap_adjacent_reject",
+    "a4_cases_cap_adjacent_reject",
+    "a4_missing_amount_negative_reject",
+    "a5_view_literal_reject",
+    "a5_opponent_count_adjacent_reject",
+    "a5_display_kind_reject",
+    "a5_groups_cap_adjacent_reject",
+    "a5_cases_cap_adjacent_reject",
+    "a5_missing_count_negative_reject",
+    "role_detail_cases_cap_adjacent_reject"
+  ],
+  "cases": [
+    {
+      "id": "valid_dense",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": []
+    },
+    {
+      "id": "root_closed_extra_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "add",
+          "path": "/unexpected",
+          "raw": "true"
+        }
+      ]
+    },
+    {
+      "id": "nested_required_key_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "remove",
+          "path": "/blocks/arbitration_a5/groups/0/display_name"
+        }
+      ]
+    },
+    {
+      "id": "explicit_optional_key_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "remove",
+          "path": "/identity/short_name"
+        }
+      ]
+    },
+    {
+      "id": "integer_string_coercion_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/employees/count",
+          "raw": "\"1\""
+        }
+      ]
+    },
+    {
+      "id": "integer_boolean_coercion_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/employees/count",
+          "raw": "true"
+        }
+      ]
+    },
+    {
+      "id": "integer_max_boundary_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/employees/count",
+          "raw": "999999999"
+        }
+      ]
+    },
+    {
+      "id": "integer_max_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/employees/count",
+          "raw": "1000000000"
+        }
+      ]
+    },
+    {
+      "id": "integer_arbitrary_precision_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/employees/count",
+          "raw": "123456789012345678901234567890"
+        }
+      ]
+    },
+    {
+      "id": "unicode_nfc_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/identity/short_name",
+          "raw": "\"é\""
+        }
+      ]
+    },
+    {
+      "id": "python_strip_nel_blank_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/identity/display_name",
+          "raw": "\"\""
+        }
+      ]
+    },
+    {
+      "id": "python_strip_feff_nonblank_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/identity/short_name",
+          "raw": "\"﻿\""
+        }
+      ]
+    },
+    {
+      "id": "identity_twelve_digit_inn_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/identity/inn",
+          "raw": "\"770123456789\""
+        },
+        {
+          "op": "replace",
+          "path": "/canonical_path",
+          "raw": "\"/company/770123456789-dense-corpus\""
+        },
+        {
+          "op": "replace",
+          "path": "/breadcrumbs/1/path",
+          "raw": "\"/company/770123456789-dense-corpus\""
+        }
+      ]
+    },
+    {
+      "id": "identity_inn_pattern_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/identity/inn",
+          "raw": "\"bad\""
+        }
+      ]
+    },
+    {
+      "id": "identity_ascii_date_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/identity/registration_date",
+          "raw": "\"٢٠٠٢-01-01\""
+        }
+      ]
+    },
+    {
+      "id": "identity_truthy_optional_empty_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/identity/ogrn",
+          "raw": "\"\""
+        },
+        {
+          "op": "replace",
+          "path": "/identity/kpp",
+          "raw": "\"\""
+        },
+        {
+          "op": "replace",
+          "path": "/identity/registration_date",
+          "raw": "\"\""
+        },
+        {
+          "op": "replace",
+          "path": "/identity/dissolution_date",
+          "raw": "\"\""
+        },
+        {
+          "op": "replace",
+          "path": "/identity/status/effective_date",
+          "raw": "\"\""
+        }
+      ]
+    },
+    {
+      "id": "status_nonempty_date_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/identity/status/effective_date",
+          "raw": "\"not-a-date\""
+        }
+      ]
+    },
+    {
+      "id": "address_empty_region_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/address/region",
+          "raw": "\"\""
+        }
+      ]
+    },
+    {
+      "id": "tax_mode_plain_strings_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/tax_modes/0/label",
+          "raw": "\"\""
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/tax_modes/0/effective_date",
+          "raw": "\"not-a-date\""
+        }
+      ]
+    },
+    {
+      "id": "manager_plain_strings_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/managers/0/name",
+          "raw": "\"\""
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/managers/0/role",
+          "raw": "\"\""
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/managers/0/appointed_at",
+          "raw": "\"not-a-date\""
+        }
+      ]
+    },
+    {
+      "id": "owner_plain_strings_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/owners/0/share_display",
+          "raw": "\"\""
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/owners/0/effective_date",
+          "raw": "\"not-a-date\""
+        }
+      ]
+    },
+    {
+      "id": "employees_plain_strings_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/employees/period",
+          "raw": "\"\""
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/employees/effective_date",
+          "raw": "\"not-a-date\""
+        }
+      ]
+    },
+    {
+      "id": "source_empty_effective_date_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/sources/0/effective_at",
+          "raw": "\"\""
+        }
+      ]
+    },
+    {
+      "id": "source_nonempty_effective_date_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/sources/0/effective_at",
+          "raw": "\"not-a-date\""
+        }
+      ]
+    },
+    {
+      "id": "limitation_empty_field_id_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/limitations/0/field_id",
+          "raw": "\"\""
+        }
+      ]
+    },
+    {
+      "id": "identity_short_name_blank_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/identity/short_name",
+          "raw": "\"\""
+        }
+      ]
+    },
+    {
+      "id": "code_length_64_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/narrative/renderer_version",
+          "raw": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\""
+        }
+      ]
+    },
+    {
+      "id": "code_length_65_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/narrative/renderer_version",
+          "raw": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\""
+        }
+      ]
+    },
+    {
+      "id": "decimal_negative_zero_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f1/axis/axis_min_decimal",
+          "raw": "\"-0\""
+        }
+      ]
+    },
+    {
+      "id": "decimal_noncanonical_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f1/axis/axis_min_decimal",
+          "raw": "\"0.0\""
+        }
+      ]
+    },
+    {
+      "id": "canonical_identity_binding_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/canonical_path",
+          "raw": "\"/company/5001000000-dense-corpus\""
+        }
+      ]
+    },
+    {
+      "id": "uuid_pattern_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/report_id",
+          "raw": "\"00000000-0000-0000-0000-000000000001\""
+        }
+      ]
+    },
+    {
+      "id": "path_pattern_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/canonical_path",
+          "raw": "\"/\""
+        }
+      ]
+    },
+    {
+      "id": "utc_ascii_digits_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/checked_at",
+          "raw": "\"٢٠٢٦-01-01T00:00:00Z\""
+        }
+      ]
+    },
+    {
+      "id": "block_order_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "swap",
+          "path": "/block_order/0",
+          "from": "/block_order/1"
+        }
+      ]
+    },
+    {
+      "id": "coverage_order_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "swap",
+          "path": "/coverage/0/block_id",
+          "from": "/coverage/1/block_id"
+        }
+      ]
+    },
+    {
+      "id": "source_prefix_order_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "swap",
+          "path": "/sources/0/dataset",
+          "from": "/sources/1/dataset"
+        }
+      ]
+    },
+    {
+      "id": "source_one_boundary_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "remove",
+          "path": "/sources/2"
+        },
+        {
+          "op": "remove",
+          "path": "/sources/1"
+        }
+      ]
+    },
+    {
+      "id": "source_zero_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/sources",
+          "raw": "[]"
+        }
+      ]
+    },
+    {
+      "id": "source_four_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "add",
+          "path": "/sources/3",
+          "raw": "{\"dataset\":\"arbitration\",\"received_at\":\"2026-01-01T00:00:00Z\",\"effective_at\":null,\"period\":null,\"normalization_version\":\"v1\",\"evidence_version\":\"v1\"}"
+        }
+      ]
+    },
+    {
+      "id": "legacy_version_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/report_version",
+          "raw": "\"2\""
+        },
+        {
+          "op": "replace",
+          "path": "/snapshot_capability",
+          "raw": "\"legacy_read_only\""
+        },
+        {
+          "op": "replace",
+          "path": "/indexable",
+          "raw": "false"
+        }
+      ]
+    },
+    {
+      "id": "v3_capability_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/snapshot_capability",
+          "raw": "\"legacy_read_only\""
+        }
+      ]
+    },
+    {
+      "id": "legacy_indexable_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/report_version",
+          "raw": "\"2\""
+        },
+        {
+          "op": "replace",
+          "path": "/snapshot_capability",
+          "raw": "\"legacy_read_only\""
+        },
+        {
+          "op": "replace",
+          "path": "/indexable",
+          "raw": "true"
+        }
+      ]
+    },
+    {
+      "id": "indexable_scope_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/projection_scope",
+          "raw": "\"staged_publication\""
+        }
+      ]
+    },
+    {
+      "id": "navigation_binding_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/breadcrumbs/1/label",
+          "raw": "\"Другая компания\""
+        }
+      ]
+    },
+    {
+      "id": "claims_binding_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/primary_claim_cta/path",
+          "raw": "\"/claims?report_id=other\""
+        }
+      ]
+    },
+    {
+      "id": "coverage_missing_limitation_link_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/coverage/2/state",
+          "raw": "\"partial\""
+        },
+        {
+          "op": "add",
+          "path": "/coverage/2/limitation_codes/0",
+          "raw": "\"not_known\""
+        }
+      ]
+    },
+    {
+      "id": "limitation_duplicate_code_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "add",
+          "path": "/limitations/1",
+          "raw": "{\"code\":\"requisites_partial\",\"block_id\":\"requisites\",\"field_id\":null,\"message\":\"Данные представлены частично.\"}"
+        }
+      ]
+    },
+    {
+      "id": "coverage_unavailable_without_limitation_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/coverage/2/state",
+          "raw": "\"partial\""
+        }
+      ]
+    },
+    {
+      "id": "block_coverage_equivalence_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f1",
+          "raw": "null"
+        }
+      ]
+    },
+    {
+      "id": "owner_share_cooccurrence_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/owners/0/share_display",
+          "raw": "null"
+        }
+      ]
+    },
+    {
+      "id": "tax_mode_order_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "add",
+          "path": "/blocks/requisites/tax_modes/0",
+          "raw": "{\"mode_id\":\"srp_sign\",\"label\":\"\",\"applies\":true,\"effective_date\":\"not-a-date\"}"
+        }
+      ]
+    },
+    {
+      "id": "additional_activity_primary_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/additional_activities/0/is_primary",
+          "raw": "true"
+        }
+      ]
+    },
+    {
+      "id": "narrative_statement_duplicate_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/narrative/statement_ids/1",
+          "raw": "\"statement-1\""
+        }
+      ]
+    },
+    {
+      "id": "comment_evidence_duplicate_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "add",
+          "path": "/narrative/comments/0/evidence_ids/1",
+          "raw": "\"evidence-1\""
+        }
+      ]
+    },
+    {
+      "id": "comment_text_empty_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/narrative/comments/0/text",
+          "raw": "\"\""
+        }
+      ]
+    },
+    {
+      "id": "narrative_description_min_boundary_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/narrative/description",
+          "raw": "\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\""
+        }
+      ]
+    },
+    {
+      "id": "narrative_description_min_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/narrative/description",
+          "raw": "\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\""
+        }
+      ]
+    },
+    {
+      "id": "narrative_description_max_boundary_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/narrative/description",
+          "raw": "\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\""
+        }
+      ]
+    },
+    {
+      "id": "narrative_description_max_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/narrative/description",
+          "raw": "\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\""
+        }
+      ]
+    },
+    {
+      "id": "source_normalization_code_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/sources/0/normalization_version",
+          "raw": "\"\""
+        }
+      ]
+    },
+    {
+      "id": "coverage_limitation_duplicate_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "add",
+          "path": "/coverage/0/limitation_codes/1",
+          "raw": "\"requisites_partial\""
+        }
+      ]
+    },
+    {
+      "id": "coverage_block_id_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/coverage/0/block_id",
+          "raw": "\"unknown\""
+        }
+      ]
+    },
+    {
+      "id": "limitation_block_id_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/limitations/0/block_id",
+          "raw": "\"unknown\""
+        }
+      ]
+    },
+    {
+      "id": "comment_evidence_code_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/narrative/comments/0/evidence_ids/0",
+          "raw": "\"\""
+        }
+      ]
+    },
+    {
+      "id": "comment_chart_literal_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/narrative/comments/0/chart_id",
+          "raw": "\"unknown\""
+        }
+      ]
+    },
+    {
+      "id": "action_tuple_short_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "remove",
+          "path": "/actions/1"
+        }
+      ]
+    },
+    {
+      "id": "breadcrumb_tuple_short_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "remove",
+          "path": "/breadcrumbs/1"
+        }
+      ]
+    },
+    {
+      "id": "cta_literal_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/primary_claim_cta/button_label",
+          "raw": "\"Подготовить\""
+        }
+      ]
+    },
+    {
+      "id": "projection_digest_negative",
+      "expect": "reject",
+      "recompute_digest": false,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/projection_digest",
+          "raw": "\"0000000000000000000000000000000000000000000000000000000000000000\""
+        }
+      ]
+    },
+    {
+      "id": "projection_digest_format_reject",
+      "expect": "reject",
+      "recompute_digest": false,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/projection_digest",
+          "raw": "\"000000000000000000000000000000000000000000000000000000000000000\""
+        }
+      ]
+    },
+    {
+      "id": "coverage_count_zero_boundary_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/coverage/0/total",
+          "raw": "0"
+        }
+      ]
+    },
+    {
+      "id": "coverage_count_negative_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/coverage/0/total",
+          "raw": "-1"
+        }
+      ]
+    },
+    {
+      "id": "tax_modes_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/tax_modes",
+          "raw": "[null,null,null,null,null,null,null,null,null]"
+        }
+      ]
+    },
+    {
+      "id": "activities_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/additional_activities",
+          "raw": "[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]"
+        }
+      ]
+    },
+    {
+      "id": "managers_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/managers",
+          "raw": "[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]"
+        }
+      ]
+    },
+    {
+      "id": "owners_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/requisites/owners",
+          "raw": "[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]"
+        }
+      ]
+    },
+    {
+      "id": "safe_case_courts_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/courts",
+          "raw": "[null,null,null,null,null,null,null,null,null,null,null]"
+        }
+      ]
+    },
+    {
+      "id": "safe_case_opponents_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/opponents",
+          "raw": "[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]"
+        }
+      ]
+    },
+    {
+      "id": "limitations_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/limitations",
+          "raw": "[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]"
+        }
+      ]
+    },
+    {
+      "id": "narrative_statements_min_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/narrative/statement_ids",
+          "raw": "[]"
+        }
+      ]
+    },
+    {
+      "id": "narrative_comments_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/narrative/comments",
+          "raw": "[null,null,null]"
+        }
+      ]
+    },
+    {
+      "id": "comment_evidence_min_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/narrative/comments/0/evidence_ids",
+          "raw": "[]"
+        }
+      ]
+    },
+    {
+      "id": "f1_year_lower_boundary_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f1/year",
+          "raw": "1900"
+        }
+      ]
+    },
+    {
+      "id": "f1_year_lower_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f1/year",
+          "raw": "1899"
+        }
+      ]
+    },
+    {
+      "id": "f1_segment_order_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "swap",
+          "path": "/blocks/finance_f1/segments/0",
+          "from": "/blocks/finance_f1/segments/1"
+        }
+      ]
+    },
+    {
+      "id": "f1_arithmetic_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f1/difference/source_thousand_decimal",
+          "raw": "\"21\""
+        }
+      ]
+    },
+    {
+      "id": "finance_money_units_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f1/cash_1250/rub_decimal",
+          "raw": "\"10001\""
+        }
+      ]
+    },
+    {
+      "id": "axis_must_contain_zero_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f1/axis/axis_min_decimal",
+          "raw": "\"1\""
+        }
+      ]
+    },
+    {
+      "id": "interval_decimal_shape_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f1/segments/0/geometry/start_ratio_decimal",
+          "raw": "\"0.0\""
+        }
+      ]
+    },
+    {
+      "id": "f2_gap_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f2/periods/0",
+          "raw": "{\"year\":2019,\"state\":\"gap\",\"equity_1300\":null,\"long_liabilities_1400\":null,\"short_liabilities_1500\":null,\"debt\":null,\"denominator\":null,\"equity_share_decimal\":null,\"debt_share_decimal\":null,\"mode\":\"unavailable\",\"axis\":null,\"geometry_by_metric\":[null,null]}"
+        }
+      ]
+    },
+    {
+      "id": "f2_gap_shape_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f2/periods/0/state",
+          "raw": "\"gap\""
+        }
+      ]
+    },
+    {
+      "id": "f2_denominator_unavailable_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f2/periods/0/state",
+          "raw": "\"denominator_unavailable\""
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f2/periods/0/mode",
+          "raw": "\"unavailable\""
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f2/periods/0/equity_share_decimal",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f2/periods/0/debt_share_decimal",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f2/periods/0/axis",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f2/periods/0/geometry_by_metric",
+          "raw": "[null,null]"
+        }
+      ]
+    },
+    {
+      "id": "f2_denominator_shape_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f2/periods/0/state",
+          "raw": "\"denominator_unavailable\""
+        }
+      ]
+    },
+    {
+      "id": "f2_period_tuple_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "remove",
+          "path": "/blocks/finance_f2/periods/6"
+        }
+      ]
+    },
+    {
+      "id": "f2_window_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f2/periods/0/year",
+          "raw": "2018"
+        }
+      ]
+    },
+    {
+      "id": "f2_year_lower_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f2/periods/0/year",
+          "raw": "1899"
+        }
+      ]
+    },
+    {
+      "id": "f3_nullable_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f3/points/0/revenue_2110",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f3/points/0/assets_1600",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f3/points/0/revenue_yoy_decimal",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f3/points/0/assets_yoy_decimal",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f3/points/0/geometry_by_metric",
+          "raw": "[null,null]"
+        }
+      ]
+    },
+    {
+      "id": "f3_window_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f3/points/0/year",
+          "raw": "2018"
+        }
+      ]
+    },
+    {
+      "id": "f3_summary_id_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f3/revenue_summary/metric_id",
+          "raw": "\"assets_1600\""
+        }
+      ]
+    },
+    {
+      "id": "f3_points_tuple_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "remove",
+          "path": "/blocks/finance_f3/points/6"
+        }
+      ]
+    },
+    {
+      "id": "f3_summary_nullable_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f3/revenue_summary/comparison_start_year",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f3/revenue_summary/comparison_end_year",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f3/revenue_summary/multiple_decimal",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f3/revenue_summary/change",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f3/revenue_summary/axis",
+          "raw": "null"
+        }
+      ]
+    },
+    {
+      "id": "f4_denominator_unavailable_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f4/mode",
+          "raw": "\"denominator_unavailable\""
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f4/revenue_per_100_decimal",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f4/gross_per_100_decimal",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f4/operating_per_100_decimal",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f4/net_per_100_decimal",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f4/axis",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f4/geometry_by_metric",
+          "raw": "[null,null,null,null]"
+        }
+      ]
+    },
+    {
+      "id": "f4_mode_shape_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f4/mode",
+          "raw": "\"denominator_unavailable\""
+        }
+      ]
+    },
+    {
+      "id": "f4_revenue_literal_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f4/revenue_per_100_decimal",
+          "raw": "\"100.0\""
+        }
+      ]
+    },
+    {
+      "id": "f4_geometry_tuple_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "remove",
+          "path": "/blocks/finance_f4/geometry_by_metric/3"
+        }
+      ]
+    },
+    {
+      "id": "f5_nullable_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f5/rows/0/cells/0/value",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f5/rows/0/cells/0/yoy_decimal",
+          "raw": "null"
+        }
+      ]
+    },
+    {
+      "id": "f5_year_order_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "swap",
+          "path": "/blocks/finance_f5/years/0",
+          "from": "/blocks/finance_f5/years/1"
+        }
+      ]
+    },
+    {
+      "id": "f5_row_order_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "swap",
+          "path": "/blocks/finance_f5/rows/0",
+          "from": "/blocks/finance_f5/rows/1"
+        }
+      ]
+    },
+    {
+      "id": "f5_cell_year_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f5/rows/0/cells/0/year",
+          "raw": "2018"
+        }
+      ]
+    },
+    {
+      "id": "f5_rows_tuple_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "remove",
+          "path": "/blocks/finance_f5/rows/8"
+        }
+      ]
+    },
+    {
+      "id": "f5_cells_tuple_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "remove",
+          "path": "/blocks/finance_f5/rows/0/cells/6"
+        }
+      ]
+    },
+    {
+      "id": "f5_plain_label_empty_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f5/rows/0/label",
+          "raw": "\"\""
+        }
+      ]
+    },
+    {
+      "id": "axis_zero_boundary_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f1/axis/axis_min_decimal",
+          "raw": "\"0\""
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f1/axis/axis_max_decimal",
+          "raw": "\"0\""
+        }
+      ]
+    },
+    {
+      "id": "arbitration_summary_source_nullable_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a1/summary/source_total",
+          "raw": "null"
+        }
+      ]
+    },
+    {
+      "id": "arbitration_summary_count_zero_boundary_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a1/summary/rows_observed",
+          "raw": "0"
+        }
+      ]
+    },
+    {
+      "id": "arbitration_summary_count_negative_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a1/summary/rows_observed",
+          "raw": "-1"
+        }
+      ]
+    },
+    {
+      "id": "arbitration_summary_plain_completion_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a1/summary/completion_reason",
+          "raw": "\"\""
+        }
+      ]
+    },
+    {
+      "id": "arbitration_summary_year_lower_boundary_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a1/summary/calendar_start_year",
+          "raw": "1900"
+        }
+      ]
+    },
+    {
+      "id": "arbitration_summary_year_lower_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a1/summary/calendar_start_year",
+          "raw": "1899"
+        }
+      ]
+    },
+    {
+      "id": "safe_case_nullable_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/case_number",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/year",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/amount",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/start_date",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/update_date",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/days_to_last_update",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/instance_count",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/courts",
+          "raw": "[]"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/opponents",
+          "raw": "[]"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/public_case_url",
+          "raw": "null"
+        }
+      ]
+    },
+    {
+      "id": "safe_case_plain_dates_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/start_date",
+          "raw": "\"not-a-date\""
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/update_date",
+          "raw": "\"also-not-a-date\""
+        }
+      ]
+    },
+    {
+      "id": "safe_case_plain_strings_empty_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/case_number",
+          "raw": "\"\""
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/result_detail",
+          "raw": "\"\""
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/public_case_url",
+          "raw": "\"\""
+        }
+      ]
+    },
+    {
+      "id": "safe_case_year_lower_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/year",
+          "raw": "1899"
+        }
+      ]
+    },
+    {
+      "id": "safe_case_days_negative_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/days_to_last_update",
+          "raw": "-1"
+        }
+      ]
+    },
+    {
+      "id": "safe_case_amount_decimal_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/amount/source_decimal",
+          "raw": "\"0.0\""
+        }
+      ]
+    },
+    {
+      "id": "safe_opponent_literal_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases/0/opponents/0/display_kind",
+          "raw": "\"unknown\""
+        }
+      ]
+    },
+    {
+      "id": "detail_scope_cap_boundary_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a5/scope/source_total",
+          "raw": "20"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a5/scope/rows_received",
+          "raw": "20"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a5/scope/eligible_total",
+          "raw": "20"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a5/scope/shown",
+          "raw": "20"
+        }
+      ]
+    },
+    {
+      "id": "detail_scope_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a5/scope/shown",
+          "raw": "21"
+        }
+      ]
+    },
+    {
+      "id": "detail_scope_shown_mismatch_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a5/scope/eligible_total",
+          "raw": "2"
+        }
+      ]
+    },
+    {
+      "id": "detail_scope_literal_cap_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a5/scope/cap",
+          "raw": "19"
+        }
+      ]
+    },
+    {
+      "id": "detail_scope_blank_label_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a5/scope/label",
+          "raw": "\"\""
+        }
+      ]
+    },
+    {
+      "id": "a1_view_literal_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a1/view_id",
+          "raw": "\"unknown\""
+        }
+      ]
+    },
+    {
+      "id": "a1_bucket_count_negative_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a1/buckets/0/plaintiff_count",
+          "raw": "-1"
+        }
+      ]
+    },
+    {
+      "id": "a1_role_details_tuple_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "remove",
+          "path": "/blocks/arbitration_a1/buckets/0/role_details/3"
+        }
+      ]
+    },
+    {
+      "id": "a1_role_literal_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a1/buckets/0/role_details/0/role",
+          "raw": "\"invalid\""
+        }
+      ]
+    },
+    {
+      "id": "a1_buckets_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a1/buckets",
+          "raw": "[null,null,null,null,null,null,null,null,null,null,null,null]"
+        }
+      ]
+    },
+    {
+      "id": "a1_all_time_negative_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a1/all_time_case_count",
+          "raw": "-1"
+        }
+      ]
+    },
+    {
+      "id": "a2_denominator_negative_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a2/denominator",
+          "raw": "-1"
+        }
+      ]
+    },
+    {
+      "id": "a2_bars_tuple_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "remove",
+          "path": "/blocks/arbitration_a2/bars/3"
+        }
+      ]
+    },
+    {
+      "id": "a2_role_literal_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a2/bars/0/category_id",
+          "raw": "\"invalid\""
+        }
+      ]
+    },
+    {
+      "id": "a2_percent_nullable_accept",
+      "expect": "accept",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a2/bars/0/percent_decimal",
+          "raw": "null"
+        }
+      ]
+    },
+    {
+      "id": "a2_cases_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a2/bars/0/cases",
+          "raw": "[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]"
+        }
+      ]
+    },
+    {
+      "id": "a3_denominator_negative_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a3/denominator",
+          "raw": "-1"
+        }
+      ]
+    },
+    {
+      "id": "a3_bars_tuple_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "remove",
+          "path": "/blocks/arbitration_a3/bars/3"
+        }
+      ]
+    },
+    {
+      "id": "a3_outcome_literal_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a3/bars/0/category_id",
+          "raw": "\"invalid\""
+        }
+      ]
+    },
+    {
+      "id": "a4_view_literal_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/view_id",
+          "raw": "\"unknown\""
+        }
+      ]
+    },
+    {
+      "id": "a4_currency_axis_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/axis/axis_min_decimal",
+          "raw": "\"1\""
+        }
+      ]
+    },
+    {
+      "id": "a4_currency_groups_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups",
+          "raw": "[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]"
+        }
+      ]
+    },
+    {
+      "id": "a4_geometries_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/case_geometries",
+          "raw": "[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]"
+        }
+      ]
+    },
+    {
+      "id": "a4_cases_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/currency_groups/0/cases",
+          "raw": "[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]"
+        }
+      ]
+    },
+    {
+      "id": "a4_missing_amount_negative_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a4/missing_amount_count",
+          "raw": "-1"
+        }
+      ]
+    },
+    {
+      "id": "a5_view_literal_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a5/view_id",
+          "raw": "\"unknown\""
+        }
+      ]
+    },
+    {
+      "id": "a5_opponent_count_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a5/groups/0/case_count",
+          "raw": "0"
+        }
+      ]
+    },
+    {
+      "id": "a5_display_kind_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a5/groups/0/display_kind",
+          "raw": "\"unknown\""
+        }
+      ]
+    },
+    {
+      "id": "a5_groups_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a5/groups",
+          "raw": "[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]"
+        }
+      ]
+    },
+    {
+      "id": "a5_cases_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a5/groups/0/cases",
+          "raw": "[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]"
+        }
+      ]
+    },
+    {
+      "id": "a5_missing_count_negative_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a5/cases_without_safe_opponent",
+          "raw": "-1"
+        }
+      ]
+    },
+    {
+      "id": "role_detail_cases_cap_adjacent_reject",
+      "expect": "reject",
+      "recompute_digest": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/arbitration_a1/buckets/0/role_details/0/cases",
+          "raw": "[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]"
+        }
+      ]
+    }
+  ]
+}

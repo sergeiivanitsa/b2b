@@ -229,8 +229,8 @@ iterations:
   - id: 22
     slug: company-card-v2-page-shell
     title: "Каркас страницы, SSR и CTA Company Card v2"
-    status: planned
-    branch: pending
+    status: ready_for_merge
+    branch: feat/iteration-22-company-card-v2-page-shell
     commit: pending
     merged_at: null
     block_reason: null

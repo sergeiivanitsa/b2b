@@ -35,6 +35,7 @@ from product_api.db.session import get_session
 from product_api.main import app
 from product_api.routers import company_reports as api_routes
 from product_api.routers import company_reports_public as public_routes
+from product_api.company_reports.public_document_service import PublicDocumentKind, ResolvedPublicDocument
 
 
 def _page():
@@ -159,12 +160,12 @@ def test_public_page_serves_ssr_and_rejects_query_without_writes(monkeypatch):
     dto = build_public_h1(report, projection_scope="published", persisted_canonical_path=page.publication.canonical_path, persisted_indexable=True)
 
     async def fake_resolve(*_args, **_kwargs):
-        return dto
+        return ResolvedPublicDocument(PublicDocumentKind.H1, dto, False)
 
     async def fake_session():
         yield object()
 
-    monkeypatch.setattr(public_routes, "resolve_public_h1", fake_resolve)
+    monkeypatch.setattr(public_routes, "resolve_public_document", fake_resolve)
     app.dependency_overrides[get_session] = fake_session
     try:
         with TestClient(app) as client:
@@ -174,7 +175,7 @@ def test_public_page_serves_ssr_and_rejects_query_without_writes(monkeypatch):
             assert "<script" not in response.text
             for section in ("Реквизиты", "Арбитраж", "Покрытие", "Источники", "Ограничения"):
                 assert section in response.text
-            assert client.get("/company/0000000000-ooo-test?x=1").status_code == 404
+            assert client.get("/company/0000000000-ooo-test?x=1").status_code == 422
     finally:
         app.dependency_overrides.pop(get_session, None)
 
@@ -185,13 +186,16 @@ def test_api_and_ssr_have_complete_deterministic_escaped_partial_dto_parity(
     dto = _rich_partial_dto()
 
     async def fake_resolve(*_args, **_kwargs):
+        return ResolvedPublicDocument(PublicDocumentKind.H1, dto, False)
+
+    async def fake_h1_resolve(*_args, **_kwargs):
         return dto
 
     async def fake_session():
         yield object()
 
-    monkeypatch.setattr(api_routes, "resolve_public_h1", fake_resolve)
-    monkeypatch.setattr(public_routes, "resolve_public_h1", fake_resolve)
+    monkeypatch.setattr(api_routes, "resolve_public_h1", fake_h1_resolve)
+    monkeypatch.setattr(public_routes, "resolve_public_document", fake_resolve)
     monkeypatch.setattr(
         api_routes, "_enforce_report_rate_limit", lambda *_args, **_kwargs: None
     )
@@ -338,7 +342,7 @@ def test_ssr_unpublished_states_are_404_but_invalid_active_is_500(monkeypatch, e
         raise error
     async def fake_session():
         yield object()
-    monkeypatch.setattr(public_routes, "resolve_public_h1", fail)
+    monkeypatch.setattr(public_routes, "resolve_public_document", fail)
     app.dependency_overrides[get_session] = fake_session
     try:
         with TestClient(app) as client:
@@ -348,7 +352,7 @@ def test_ssr_unpublished_states_are_404_but_invalid_active_is_500(monkeypatch, e
 
     async def invalid(*_args, **_kwargs):
         raise PublicProjectionInvalidError()
-    monkeypatch.setattr(public_routes, "resolve_public_h1", invalid)
+    monkeypatch.setattr(public_routes, "resolve_public_document", invalid)
     app.dependency_overrides[get_session] = fake_session
     try:
         with TestClient(app) as client:
