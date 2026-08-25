@@ -1,6 +1,7 @@
 """Closed recursive public H2 DTOs for company_public_h2_v1."""
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from decimal import Decimal
@@ -8,15 +9,15 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from .canonical_json import canonical_json_bytes
+from .canonical_json import canonical_digest, canonical_json_bytes
 
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _INN = re.compile(r"^(?:[0-9]{10}|[0-9]{12})$")
 _OGRN = re.compile(r"^(?:[0-9]{13}|[0-9]{15})$")
 _KPP = re.compile(r"^[0-9]{9}$")
-_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$")
+_DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+_UTC = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z$")
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 _PATH = re.compile(r"^/[A-Za-z0-9_./?=&-]{1,2047}$")
 _DECIMAL = re.compile(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?$")
@@ -654,14 +655,30 @@ class CompanyPublicH2Response(PublicH2Model):
     def _valid(self) -> "CompanyPublicH2Response":
         if not _DIGEST.fullmatch(self.projection_digest) or not _DIGEST.fullmatch(self.chart_facts_hash) or not _UUID.fullmatch(self.report_id) or not _PATH.fullmatch(self.canonical_path) or not _UTC.fullmatch(self.checked_at) or not _DATE.fullmatch(self.checked_date):
             raise ValueError("invalid public root")
+        if not re.fullmatch(rf"/company/{re.escape(self.identity.inn)}-[a-z0-9]+(?:-[a-z0-9]+)*", self.canonical_path):
+            raise ValueError("canonical path does not bind identity INN")
         if self.block_order != BLOCK_ORDER or tuple(item.block_id for item in self.coverage) != COVERAGE_BLOCKS:
             raise ValueError("invalid block or coverage order")
         if len(self.sources) not in {1, 2, 3} or tuple(item.dataset for item in self.sources) != ("counterparty", "finance", "arbitration")[:len(self.sources)]:
             raise ValueError("invalid source order")
         if (self.report_version == "3") != (self.snapshot_capability == "card_v2") or (self.report_version in {"1", "2"} and self.indexable) or (self.indexable and self.projection_scope != "active_publication"):
             raise ValueError("invalid version/indexability")
-        if tuple(item.action_id for item in self.actions) != ("check_another_company", "prepare_claim") or self.breadcrumbs[0].current or not self.breadcrumbs[1].current:
+        if (
+            tuple(item.action_id for item in self.actions) != ("check_another_company", "prepare_claim")
+            or self.actions[0].label != "Проверить другую компанию"
+            or self.actions[0].path != "/"
+            or self.actions[1].label != "Подготовить претензию"
+            or self.breadcrumbs[0].label != "Главная"
+            or self.breadcrumbs[0].path != "/"
+            or self.breadcrumbs[0].current
+            or not self.breadcrumbs[1].current
+            or self.breadcrumbs[1].label != self.identity.display_name
+            or self.breadcrumbs[1].path != self.canonical_path
+        ):
             raise ValueError("invalid navigation")
+        expected_claim = f"/claims?report_id={self.report_id}"
+        if self.actions[1].path != expected_claim or self.primary_claim_cta.path != expected_claim:
+            raise ValueError("invalid Claims cross-binding")
         known = {item.code for item in self.limitations}
         if len(known) != len(self.limitations) or any(code not in known for item in self.coverage for code in item.limitation_codes):
             raise ValueError("invalid coverage limitation link")
@@ -674,4 +691,75 @@ class CompanyPublicH2Response(PublicH2Model):
         return self
 
 
-__all__ = [name for name in globals() if name.startswith("Public") or name in {"BLOCK_ORDER", "COVERAGE_BLOCKS", "CanonicalDecimal", "CompanyPublicH2Response"}]
+def parse_public_h2_json(raw: str | bytes) -> CompanyPublicH2Response:
+    """Parse one public H2 wire document without JSON or Pydantic coercion.
+
+    The browser boundary retains JSON integer tokens, while Python naturally
+    represents integer JSON tokens as ``int``. Floats are not part of the
+    public profile: decimal leaves are strings. Duplicate keys are rejected
+    before Pydantic sees a mapping, and the model dump equality check makes
+    every declared field explicit even where an in-process constructor has a
+    convenience default.
+    """
+    if isinstance(raw, bytes):
+        if len(raw) > 786_432:
+            raise ValueError("public H2 state exceeds byte limit")
+        try:
+            text = raw.decode("utf-8", "strict")
+        except UnicodeDecodeError as exc:
+            raise ValueError("public H2 state must be UTF-8") from exc
+    elif isinstance(raw, str):
+        if len(raw.encode("utf-8")) > 786_432:
+            raise ValueError("public H2 state exceeds byte limit")
+        text = raw
+    else:
+        raise TypeError("public H2 state must be str or bytes")
+
+    def reject_float(value: str) -> object:
+        raise ValueError(f"public H2 JSON float is forbidden: {value}")
+
+    def strict_integer(value: str) -> int:
+        if re.fullmatch(r"(?:0|-?[1-9][0-9]*)", value) is None:
+            raise ValueError(f"public H2 JSON integer is invalid: {value}")
+        return int(value)
+
+    def pairs(items: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError(f"duplicate public H2 JSON key: {key}")
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(
+            text,
+            object_pairs_hook=pairs,
+            parse_int=strict_integer,
+            parse_float=reject_float,
+            parse_constant=reject_float,
+        )
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid public H2 JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError("public H2 root must be an object")
+    dto = CompanyPublicH2Response.model_validate(value)
+
+    def exact(left: object, right: object) -> bool:
+        if type(left) is not type(right):
+            return False
+        if isinstance(left, dict):
+            return set(left) == set(right) and all(exact(item, right[key]) for key, item in left.items())
+        if isinstance(left, list):
+            return len(left) == len(right) and all(exact(a, b) for a, b in zip(left, right))
+        return left == right
+
+    if not exact(dto.model_dump(mode="json"), value):
+        raise ValueError("public H2 JSON must explicitly match the closed DTO")
+    expected = canonical_digest({key: item for key, item in value.items() if key != "projection_digest"})
+    if value.get("projection_digest") != expected:
+        raise ValueError("projection digest")
+    return dto
+
+
+__all__ = [name for name in globals() if name.startswith("Public") or name in {"BLOCK_ORDER", "COVERAGE_BLOCKS", "CanonicalDecimal", "CompanyPublicH2Response", "parse_public_h2_json"}]

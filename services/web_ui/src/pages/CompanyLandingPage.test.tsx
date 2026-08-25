@@ -1,19 +1,27 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { CompanyLandingPage } from './CompanyLandingPage'
+import { navigateToCompany } from './companyLandingNavigation'
 
-function LocationProbe() { return <p>{useLocation().pathname}</p> }
+afterEach(cleanup)
 
 describe('CompanyLandingPage', () => {
-  it('shares one INN value and navigates only once to the plain resolver', () => {
-    render(<MemoryRouter initialEntries={['/']}><Routes><Route path="/" element={<CompanyLandingPage />} /><Route path="/company/:key" element={<LocationProbe />} /></Routes></MemoryRouter>)
+  it('shares one INN value and fences double submit before full-document navigation', () => {
+    render(<MemoryRouter initialEntries={['/']}><CompanyLandingPage /></MemoryRouter>)
     const inputs = screen.getAllByLabelText('ИНН компании') as HTMLInputElement[]
     fireEvent.change(inputs[0], { target: { value: '7700 000 000' } })
     expect(inputs[1].value).toBe('7700000000')
     fireEvent.submit(inputs[1].closest('form')!)
-    expect(screen.getByText('/company/7700000000')).toBeTruthy()
+    expect(inputs[0].disabled).toBe(true)
+  })
+
+  it('uses same-origin full-document navigation for the plain resolver', () => {
+    const assign = vi.fn()
+    navigateToCompany('7700000000', { assign })
+    expect(assign).toHaveBeenCalledOnce()
+    expect(assign).toHaveBeenCalledWith('/company/7700000000')
   })
 
   it('renders the approved landing copy with two accessible INN forms', () => {

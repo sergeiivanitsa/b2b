@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from product_api.company_reports.company_card_v2.canonical_json import CanonicalJsonError, canonical_json_bytes, script_safe_json_bytes
+from product_api.company_reports.company_card_v2.canonical_json import CanonicalJsonError, canonical_digest, canonical_json_bytes, script_safe_json_bytes
 
 
 def test_canonical_json_normalizes_nfc_and_decimal_without_float_truth():
@@ -34,6 +34,12 @@ def test_canonical_json_golden_vectors() -> None:
         assert canonical_json_bytes(vector["value"]).decode("utf-8") == vector["canonical"]
         if "script_safe" in vector:
             assert script_safe_json_bytes(vector["value"]).decode("utf-8") == vector["script_safe"]
+
+
+def test_shared_h2_cjson_vectors_are_token_exact() -> None:
+    fixture = Path(__file__).parents[3] / "shared" / "fixtures" / "company_public_h2_cjson_v1.json"
+    for vector in json.loads(fixture.read_text(encoding="utf-8"))["vectors"]:
+        assert canonical_digest(json.loads(vector["raw"])) == vector["sha256"]
 
 
 @pytest.mark.parametrize("value", [{"number": 1.0}, {"\ud800": "x"}, {"e\u0301": 1, "é": 2}])

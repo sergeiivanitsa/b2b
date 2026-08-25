@@ -19,6 +19,16 @@
    - `nginx -t`
    - `systemctl reload nginx`
 
+## Company Card v2 assets
+
+The H2 bundle is separate from the SPA directory.  It is content-addressed and
+is installed into `/var/lib/pork/company-public-h2/v1/` before a Product image
+can be replaced.  The stable `manifest-set.json` keeps the current release and
+two verified predecessors.  The installer never deletes immutable assets; a
+new or incomplete host fails until the separately authorized seed/runbook is
+performed.  Product rollback therefore chooses only a retained verified
+manifest, then rolls Product back.
+
 ## Smoke checks
 
 - `curl -I https://pork.su/` returns `200`

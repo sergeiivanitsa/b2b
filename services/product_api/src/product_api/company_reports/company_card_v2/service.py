@@ -7,6 +7,7 @@ import hashlib
 import json
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from product_api.company_reports.persistence.jobs import (
@@ -209,6 +210,13 @@ async def _resolve_exact_v3(
     """
     if record is None:
         raise PublicH2Invalid("company card v2 binding is invalid")
+    # Lifecycle outcomes are not immutable-binding corruption.  Preserve the
+    # established 409 classes for an exact assigned document before validating
+    # the complete/partial publication tuple below.
+    if record.lifecycle_status == "pending":
+        raise PublicH2Pending("report_pending")
+    if record.lifecycle_status == "failed":
+        raise PublicH2Failed("report_failed")
     try:
         snapshot = company_card_v2_from_snapshot(deepcopy(record.normalized_snapshot))
         _serialized, calculated_hash = validate_company_card_v2_finalization(
@@ -318,6 +326,10 @@ async def _resolve_exact_v3(
             raise ValueError("company card v2 projection digest is invalid")
         return response
     except PublicH2Error:
+        raise
+    except SQLAlchemyError:
+        # Exact public-document selection distinguishes storage unavailability
+        # (router 503) from a malformed immutable result (safe 500).
         raise
     except Exception as exc:
         raise PublicH2Invalid("company card v2 is invalid") from exc

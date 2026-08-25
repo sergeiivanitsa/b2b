@@ -131,8 +131,8 @@ def build_public_h2(
         "coverage": [item.model_dump(mode="json") for item in coverage],
         "sources": [PublicH2SourceItem(dataset=dataset, received_at=checked_at, normalization_version="company_card_v2_v1", evidence_version=snapshot.evidence_version).model_dump(mode="json") for dataset in ("counterparty", "finance", "arbitration")],
         "limitations": [item.model_dump(mode="json") for item in limitations],
-        "actions": [PublicH2Action(action_id="check_another_company", label="Проверить другую компанию", path="/company").model_dump(mode="json"), PublicH2Action(action_id="prepare_claim", label="Подготовить претензию", path=f"/claims?report_id={snapshot.report_id}").model_dump(mode="json")],
-        "breadcrumbs": [PublicH2Breadcrumb(label="Компании", path="/company", current=False).model_dump(mode="json"), PublicH2Breadcrumb(label=name, path=canonical_path, current=True).model_dump(mode="json")],
+        "actions": [PublicH2Action(action_id="check_another_company", label="Проверить другую компанию", path="/").model_dump(mode="json"), PublicH2Action(action_id="prepare_claim", label="Подготовить претензию", path=f"/claims?report_id={snapshot.report_id}").model_dump(mode="json")],
+        "breadcrumbs": [PublicH2Breadcrumb(label="Главная", path="/", current=False).model_dump(mode="json"), PublicH2Breadcrumb(label=name, path=canonical_path, current=True).model_dump(mode="json")],
         "primary_claim_cta": PublicH2ClaimCta(path=f"/claims?report_id={snapshot.report_id}").model_dump(mode="json"),
     }
     response = CompanyPublicH2Response(**payload, projection_digest=canonical_digest(payload))
@@ -240,7 +240,7 @@ def build_legacy_public_h2(
             PublicH2Action(
                 action_id="check_another_company",
                 label="Проверить другую компанию",
-                path="/company",
+                path="/",
             ).model_dump(mode="json"),
             PublicH2Action(
                 action_id="prepare_claim",
@@ -250,7 +250,7 @@ def build_legacy_public_h2(
         ],
         "breadcrumbs": [
             PublicH2Breadcrumb(
-                label="Компании", path="/company", current=False
+                label="Главная", path="/", current=False
             ).model_dump(mode="json"),
             PublicH2Breadcrumb(
                 label=counterparty.full_name,

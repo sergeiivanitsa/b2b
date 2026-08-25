@@ -147,6 +147,55 @@ def validate_active_publication(record: Any) -> CompanyPublicH1Response:
     return dto
 
 
+def validate_assigned_public_h1(
+    subject: Any, assignment: Any, pin: Any, report_record: Any
+) -> CompanyPublicH1Response:
+    """Validate and reproduce an exact immutable H1 presentation pin.
+
+    Canonical selection calls this only for the tuple returned by its single
+    joined SELECT.  In particular, it must not consult active publications or
+    latest reports: a corrupt assigned pin fails closed.
+    """
+    if (
+        subject is None
+        or assignment is None
+        or pin is None
+        or report_record is None
+        or assignment.subject_id != subject.id
+        or assignment.presentation_contract != "company_public_h1_v1"
+        or assignment.pin_generation != pin.generation
+        or pin.subject_id != subject.id
+        or pin.presentation_contract != "company_public_h1_v1"
+        or pin.report_id != report_record.id
+        or report_record.subject_id != subject.id
+        or pin.publication_policy_version != PUBLICATION_POLICY_VERSION
+        or pin.indexable is not True
+        or not isinstance(pin.snapshot_hash, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", pin.snapshot_hash)
+        or pin.canonical_path is None
+        or pin.published_lastmod is None
+    ):
+        raise PublicProjectionInvalidError()
+    canonical = _CANONICAL.fullmatch(pin.canonical_path)
+    if canonical is None or canonical.group("inn") != subject.normalized_identifier:
+        raise PublicProjectionInvalidError()
+    report = _validated_report(report_record, subject, pin.snapshot_hash)
+    if not _same_time(pin.published_lastmod, report_record.generated_at):
+        raise PublicProjectionInvalidError()
+    try:
+        dto = build_public_h1(
+            report,
+            projection_scope="published",
+            persisted_canonical_path=pin.canonical_path,
+            persisted_indexable=True,
+        )
+    except Exception as exc:
+        raise PublicProjectionInvalidError() from exc
+    if dto.canonical_path != pin.canonical_path or dto.indexable is not True:
+        raise PublicProjectionInvalidError()
+    return dto
+
+
 async def resolve_public_h1(session: Any, *, inn: str) -> CompanyPublicH1Response:
     normalized = _inn(inn)
     try:
@@ -179,5 +228,5 @@ __all__ = [
     "PublicH1Error", "PublicH1InvalidInnError", "PublicH1NotFoundError",
     "PublicH1PendingError", "PublicH1FailedError", "PublicH1NotEligibleError",
     "PublicProjectionInvalidError", "PublicH1UnavailableError", "resolve_public_h1",
-    "validate_active_publication",
+    "validate_active_publication", "validate_assigned_public_h1",
 ]

@@ -190,12 +190,15 @@ async def test_api_exact_select_ceiling_and_complete_zero_side_effect_matrix(
 @pytest.mark.parametrize(
     ("scenario", "requested_path", "seed", "expected_status", "expected_selects"),
     [
-        ("active", None, "active", 200, 1),
-        ("wrong_slug", "/company/0000000000-wrong-slug", "active", 301, 1),
-        ("corrupt_active", None, "corrupt", 500, 1),
-        ("fallback_unpublished", "/company/0000000000-any-slug", "fallback", 404, 2),
+        # Canonical page selection first captures the assignment/pin/report
+        # tuple in one joined SELECT; legacy H1 then performs its historical
+        # resolver read only after unassigned state was proven.
+        ("active", None, "active", 200, 2),
+        ("wrong_slug", "/company/0000000000-wrong-slug", "active", 301, 2),
+        ("corrupt_active", None, "corrupt", 500, 2),
+        ("fallback_unpublished", "/company/0000000000-any-slug", "fallback", 404, 3),
         ("invalid_key", "/company/invalid-key", None, 404, 0),
-        ("query", "/company/0000000000-any-slug?x=1", None, 404, 0),
+        ("query", "/company/0000000000-any-slug?x=1", None, 422, 0),
     ],
 )
 async def test_ssr_exact_select_ceiling_and_complete_zero_side_effect_matrix(

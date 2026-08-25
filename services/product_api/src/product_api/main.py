@@ -63,7 +63,8 @@ from product_api.routers.invites import router as invites_router
 from product_api.routers.public_claims import router as public_claims_router
 from product_api.routers.company_reports import router as company_reports_router
 from product_api.routers.company_report_presentations import router as company_report_presentations_router
-from product_api.routers.company_reports_public import router as company_reports_public_router
+from product_api.routers.company_reports_public import router as company_reports_public_router, set_public_h2_asset_manifest
+from product_api.company_reports.company_card_v2.public_h2_asset_manifest import load_public_h2_asset_manifest
 from shared.constants import MODEL_GPT_5_2
 from shared.schemas import ChatMessage, ChatMetadata, ChatRequest
 
@@ -105,6 +106,9 @@ async def request_id_middleware(request: Request, call_next):
 
 @app.on_event("startup")
 async def startup_event():
+    # Validate the product-pinned H2 asset graph before accepting traffic.  It
+    # never reads host nginx storage or changes the default-off rollout.
+    set_public_h2_asset_manifest(load_public_h2_asset_manifest())
     await ensure_superadmin()
 
 

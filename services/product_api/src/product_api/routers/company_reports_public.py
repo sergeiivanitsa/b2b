@@ -6,6 +6,7 @@ not routed here: iteration 22 owns the public H2 page shell and SSR wiring.
 from __future__ import annotations
 
 import re
+from secrets import token_urlsafe
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
@@ -24,17 +25,39 @@ from product_api.company_reports.public_h1_service import (
     resolve_public_h1,
     validate_active_publication,
 )
+from product_api.company_reports.public_document_service import (
+    PublicDocumentInvalid, PublicDocumentKind, resolve_public_document,
+)
+from product_api.company_reports.company_card_v2.public_h2_asset_manifest import PublicH2AssetManifest
+from product_api.company_reports.company_card_v2.public_h2_document import (
+    public_h2_security_headers, render_public_h2_document, render_public_h2_error_document,
+)
+from product_api.company_reports.company_card_v2.service import PublicH2Failed, PublicH2NotEligible, PublicH2Pending
 from product_api.company_reports.seo import render_sitemap, render_sitemap_index
 from product_api.db.session import get_session
 from product_api.settings import get_settings
 
 router = APIRouter(tags=["company-reports-public"])
+_PUBLIC_H2_ASSET_MANIFEST: PublicH2AssetManifest | None = None
 _KEY = re.compile(r"(?P<inn>[0-9]{10}(?:[0-9]{2})?)-(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)$")
+_PLAIN = re.compile(r"(?P<inn>[0-9]{10}(?:[0-9]{2})?)$")
 _CHUNK = re.compile(r"[1-9][0-9]*\.xml$")
 
 
 def _headers(robots: str) -> dict[str, str]:
     return {"X-Robots-Tag": robots, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+
+
+def set_public_h2_asset_manifest(manifest: PublicH2AssetManifest) -> None:
+    """Inject the startup-validated immutable package manifest once."""
+    global _PUBLIC_H2_ASSET_MANIFEST
+    _PUBLIC_H2_ASSET_MANIFEST = manifest
+
+
+def _public_h2_asset_manifest() -> PublicH2AssetManifest:
+    if _PUBLIC_H2_ASSET_MANIFEST is None:
+        raise RuntimeError("public H2 asset manifest is not initialized")
+    return _PUBLIC_H2_ASSET_MANIFEST
 
 
 def _not_found() -> Response:
@@ -50,27 +73,48 @@ def _current_public_projection(page):
         return None
 
 
-@router.get("/company/{company_key}", response_class=HTMLResponse)
+def _safe_error(status_code: int, title: str, message: str) -> Response:
+    return HTMLResponse(
+        render_public_h2_error_document(title, message), status_code=status_code,
+        headers=_headers("noindex,follow"),
+    )
+
+
+@router.api_route("/company/{company_key}", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def public_company_page(company_key: str, request: Request, session: AsyncSession = Depends(get_session)) -> Response:
     if request.query_params:
-        return _not_found()
+        return _safe_error(422, "Некорректный запрос", "Параметры запроса не поддерживаются.")
     match = _KEY.fullmatch(company_key)
-    if match is None:
+    plain = _PLAIN.fullmatch(company_key)
+    if match is None and plain is None:
         return _not_found()
     try:
-        dto = await resolve_public_h1(session, inn=match.group("inn"))
-        if dto.projection_scope != "published":
+        inn = (match or plain).group("inn")
+        document = await resolve_public_document(session, inn=inn)
+        dto = document.dto
+        if document.kind is PublicDocumentKind.H1 and not document.assigned and dto.projection_scope != "published":
+            # Preserve the historical unpublished H1 behaviour.  The plain
+            # form is deliberately the only nginx SPA fallback boundary.
             return _not_found()
         if dto.canonical_path != f"/company/{company_key}":
             return RedirectResponse(dto.canonical_path, status_code=301, headers=_headers("noindex,follow"))
+        if document.kind is PublicDocumentKind.H1:
+            robots = "index,follow" if dto.indexable else "noindex,follow"
+            return HTMLResponse(render_public_h1_html(dto), headers=_headers(robots))
+        nonce = token_urlsafe(18)
         robots = "index,follow" if dto.indexable else "noindex,follow"
-        return HTMLResponse(render_public_h1_html(dto), headers=_headers(robots))
+        return HTMLResponse(
+            render_public_h2_document(dto, _public_h2_asset_manifest(), nonce, robots),
+            headers=public_h2_security_headers(nonce, robots),
+        )
     except (PublicH1NotFoundError, PublicH1PendingError, PublicH1FailedError, PublicH1NotEligibleError):
         return _not_found()
+    except (PublicH2Pending, PublicH2Failed, PublicH2NotEligible):
+        return _safe_error(409, "Отчёт пока недоступен", "Публичный документ ещё не готов.")
     except PublicH1UnavailableError:
         return PlainTextResponse("Unavailable", status_code=503, headers=_headers("noindex,follow"))
-    except PublicProjectionInvalidError:
-        return PlainTextResponse("Internal error", status_code=500, headers=_headers("noindex,follow"))
+    except (PublicProjectionInvalidError, PublicDocumentInvalid):
+        return _safe_error(500, "Внутренняя ошибка", "Документ отчёта недоступен.")
     except SQLAlchemyError:
         return PlainTextResponse("Unavailable", status_code=503, headers=_headers("noindex,follow"))
     except Exception:
@@ -115,4 +159,4 @@ async def sitemap_chunk(chunk: str, request: Request, session: AsyncSession = De
         return PlainTextResponse("Unavailable", status_code=503, headers=_headers("noindex,follow"))
 
 
-__all__ = ["router"]
+__all__ = ["router", "set_public_h2_asset_manifest"]

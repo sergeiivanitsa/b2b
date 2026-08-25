@@ -193,9 +193,27 @@ Nginx:
 - Use `deploy/nginx/gateway_api.conf` on Gateway server.
 - Replace allowlist IPs in gateway config with RU server public IPs.
 
-Release order:
-- RU: `git pull` в†’ `docker compose build product_api` в†’ `docker compose up -d product_api` в†’ `alembic upgrade head` в†’ `docker compose restart product_api`
-- Gateway: `git pull` в†’ `docker compose build gateway_api` в†’ `docker compose up -d gateway_api`
+Release order (manual RU runbook):
+
+1. Check out the exact candidate commit, build its `product_api` image, and
+   extract that image's packaged
+   `public_h2_asset_manifest.json` without replacing a running Product
+   process.
+2. Build the isolated H2 frontend bundle and assemble an immutable release
+   artifact containing exactly its `assets/` and the matching manifest.
+3. Before stopping the worker, running an Alembic migration, or replacing
+   `product_api`, run
+   `deploy/nginx/install_company_public_h2_assets.sh` against that artifact,
+   the candidate-image manifest, the stable H2 store, and the loopback HTTPS
+   endpoint. The installer validates the source graph, candidate identity,
+   durable manifest history, stored hashes, and loopback responses. A failed
+   gate leaves the Product processes untouched.
+4. Only after the asset gate succeeds, stop the old worker, run
+   `alembic upgrade head`, and recreate `product_api` together with
+   `company_report_worker` from the same candidate image. Verify health and
+   both running image IDs before continuing.
+5. Deploy Gateway and the regular SPA bundle separately, then run the nginx
+   reload and smoke checks described in `deploy/nginx/README.md`.
 
 ## SMTP requirements (product_api)
 Set these env vars before production deploy:

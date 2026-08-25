@@ -41,6 +41,24 @@ jobs:
           npm ci --prefix services/web_ui
           npm run build --prefix services/web_ui
           tar -C services/web_ui/dist -czf /tmp/web_ui-dist.tgz .
+          release_stage="$(mktemp -d /tmp/company-public-h2-package.XXXXXX)"
+          mkdir -p "$release_stage/assets"
+          cp services/product_api/src/product_api/company_reports/company_card_v2/public_h2_asset_manifest.json "$release_stage/public_h2_asset_manifest.json"
+          python3 - "$release_stage" <<'PY'
+          import json,pathlib,shutil,sys
+          target=pathlib.Path(sys.argv[1]); source=pathlib.Path('services/web_ui/dist-company-public-h2/assets')
+          manifest=json.loads((target/'public_h2_asset_manifest.json').read_text(encoding='utf-8'))
+          expected={item['path'].removeprefix('/assets/') for item in manifest['assets']}
+          actual={item.name for item in source.iterdir() if item.is_file()}
+          if actual != expected: raise SystemExit('dedicated H2 source graph mismatch')
+          for name in sorted(expected): shutil.copyfile(source/name,target/'assets'/name)
+          PY
+          tar -C "$release_stage" -czf /tmp/company-public-h2-assets.tgz public_h2_asset_manifest.json assets
+          rm -rf "$release_stage"
+
+      - name: Upload immutable H2 release to RU
+        run: |
+          scp -o StrictHostKeyChecking=yes /tmp/company-public-h2-assets.tgz "${{ secrets.RU_USER }}@${{ secrets.RU_HOST }}:/tmp/"
 
       - name: Deploy RU
         run: |
@@ -53,12 +71,27 @@ jobs:
           git reset --hard "$DEPLOY_COMMIT"
           export PRODUCT_IMAGE_TAG="$DEPLOY_COMMIT"
 
+          # Build the exact candidate image before reading its packaged
+          # manifest. This is a build-only operation: API replacement remains
+          # behind the immutable asset/history gate below.
+          docker compose -f docker-compose.product.yml --env-file .env.product build product_api
+          candidate_container="$(docker create "b2b-product-api:${PRODUCT_IMAGE_TAG}")"
+          trap 'docker rm -f "$candidate_container" >/dev/null 2>&1 || true' EXIT
+          candidate_manifest="$(mktemp /tmp/company-public-h2-candidate.XXXXXX)"
+          docker cp "$candidate_container:/app/services/product_api/src/product_api/company_reports/company_card_v2/public_h2_asset_manifest.json" "$candidate_manifest"
+
+          # The exact packaged Product manifest, source graph, durable history,
+          # stored bytes and HTTPS/SNI loopback responses are one CLI gate.
+          # It is intentionally before migrations and replacement of the API.
+          release_dir="$(mktemp -d /tmp/company-public-h2-release.XXXXXX)"
+          tar -xzf /tmp/company-public-h2-assets.tgz -C "$release_dir"
+          bash deploy/nginx/install_company_public_h2_assets.sh \
+            "$release_dir" /var/lib/pork/company-public-h2/v1 \
+            127.0.0.1:443 https://pork.su "$candidate_manifest"
+          rm -rf "$release_dir" "$candidate_manifest" /tmp/company-public-h2-assets.tgz
+
           # Stop the old worker before changing schema or code. Queued jobs stay queued.
           docker compose -f docker-compose.product.yml --env-file .env.product stop -t 40 company_report_worker || true
-
-          # Build the exact deployed Product image once. The migration, API and
-          # worker all reference this same commit-tagged image.
-          docker compose -f docker-compose.product.yml --env-file .env.product build product_api
 
           # A migration failure stops this shell before either new process starts.
           docker compose -f docker-compose.product.yml --env-file .env.product run --rm -T --no-deps product_api sh -lc "cd /app/services/product_api && alembic -c alembic.ini upgrade head" </dev/null
