@@ -55,7 +55,7 @@
 | 20 | `company-card-v2-backend-foundation` | Завершена |
 | 21 | `company-card-v2-ai-narrative` | Завершена |
 | 22 | `company-card-v2-page-shell` | Завершена |
-| 23 | `company-card-v2-finance-charts` | Запланирована |
+| 23 | `company-card-v2-finance-charts` | Завершена |
 | 24 | `company-card-v2-arbitration-charts` | Запланирована |
 | 25 | `company-card-v2-qa-rollout` | Запланирована |
 
@@ -1442,8 +1442,8 @@ production-default и rollback path.
 ID: 23
 Slug: company-card-v2-finance-charts
 
-Статус: planning input; готова к отдельному полному DevFlow. Production
-activation остаётся вне scope.
+Статус: завершена. Production activation не выполнялась; feature gate остаётся
+выключенным для production-default route.
 
 ### Зависимости
 
@@ -1493,14 +1493,15 @@ activation остаётся вне scope.
 ID: 24
 Slug: company-card-v2-arbitration-charts
 
-Статус: planning input; старт после merge finance charts итерации 23 и
-прохождения arbitration completeness/outcome/privacy gates.
+Статус: planning input; merge finance charts итерации 23 выполнен. Старт после
+прохождения arbitration completeness/outcome/currency/entity-type/privacy
+gates.
 
 ### Зависимости
 
 - Merged chart shell/interaction patterns итераций 22–23.
-- Доказанные full-pagination, `party_result`, exact-role и public/privacy
-  contracts итераций 19–20.
+- Доказанные full-pagination, `party_result`, exact-role, currency, entity-type
+  и public/privacy contracts итераций 19–20.
 
 ### Цель
 

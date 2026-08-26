@@ -237,10 +237,10 @@ iterations:
   - id: 23
     slug: company-card-v2-finance-charts
     title: "Финансовые графики Company Card v2"
-    status: ready_for_merge
+    status: merged
     branch: feat/iteration-23-company-card-v2-finance-charts
-    commit: pending
-    merged_at: null
+    commit: 867c0d21558dc8e73a0e55a42167b38ced6d6b67
+    merged_at: "2026-08-26T16:30:13+10:00"
     block_reason: null
   - id: 24
     slug: company-card-v2-arbitration-charts
@@ -249,7 +249,7 @@ iterations:
     branch: pending
     commit: pending
     merged_at: null
-    block_reason: "Ожидает merge итерации 23 и arbitration completeness/outcome/privacy gates итераций 19–20"
+    block_reason: "Ожидает arbitration completeness/outcome/currency/entity-type/privacy gates итераций 19–20"
   - id: 25
     slug: company-card-v2-qa-rollout
     title: "QA и rollout Company Card v2"
