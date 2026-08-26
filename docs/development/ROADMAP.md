@@ -54,7 +54,7 @@
 | 19 | `company-card-v2-contract-evidence` | Завершена |
 | 20 | `company-card-v2-backend-foundation` | Завершена |
 | 21 | `company-card-v2-ai-narrative` | Завершена |
-| 22 | `company-card-v2-page-shell` | Запланирована |
+| 22 | `company-card-v2-page-shell` | Завершена |
 | 23 | `company-card-v2-finance-charts` | Запланирована |
 | 24 | `company-card-v2-arbitration-charts` | Запланирована |
 | 25 | `company-card-v2-qa-rollout` | Запланирована |
@@ -1388,7 +1388,8 @@ Slug: company-card-v2-ai-narrative
 ID: 22
 Slug: company-card-v2-page-shell
 
-Статус: planning input; готова к отдельному полному DevFlow.
+Статус: завершена. H2 assignment и production activation не выполнялись;
+старый H1 остаётся production-default и rollback path.
 
 ### Зависимости
 
@@ -1441,8 +1442,8 @@ production-default и rollback path.
 ID: 23
 Slug: company-card-v2-finance-charts
 
-Статус: planning input; старт после merge page shell итерации 22, verified
-lexical Decimal transport и non-zero-only finance Chart Facts итерации 20.
+Статус: planning input; готова к отдельному полному DevFlow. Production
+activation остаётся вне scope.
 
 ### Зависимости
 
