@@ -12,13 +12,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
-    CompanyCardNarrativeArtifact, CompanyReportH2LifecycleHead, CompanyReportPresentation, CompanyReportPresentationAssignment, CompanyReportPresentationAssignmentJournal,
+    CompanyCardNarrativeArtifact, CompanyReportH2LifecycleHead, CompanyReportPresentation, CompanyReportPresentationAssignment, CompanyReportPresentationAssignmentJournal, CompanyReportSubject,
     CompanyReportPresentationPin, CompanyReportPresentationStagedPointer, CompanyReportRecord,
 )
 from .jobs import EnqueuedReportJob, H2_PRESENTATION_CONTRACT, H2_WRITER_PROFILE, WriterDecision, enqueue_company_report_job
 from .v3 import calculate_company_card_v2_snapshot_hash, company_card_v2_from_snapshot
 
-H2_PUBLICATION_POLICY_VERSION = "company_public_h2_publication_v1"
+H2_PUBLICATION_POLICY_V1 = "company_public_h2_publication_v1"
+H2_PUBLICATION_POLICY_V2 = "company_public_h2_publication_v2"
+# Compatibility export used by historical callers; new finalization chooses
+# v2 explicitly and stored pins, never this default, drive read behaviour.
+H2_PUBLICATION_POLICY_VERSION = H2_PUBLICATION_POLICY_V1
+H2_PUBLICATION_POLICY_VERSIONS = frozenset((H2_PUBLICATION_POLICY_V1, H2_PUBLICATION_POLICY_V2))
 
 
 def _is_digest(value: object) -> bool:
@@ -143,7 +148,7 @@ async def append_presentation_pin(
             or chart_facts_version != snapshot.chart_facts.version
             or chart_facts_hash != snapshot.chart_facts.hash
             or evidence_registry_version != snapshot.evidence_version
-            or publication_policy_version != H2_PUBLICATION_POLICY_VERSION
+            or publication_policy_version not in H2_PUBLICATION_POLICY_VERSIONS
         ):
             raise PresentationAssignmentConflict("H2 pin evidence identity is invalid")
         pin = CompanyReportPresentationPin(
@@ -175,6 +180,122 @@ async def append_presentation_pin(
     session.add(pin)
     await session.flush()
     return pin
+
+
+async def _resolve_unresolved_h2_pin(
+    session: AsyncSession,
+    *,
+    report: CompanyReportRecord,
+    create_if_missing: bool,
+) -> CompanyReportPresentationPin:
+    """Resolve the v2 predecessor while holding the stable subject lineage lock.
+
+    The report row is already fenced/locked by ``jobs``.  Locking the subject
+    lineage here makes retries deterministic and prevents a v2 pin from being
+    silently mixed with an older v1 lineage.
+    """
+    if (
+        report.report_version != "3"
+        or report.writer_profile != H2_WRITER_PROFILE
+        or report.presentation_contract != H2_PRESENTATION_CONTRACT
+        or report.rollout_generation <= 0
+        or report.snapshot_hash is None
+    ):
+        raise PresentationAssignmentConflict("H2 v2 pin report decision is invalid")
+    snapshot = company_card_v2_from_snapshot(deepcopy(report.normalized_snapshot))
+    if (
+        snapshot.report_id != str(report.id)
+        or snapshot.rollout_config_generation != report.rollout_generation
+        or calculate_company_card_v2_snapshot_hash(snapshot) != report.snapshot_hash
+    ):
+        raise PresentationAssignmentConflict("H2 v2 pin snapshot is invalid")
+    # Lock a stable per-subject row even before a first pin exists; locking an
+    # empty result set cannot serialize concurrent first finalizations.
+    subject = await session.get(CompanyReportSubject, report.subject_id, with_for_update=True)
+    if subject is None:
+        raise PresentationAssignmentConflict("H2 pin subject is missing")
+    pins = list((await session.scalars(
+        select(CompanyReportPresentationPin)
+        .where(
+            CompanyReportPresentationPin.subject_id == report.subject_id,
+            CompanyReportPresentationPin.presentation_contract == H2_PRESENTATION_CONTRACT,
+        )
+        .order_by(CompanyReportPresentationPin.generation)
+        .with_for_update()
+    )).all())
+    exact = [pin for pin in pins if pin.report_id == report.id]
+    # Different reports can retain their historical v1 lineage.  A single
+    # report, however, cannot mix policies or immutable snapshot identities.
+    # Reject before selecting an unresolved row so retry never masks corruption.
+    for pin in exact:
+        if (
+            pin.publication_policy_version != H2_PUBLICATION_POLICY_V2
+            or pin.snapshot_hash != report.snapshot_hash
+            or pin.chart_facts_version != snapshot.chart_facts.version
+            or pin.chart_facts_hash != snapshot.chart_facts.hash
+            or pin.evidence_registry_version != snapshot.evidence_version
+        ):
+            raise PresentationAssignmentConflict("H2 report lineage has mixed policy or identity")
+    unresolved = [pin for pin in exact if pin.narrative_binding_status == "unresolved"]
+    if unresolved:
+        if len(unresolved) != 1:
+            raise PresentationAssignmentConflict("H2 report has multiple unresolved lineages")
+        pin = unresolved[0]
+        if (
+            pin.snapshot_hash != report.snapshot_hash
+            or pin.publication_policy_version != H2_PUBLICATION_POLICY_V2
+            or pin.narrative_binding_status != "unresolved"
+            or pin.chart_facts_version != snapshot.chart_facts.version
+            or pin.chart_facts_hash != snapshot.chart_facts.hash
+            or pin.evidence_registry_version != snapshot.evidence_version
+        ):
+            raise PresentationAssignmentConflict("H2 report pin lineage conflicts")
+        return pin
+    if exact:
+        # A resolved same-report lineage without its immutable predecessor is
+        # corruption, not an invitation to rewrite publication policy.
+        raise PresentationAssignmentConflict("H2 report lineage is already resolved")
+    if not create_if_missing:
+        raise PresentationAssignmentConflict(
+            "H2 report has no existing unresolved lineage"
+        )
+    return await append_presentation_pin(
+        session,
+        subject_id=report.subject_id,
+        report=report,
+        contract=H2_PRESENTATION_CONTRACT,
+        generation=max((pin.generation for pin in pins), default=0) + 1,
+        publication_policy_version=H2_PUBLICATION_POLICY_V2,
+        chart_facts_version=snapshot.chart_facts.version,
+        chart_facts_hash=snapshot.chart_facts.hash,
+        evidence_registry_version=snapshot.evidence_version,
+    )
+
+
+async def create_or_reuse_unresolved_h2_pin(
+    session: AsyncSession,
+    *,
+    report: CompanyReportRecord,
+) -> CompanyReportPresentationPin:
+    """Create or reuse v2 lineage inside the first finalization transaction."""
+    return await _resolve_unresolved_h2_pin(
+        session,
+        report=report,
+        create_if_missing=True,
+    )
+
+
+async def require_existing_unresolved_h2_pin(
+    session: AsyncSession,
+    *,
+    report: CompanyReportRecord,
+) -> CompanyReportPresentationPin:
+    """Validate a terminal retry without ever backfilling a missing lineage."""
+    return await _resolve_unresolved_h2_pin(
+        session,
+        report=report,
+        create_if_missing=False,
+    )
 
 
 async def stage_h2_pin(session: AsyncSession, *, subject_id: UUID, pin: CompanyReportPresentationPin, expected_generation: int) -> CompanyReportPresentationStagedPointer:
@@ -245,6 +366,24 @@ async def append_resolved_h2_pin(
             .with_for_update()
         )
     ).all()
+    report_lineage = [pin for pin in pins if pin.report_id == report.id]
+    unresolved = [pin for pin in report_lineage if pin.narrative_binding_status == "unresolved"]
+    if len(unresolved) != 1 or unresolved[0].publication_policy_version not in H2_PUBLICATION_POLICY_VERSIONS:
+        raise PresentationAssignmentConflict("resolved H2 pin has no exact unresolved lineage")
+    policy = unresolved[0].publication_policy_version
+    predecessor = unresolved[0]
+    if (
+        predecessor.subject_id != report.subject_id
+        or predecessor.snapshot_hash != report.snapshot_hash
+        or predecessor.indexable is not False
+        or predecessor.projection_digest is not None
+        or predecessor.narrative_binding_kind is not None
+        or predecessor.narrative_binding_key is not None
+        or predecessor.chart_facts_version != snapshot.chart_facts.version
+        or predecessor.chart_facts_hash != snapshot.chart_facts.hash
+        or predecessor.evidence_registry_version != snapshot.evidence_version
+    ):
+        raise PresentationAssignmentConflict("resolved H2 pin predecessor identity is invalid")
     for existing in pins:
         if existing.report_id != report.id or existing.narrative_binding_status != "resolved":
             continue
@@ -259,7 +398,7 @@ async def append_resolved_h2_pin(
             and existing.chart_facts_version == snapshot.chart_facts.version
             and existing.chart_facts_hash == snapshot.chart_facts.hash
             and existing.evidence_registry_version == snapshot.evidence_version
-            and existing.publication_policy_version == H2_PUBLICATION_POLICY_VERSION
+            and existing.publication_policy_version == policy
         )
         if not exact:
             raise PresentationAssignmentConflict("resolved H2 pin already exists for report")
@@ -281,7 +420,7 @@ async def append_resolved_h2_pin(
         chart_facts_version=snapshot.chart_facts.version,
         chart_facts_hash=snapshot.chart_facts.hash,
         evidence_registry_version=snapshot.evidence_version,
-        publication_policy_version=H2_PUBLICATION_POLICY_VERSION,
+        publication_policy_version=policy,
         canonical_path=None,
         indexable=False,
         published_lastmod=None,

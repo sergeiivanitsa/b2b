@@ -27,7 +27,7 @@ from product_api.company_reports.persistence.models import (
     CompanyReportSubject,
 )
 from product_api.company_reports.persistence.presentations import (
-    H2_PUBLICATION_POLICY_VERSION,
+    H2_PUBLICATION_POLICY_V1, H2_PUBLICATION_POLICY_V2,
 )
 from product_api.company_reports.persistence.v3 import (
     calculate_company_card_v2_snapshot_hash,
@@ -265,7 +265,7 @@ async def _resolve_exact_v3(
             or pin.chart_facts_version != snapshot.chart_facts.version
             or pin.chart_facts_hash != snapshot.chart_facts.hash
             or pin.evidence_registry_version != snapshot.evidence_version
-            or pin.publication_policy_version != H2_PUBLICATION_POLICY_VERSION
+            or pin.publication_policy_version not in {H2_PUBLICATION_POLICY_V1, H2_PUBLICATION_POLICY_V2}
             or pin.indexable is not False
             or pin.canonical_path is not None
             or pin.published_lastmod is not None
@@ -321,6 +321,7 @@ async def _resolve_exact_v3(
         response = build_public_h2(
             snapshot,
             narrative_binding=narrative_binding,
+            finance_enabled=pin.publication_policy_version == H2_PUBLICATION_POLICY_V2,
         )
         if response.projection_digest != pin.projection_digest:
             raise ValueError("company card v2 projection digest is invalid")

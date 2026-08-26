@@ -24,7 +24,11 @@ from product_api.company_reports.persistence.models import (
     CompanyCardNarrativeBudgetReservation,
     CompanyCardNarrativeJob,
     CompanyReportRecord,
+    CompanyReportPresentationPin,
     CompanyReportSubject,
+)
+from product_api.company_reports.persistence.presentations import (
+    H2_PUBLICATION_POLICY_V1, H2_PUBLICATION_POLICY_V2,
 )
 from product_api.company_reports.persistence.errors import CompanyReportSnapshotError
 from product_api.company_reports.persistence.narrative_outbox import (
@@ -125,6 +129,7 @@ class ValidatedNarrativeReport:
     identity: GenerationIdentityV2
     generation_key: str
     activity_label: str | None
+    publication_policy_version: str | None = None
 
     @property
     def is_v3(self) -> bool:
@@ -218,10 +223,12 @@ def _artifact_public_narrative(rendered: RenderedNarrative) -> PublicH2Narrative
 def _projection_digest(
     snapshot: CompanyCardV2SnapshotV1,
     narrative: PublicH2Narrative,
+    publication_policy_version: str | None = None,
 ) -> str:
     return build_public_h2(
         snapshot,
         narrative_binding=_NarrativeBinding(narrative),
+        finance_enabled=publication_policy_version == H2_PUBLICATION_POLICY_V2,
     ).projection_digest
 
 
@@ -230,7 +237,9 @@ def _fallback_projection(report: ValidatedNarrativeReport) -> str | None:
         return None
     if not isinstance(report.snapshot, CompanyCardV2SnapshotV1):
         raise NarrativePersistenceError("v3 narrative snapshot is unavailable")
-    return _projection_digest(report.snapshot, _fallback_public_narrative())
+    return _projection_digest(
+        report.snapshot, _fallback_public_narrative(), report.publication_policy_version,
+    )
 
 
 def fallback_projection_digest(report: ValidatedNarrativeReport) -> str | None:
@@ -285,6 +294,7 @@ async def validate_narrative_report(
         )
         if digest != record.snapshot_hash or calculate_company_card_v2_snapshot_hash(card) != record.snapshot_hash:
             raise NarrativePersistenceError("v3 narrative snapshot hash is invalid")
+        chart_facts_version = card.chart_facts.version
         chart_facts_hash = card.chart_facts.hash
         evidence_registry_version = card.evidence_version
         snapshot = card
@@ -306,6 +316,47 @@ async def validate_narrative_report(
             activity_label = None
     else:
         raise NarrativePersistenceError("narrative report version is invalid")
+
+    publication_policy_version: str | None = None
+    # A production narrative must bind the one durable predecessor written by
+    # the fenced report finalizer.  Selecting a first row would make a corrupt
+    # duplicate lineage silently observable, so reject missing and ambiguous
+    # predecessors before any dispatch/outbox work starts.  Minimal unit
+    # adapters do not expose ``scalars`` and model only historical closed v1.
+    if record.report_version == "3" and hasattr(session, "scalars"):
+        policy_pins = list((await session.scalars(
+            select(CompanyReportPresentationPin)
+            .where(
+                CompanyReportPresentationPin.report_id == record.id,
+                CompanyReportPresentationPin.presentation_contract == "company_public_h2_v1",
+                CompanyReportPresentationPin.narrative_binding_status == "unresolved",
+            )
+            .order_by(CompanyReportPresentationPin.generation)
+        )).all())
+        if len(policy_pins) != 1:
+            raise NarrativePersistenceError("v3 publication lineage is missing or ambiguous")
+        predecessor = policy_pins[0]
+        if (
+            predecessor.subject_id != record.subject_id
+            or predecessor.report_id != record.id
+            or predecessor.snapshot_hash != record.snapshot_hash
+            or predecessor.chart_facts_version != chart_facts_version
+            or predecessor.chart_facts_hash != chart_facts_hash
+            or predecessor.evidence_registry_version != evidence_registry_version
+            or predecessor.presentation_contract != "company_public_h2_v1"
+            or predecessor.generation <= 0
+            or predecessor.indexable is not False
+            or predecessor.canonical_path is not None
+            or predecessor.published_lastmod is not None
+            or predecessor.projection_digest is not None
+            or predecessor.narrative_binding_status != "unresolved"
+            or predecessor.narrative_binding_kind is not None
+            or predecessor.narrative_binding_key is not None
+        ):
+            raise NarrativePersistenceError("v3 publication predecessor identity is invalid")
+        publication_policy_version = predecessor.publication_policy_version
+        if publication_policy_version not in {H2_PUBLICATION_POLICY_V1, H2_PUBLICATION_POLICY_V2}:
+            raise NarrativePersistenceError("v3 publication policy is invalid")
 
     identity = GenerationIdentityV2(
         report_id=str(record.id),
@@ -334,6 +385,7 @@ async def validate_narrative_report(
         identity=identity,
         generation_key=identity_key(identity),
         activity_label=activity_label,
+        publication_policy_version=publication_policy_version,
     )
 
 
@@ -627,7 +679,9 @@ def validate_gateway_artifact(
     snapshot = prepared.report.snapshot
     if not isinstance(snapshot, CompanyCardV2SnapshotV1):
         raise NarrativeValidationError("narrative artifact snapshot is invalid")
-    projection_digest = _projection_digest(snapshot, _artifact_public_narrative(first_render))
+    projection_digest = _projection_digest(
+        snapshot, _artifact_public_narrative(first_render), prepared.report.publication_policy_version,
+    )
     return ValidatedGatewayArtifact(draft=draft, projection_digest=projection_digest)
 
 

@@ -27,8 +27,10 @@ describe('CompanyPublicH2Page', () => {
     expect(container.querySelectorAll('[data-h2-coverage]').length).toBe(
       parsed.dto.coverage.reduce((count, item) => count + 1 + ['total', 'returned', 'eligible'].filter(name => item[name] !== null).length, 0),
     )
+    expect([...container.querySelectorAll('[data-h2-finance-article]')].map(element => element.getAttribute('data-h2-finance-article'))).toEqual([
+      'finance-f1', 'finance-f2', 'finance-f3', 'finance-f4', 'finance-f5',
+    ])
     expect([...container.querySelectorAll('[data-h2-block]')].map(element => element.getAttribute('data-h2-block'))).toEqual([
-      'finance_f1', 'finance_f2', 'finance_f3', 'finance_f4', 'finance_f5',
       'arbitration_a1', 'arbitration_a2', 'arbitration_a3', 'arbitration_a4', 'arbitration_a5',
     ])
     for (const item of parsed.dto.coverage) {

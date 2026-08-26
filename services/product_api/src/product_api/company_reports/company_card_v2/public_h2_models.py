@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP, localcontext
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -242,7 +242,7 @@ class PublicH2CoverageItem(PublicH2Model):
     def _valid(self) -> "PublicH2CoverageItem":
         if self.block_id not in COVERAGE_BLOCKS or len(set(self.limitation_codes)) != len(self.limitation_codes) or not all(_CODE.fullmatch(item) for item in self.limitation_codes):
             raise ValueError("invalid coverage")
-        if self.state != "available" and not self.limitation_codes:
+        if self.state not in {"available", "missing"} and not self.limitation_codes:
             raise ValueError("unavailable coverage requires limitation")
         return self
 
@@ -272,8 +272,13 @@ class PublicFinanceMoney(PublicH2Model):
     @model_validator(mode="after")
     def _valid(self) -> "PublicFinanceMoney":
         source = Decimal(self.source_thousand_decimal)
-        if Decimal(self.rub_decimal) != source * Decimal("1000") or Decimal(self.million_decimal) != source / Decimal("1000"):
-            raise ValueError("finance money units do not agree")
+        with localcontext() as context:
+            # A public DTO must not inherit a caller's ambient Decimal
+            # precision while checking a 40-digit source value.
+            context.prec = 128
+            context.rounding = ROUND_HALF_UP
+            if Decimal(self.rub_decimal) != source * Decimal("1000") or Decimal(self.million_decimal) != source / Decimal("1000"):
+                raise ValueError("finance money units do not agree")
         _text(self.display_exact); _text(self.display_compact)
         return self
 
@@ -297,6 +302,72 @@ class PublicChartAxis(PublicH2Model):
 class PublicChartInterval(PublicH2Model):
     start_ratio_decimal: CanonicalDecimal
     end_ratio_decimal: CanonicalDecimal
+
+
+def _in_axis(value: Decimal, axis: "PublicChartAxis") -> bool:
+    return Decimal(axis.axis_min_decimal) <= value <= Decimal(axis.axis_max_decimal)
+
+
+_EXACT_DECIMAL_PRECISION = 128
+_DERIVED_QUANTUM = Decimal("0.000001")
+_F5_LABELS = (
+    "Продажи", "Всё имущество", "Деньги на счетах", "Финансовые вложения",
+    "Долги покупателей", "Запасы", "Ближайшие обязательства", "Свои средства",
+    "Чистая прибыль",
+)
+
+
+def _money_source(value: "PublicFinanceMoney") -> Decimal:
+    return Decimal(value.source_thousand_decimal)
+
+
+def _exact_axis(values: tuple[Decimal, ...]) -> tuple[Decimal, Decimal]:
+    return min(Decimal("0"), *values), max(Decimal("0"), *values)
+
+
+def _axis_pair(axis: "PublicChartAxis") -> tuple[Decimal, Decimal]:
+    return Decimal(axis.axis_min_decimal), Decimal(axis.axis_max_decimal)
+
+
+def _derived_ratio(numerator: Decimal, denominator: Decimal) -> Decimal:
+    with localcontext() as context:
+        context.prec = 34
+        context.rounding = ROUND_HALF_UP
+        return (numerator / denominator * Decimal("100")).quantize(
+            _DERIVED_QUANTUM,
+            rounding=ROUND_HALF_UP,
+        )
+
+
+def _derived_shares(
+    equity: Decimal,
+    debt: Decimal,
+    denominator: Decimal,
+) -> tuple[Decimal, Decimal]:
+    with localcontext() as context:
+        context.prec = 34
+        context.rounding = ROUND_HALF_UP
+        unrounded = (
+            equity / denominator * Decimal("100"),
+            debt / denominator * Decimal("100"),
+        )
+        shares = [
+            value.quantize(_DERIVED_QUANTUM, rounding=ROUND_HALF_UP)
+            for value in unrounded
+        ]
+        residual = Decimal("100") - sum(shares, Decimal("0"))
+        winner = max(
+            range(2),
+            key=lambda index: (abs(unrounded[index] - shares[index]), -index),
+        )
+        shares[winner] += residual
+        return shares[0], shares[1]
+
+
+def _derived_yoy(previous: Decimal | None, current: Decimal | None) -> Decimal | None:
+    if previous is None or current is None or previous <= 0:
+        return None
+    return _derived_ratio(current - previous, previous)
 
 
 class PublicChartPoint(PublicH2Model):
@@ -340,9 +411,41 @@ class PublicF1(PublicH2Model):
     def _valid(self) -> "PublicF1":
         if tuple(item.metric_id for item in self.segments) != ("1250", "1240", "1230", "1500"):
             raise ValueError("F1 segments are fixed")
-        available = sum((Decimal(item.source_thousand_decimal) for item in (self.cash_1250, self.investments_1240, self.receivables_1230)), Decimal("0"))
-        if Decimal(self.available_without_inventory.source_thousand_decimal) != available or Decimal(self.difference.source_thousand_decimal) != available - Decimal(self.short_liabilities_1500.source_thousand_decimal):
+        with localcontext() as context:
+            context.prec = _EXACT_DECIMAL_PRECISION
+            context.rounding = ROUND_HALF_UP
+            cash = _money_source(self.cash_1250)
+            investments = _money_source(self.investments_1240)
+            receivables = _money_source(self.receivables_1230)
+            liabilities = _money_source(self.short_liabilities_1500)
+            cash_and_investments = cash + investments
+            available = cash_and_investments + receivables
+            difference = available - liabilities
+        if (
+            _money_source(self.available_without_inventory) != available
+            or _money_source(self.difference) != difference
+        ):
             raise ValueError("F1 arithmetic mismatch")
+        expected = (
+            (Decimal("0"), cash),
+            (cash, cash_and_investments),
+            (cash_and_investments, available),
+            (Decimal("0"), liabilities),
+        )
+        for segment, endpoints in zip(self.segments, expected):
+            actual = (Decimal(segment.geometry.start_ratio_decimal), Decimal(segment.geometry.end_ratio_decimal))
+            if actual != endpoints:
+                raise ValueError("F1 geometry mismatch")
+            if not all(_in_axis(endpoint, self.axis) for endpoint in actual):
+                raise ValueError("F1 geometry outside axis")
+        if not all(_in_axis(endpoint, self.axis) for endpoint in (*expected[2], *expected[3], Decimal(self.difference.source_thousand_decimal))):
+            raise ValueError("F1 endpoint outside axis")
+        expected_axis = _exact_axis((
+            cash, investments, receivables, liabilities,
+            cash_and_investments, available, difference,
+        ))
+        if _axis_pair(self.axis) != expected_axis:
+            raise ValueError("F1 axis mismatch")
         return self
 
 
@@ -369,6 +472,65 @@ class PublicF2Period(PublicH2Model):
             raise ValueError("F2 denominator shape mismatch")
         if self.state == "available" and (any(item is None for item in money) or self.mode == "unavailable" or any(item is None for item in derived)):
             raise ValueError("F2 available shape mismatch")
+        if self.state in {"available", "denominator_unavailable"}:
+            assert all(item is not None for item in money)
+            equity = _money_source(self.equity_1300)
+            long_debt = _money_source(self.long_liabilities_1400)
+            short_debt = _money_source(self.short_liabilities_1500)
+            with localcontext() as context:
+                context.prec = _EXACT_DECIMAL_PRECISION
+                context.rounding = ROUND_HALF_UP
+                expected_debt = long_debt + short_debt
+                expected_denominator = equity + expected_debt
+            if (
+                _money_source(self.debt) != expected_debt
+                or _money_source(self.denominator) != expected_denominator
+            ):
+                raise ValueError("F2 source arithmetic mismatch")
+            if self.state == "denominator_unavailable":
+                if expected_denominator > 0:
+                    raise ValueError("F2 unavailable denominator must be non-positive")
+                return self
+
+            if expected_denominator <= 0:
+                raise ValueError("F2 available denominator must be positive")
+            assert self.axis is not None
+            actual_shares = (
+                Decimal(self.equity_share_decimal),
+                Decimal(self.debt_share_decimal),
+            )
+            expected_shares = _derived_shares(equity, expected_debt, expected_denominator)
+            if actual_shares != expected_shares:
+                raise ValueError("F2 share arithmetic mismatch")
+            expected_mode = (
+                "diverging_signed"
+                if any(value < 0 for value in expected_shares)
+                else "stacked_100"
+            )
+            if self.mode != expected_mode:
+                raise ValueError("F2 mode mismatch")
+            first, second = self.geometry_by_metric
+            assert first is not None and second is not None
+            first_interval = (Decimal(first.start_ratio_decimal), Decimal(first.end_ratio_decimal))
+            second_interval = (Decimal(second.start_ratio_decimal), Decimal(second.end_ratio_decimal))
+            if self.mode == "stacked_100":
+                expected_axis = (Decimal("0"), Decimal("100"))
+                expected_intervals = (
+                    (Decimal("0"), expected_shares[0]),
+                    (expected_shares[0], Decimal("100")),
+                )
+            else:
+                expected_axis = _exact_axis(expected_shares)
+                expected_intervals = (
+                    (Decimal("0"), expected_shares[0]),
+                    (Decimal("0"), expected_shares[1]),
+                )
+            if _axis_pair(self.axis) != expected_axis:
+                raise ValueError("F2 axis mismatch")
+            if (first_interval, second_interval) != expected_intervals:
+                raise ValueError("F2 geometry mismatch")
+            if not all(_in_axis(endpoint, self.axis) for endpoint in (*first_interval, *second_interval)):
+                raise ValueError("F2 geometry outside axis")
         return self
 
 
@@ -413,6 +575,88 @@ class PublicF3(PublicH2Model):
     def _valid(self) -> "PublicF3":
         if self.window_start_year != self.anchor_year - 6 or tuple(row.year for row in self.points) != tuple(range(self.window_start_year, self.anchor_year + 1)) or self.revenue_summary.metric_id != "revenue_2110" or self.assets_summary.metric_id != "assets_1600":
             raise ValueError("F3 shape mismatch")
+        series = (
+            (
+                self.revenue_summary,
+                tuple(point.revenue_2110 for point in self.points),
+                tuple(point.revenue_yoy_decimal for point in self.points),
+                tuple(point.geometry_by_metric[0] for point in self.points),
+            ),
+            (
+                self.assets_summary,
+                tuple(point.assets_1600 for point in self.points),
+                tuple(point.assets_yoy_decimal for point in self.points),
+                tuple(point.geometry_by_metric[1] for point in self.points),
+            ),
+        )
+        for summary, monies, yoy_values, geometries in series:
+            decimals = tuple(_money_source(item) if item is not None else None for item in monies)
+            for index, (money, value, yoy, geometry) in enumerate(
+                zip(monies, decimals, yoy_values, geometries)
+            ):
+                if (money is None) != (geometry is None):
+                    raise ValueError("F3 gap geometry mismatch")
+                if money is not None:
+                    assert value is not None and geometry is not None
+                    if Decimal(geometry.ratio_decimal) != value:
+                        raise ValueError("F3 point geometry mismatch")
+                previous = decimals[index - 1] if index > 0 else None
+                expected_yoy = _derived_yoy(previous, value)
+                actual_yoy = Decimal(yoy) if yoy is not None else None
+                if actual_yoy != expected_yoy:
+                    raise ValueError("F3 YoY mismatch")
+
+            available = tuple(
+                (point.year, value)
+                for point, value in zip(self.points, decimals)
+                if value is not None
+            )
+            if not available:
+                if any(value is not None for value in (
+                    summary.comparison_start_year,
+                    summary.comparison_end_year,
+                    summary.multiple_decimal,
+                    summary.change,
+                    summary.axis,
+                )):
+                    raise ValueError("F3 empty summary mismatch")
+                continue
+            expected_axis = _exact_axis(tuple(value for _, value in available))
+            if summary.axis is None or _axis_pair(summary.axis) != expected_axis:
+                raise ValueError("F3 series axis mismatch")
+            if len(available) < 2:
+                if any(value is not None for value in (
+                    summary.comparison_start_year,
+                    summary.comparison_end_year,
+                    summary.multiple_decimal,
+                    summary.change,
+                )):
+                    raise ValueError("F3 single-point summary mismatch")
+                continue
+            first_year, first = available[0]
+            last_year, last = available[-1]
+            with localcontext() as context:
+                context.prec = _EXACT_DECIMAL_PRECISION
+                context.rounding = ROUND_HALF_UP
+                expected_change = last - first
+            expected_multiple: Decimal | None = None
+            if first > 0 and last > 0:
+                with localcontext() as context:
+                    context.prec = 34
+                    context.rounding = ROUND_HALF_UP
+                    expected_multiple = (last / first).quantize(
+                        _DERIVED_QUANTUM,
+                        rounding=ROUND_HALF_UP,
+                    )
+            if (
+                summary.comparison_start_year != first_year
+                or summary.comparison_end_year != last_year
+                or (Decimal(summary.multiple_decimal) if summary.multiple_decimal is not None else None)
+                != expected_multiple
+                or summary.change is None
+                or _money_source(summary.change) != expected_change
+            ):
+                raise ValueError("F3 summary mismatch")
         return self
 
 
@@ -433,8 +677,45 @@ class PublicF4(PublicH2Model):
     @model_validator(mode="after")
     def _valid(self) -> "PublicF4":
         derived = (self.revenue_per_100_decimal, self.gross_per_100_decimal, self.operating_per_100_decimal, self.net_per_100_decimal, self.axis, *self.geometry_by_metric)
-        if (self.mode == "per_100") != all(item is not None for item in derived):
+        if (
+            (self.mode == "per_100" and not all(item is not None for item in derived))
+            or (self.mode == "denominator_unavailable" and any(item is not None for item in derived))
+        ):
             raise ValueError("F4 denominator shape mismatch")
+        revenue = _money_source(self.revenue_2110)
+        source_values = (
+            _money_source(self.gross_2100),
+            _money_source(self.operating_2200),
+            _money_source(self.net_2400),
+        )
+        if self.mode == "denominator_unavailable":
+            if revenue > 0:
+                raise ValueError("F4 unavailable denominator must be non-positive")
+            return self
+        if revenue <= 0:
+            raise ValueError("F4 per-100 denominator must be positive")
+        if self.mode == "per_100":
+            assert self.axis is not None
+            expected_values = (
+                Decimal("100"),
+                *tuple(_derived_ratio(value, revenue) for value in source_values),
+            )
+            actual_values = (
+                Decimal(self.revenue_per_100_decimal),
+                Decimal(self.gross_per_100_decimal),
+                Decimal(self.operating_per_100_decimal),
+                Decimal(self.net_per_100_decimal),
+            )
+            if actual_values != expected_values:
+                raise ValueError("F4 ratio arithmetic mismatch")
+            if _axis_pair(self.axis) != _exact_axis(expected_values):
+                raise ValueError("F4 axis mismatch")
+            if any(not _in_axis(value, self.axis) for value in actual_values):
+                raise ValueError("F4 geometry outside axis")
+            for interval, value in zip(self.geometry_by_metric, actual_values):
+                assert interval is not None
+                if Decimal(interval.start_ratio_decimal) != 0 or Decimal(interval.end_ratio_decimal) != value:
+                    raise ValueError("F4 geometry mismatch")
         return self
 
 
@@ -458,8 +739,23 @@ class PublicF5(PublicH2Model):
     @model_validator(mode="after")
     def _valid(self) -> "PublicF5":
         ids = ("2110", "1600", "1250", "1240", "1230", "1210", "1500", "1300", "2400")
-        if self.years != tuple(range(self.anchor_year - 6, self.anchor_year + 1)) or tuple(row.metric_id for row in self.rows) != ids or any(tuple(cell.year for cell in row.cells) != self.years for row in self.rows):
+        if (
+            self.years != tuple(range(self.anchor_year - 6, self.anchor_year + 1))
+            or tuple(row.metric_id for row in self.rows) != ids
+            or tuple(row.label for row in self.rows) != _F5_LABELS
+            or any(tuple(cell.year for cell in row.cells) != self.years for row in self.rows)
+        ):
             raise ValueError("F5 shape mismatch")
+        for row in self.rows:
+            values = tuple(
+                _money_source(cell.value) if cell.value is not None else None
+                for cell in row.cells
+            )
+            for index, cell in enumerate(row.cells):
+                expected = _derived_yoy(values[index - 1] if index > 0 else None, values[index])
+                actual = Decimal(cell.yoy_decimal) if cell.yoy_decimal is not None else None
+                if actual != expected:
+                    raise ValueError("F5 YoY mismatch")
         return self
 
 
@@ -684,7 +980,8 @@ class CompanyPublicH2Response(PublicH2Model):
             raise ValueError("invalid coverage limitation link")
         pairs = (("finance_f1", self.blocks.finance_f1), ("finance_f2", self.blocks.finance_f2), ("finance_f3", self.blocks.finance_f3), ("finance_f4", self.blocks.finance_f4), ("finance_f5", self.blocks.finance_f5), ("arbitration_a1", self.blocks.arbitration_a1), ("arbitration_a2", self.blocks.arbitration_a2), ("arbitration_a3", self.blocks.arbitration_a3), ("arbitration_a4", self.blocks.arbitration_a4), ("arbitration_a5", self.blocks.arbitration_a5))
         for block, value in pairs:
-            if (next(item.state for item in self.coverage if item.block_id == block) == "available") != (value is not None):
+            state = next(item.state for item in self.coverage if item.block_id == block)
+            if (state in {"available", "partial"}) != (value is not None):
                 raise ValueError("coverage and block disagree")
         if len(canonical_json_bytes(self.model_dump(mode="json"))) > 524288:
             raise ValueError("public_projection_too_large")

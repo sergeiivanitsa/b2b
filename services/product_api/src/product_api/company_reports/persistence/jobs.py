@@ -25,6 +25,7 @@ from .errors import (
     CompanyReportJobNotFoundError,
     CompanyReportJobStateConflictError,
     CompanyReportPersistenceError,
+    CompanyReportStateConflictError,
 )
 from .models import (
     JOB_FAILED_STATE,
@@ -33,6 +34,7 @@ from .models import (
     JOB_SUCCEEDED_STATE,
     REPORT_FINAL_STATUSES,
     REPORT_PENDING_STATUS,
+    CompanyCardNarrativeOutbox,
     CompanyReportJob,
     CompanyReportRecord,
     CompanyReportSubject,
@@ -417,15 +419,36 @@ async def complete_claimed_company_card_v2_job(
         )
     if lifecycle_status not in {"complete", "partial"}:
         raise ValueError("company card v2 lifecycle status is invalid")
+    # Enqueue owns the stable subject row before it inspects an active job.
+    # Use the same subject -> job -> report order here so finalization cannot
+    # deadlock with a concurrent request for a newer report.
+    subject = await session.get(
+        CompanyReportSubject,
+        claimed.subject_id,
+        with_for_update=True,
+    )
     job = await _lock_job(session, claimed.job_id)
     record = await _lock_report(session, claimed.report_id)
     db_time = await database_wall_clock(session)
-    if job is None or record is None:
+    if subject is None or job is None or record is None:
         raise CompanyReportJobNotFoundError("company card v2 job was not found")
+    if subject.normalized_identifier != claimed.normalized_identifier:
+        raise CompanyReportJobStateConflictError(
+            "company card v2 subject does not match the claim"
+        )
     _assert_claim_matches(job, claimed)
-    _assert_live_owner(job, worker_token=claimed.worker_token, db_time=db_time)
     if claimed.writer_profile != H2_WRITER_PROFILE or not _valid_stored_job_decision(job, record):
         raise CompanyReportJobStateConflictError("company card v2 writer decision does not match")
+    if job.state == JOB_SUCCEEDED_STATE:
+        return await _reuse_exact_company_card_v2_completion(
+            session,
+            job=job,
+            record=record,
+            snapshot=snapshot,
+            lifecycle_status=lifecycle_status,
+            db_time=db_time,
+        )
+    _assert_live_owner(job, worker_token=claimed.worker_token, db_time=db_time)
     if record.lifecycle_status != REPORT_PENDING_STATUS:
         raise CompanyReportJobStateConflictError(
             "company card v2 report is already finalized"
@@ -441,6 +464,10 @@ async def complete_claimed_company_card_v2_job(
         raise CompanyReportJobStateConflictError(
             "finalized company card v2 snapshot hash is missing"
         )
+    # Pin, report and outbox share the caller transaction.  The read path is
+    # deliberately SELECT-only; only a fenced writer may establish v2 policy.
+    from .presentations import create_or_reuse_unresolved_h2_pin
+    await create_or_reuse_unresolved_h2_pin(session, report=finalized)
     # ``narratives`` imports presentation helpers that depend on this module;
     # defer this narrow write-side dependency until jobs has initialized.
     from .narratives import insert_narrative_outbox
@@ -454,6 +481,92 @@ async def complete_claimed_company_card_v2_job(
     job.state, job.finished_at, job.safe_failure_code, job.updated_at = JOB_SUCCEEDED_STATE, db_time, None, db_time
     await session.flush()
     return CompletedReportJob(report_id=finalized.id, lifecycle_status=finalized.lifecycle_status, signals=None, scoring=None)
+
+
+async def _reuse_exact_company_card_v2_completion(
+    session: AsyncSession,
+    *,
+    job: CompanyReportJob,
+    record: CompanyReportRecord,
+    snapshot: CompanyCardV2SnapshotV2,
+    lifecycle_status: Literal["complete", "partial"],
+    db_time: datetime,
+) -> CompletedReportJob:
+    """Return a committed V3 boundary only when every durable row is exact.
+
+    This path is deliberately read-only.  In particular, a historical terminal
+    report without its unresolved v2 predecessor is corruption and must never
+    be backfilled by a retry.
+    """
+    if (
+        record.lifecycle_status not in {"complete", "partial"}
+        or record.lifecycle_status != lifecycle_status
+        or record.snapshot_hash is None
+        or record.finished_at is None
+        or job.finished_at is None
+        or _as_utc(record.finished_at) != _as_utc(job.finished_at)
+        or job.safe_failure_code is not None
+        or job.attempt_count != 1
+        or (job.fence_generation or 0) != 1
+    ):
+        raise CompanyReportJobStateConflictError(
+            "company card v2 completed boundary is not exact"
+        )
+    try:
+        finalized = await finalize_company_card_v2_report(
+            session,
+            snapshot,
+            report_id=record.id,
+            subject_id=record.subject_id,
+            finished_at=record.finished_at or db_time,
+        )
+    except CompanyReportStateConflictError as exc:
+        raise CompanyReportJobStateConflictError(
+            "company card v2 completion retry does not match the stored snapshot"
+        ) from exc
+    if finalized.snapshot_hash != record.snapshot_hash:
+        raise CompanyReportJobStateConflictError(
+            "company card v2 completion retry hash is not exact"
+        )
+
+    from .presentations import (
+        H2_PUBLICATION_POLICY_V2,
+        PresentationAssignmentConflict,
+        require_existing_unresolved_h2_pin,
+    )
+
+    try:
+        pin = await require_existing_unresolved_h2_pin(session, report=record)
+    except PresentationAssignmentConflict as exc:
+        raise CompanyReportJobStateConflictError(
+            "company card v2 completed pin lineage is invalid"
+        ) from exc
+    if pin.publication_policy_version != H2_PUBLICATION_POLICY_V2:
+        raise CompanyReportJobStateConflictError(
+            "company card v2 completed pin policy is invalid"
+        )
+
+    outboxes = list(
+        (
+            await session.scalars(
+                select(CompanyCardNarrativeOutbox).where(
+                    CompanyCardNarrativeOutbox.report_id == record.id,
+                    CompanyCardNarrativeOutbox.event_kind
+                    == "initialize_narrative_v1",
+                )
+            )
+        ).all()
+    )
+    if len(outboxes) != 1 or outboxes[0].snapshot_hash != record.snapshot_hash:
+        raise CompanyReportJobStateConflictError(
+            "company card v2 completed narrative outbox is not exact"
+        )
+    return CompletedReportJob(
+        report_id=record.id,
+        lifecycle_status=record.lifecycle_status,
+        signals=None,
+        scoring=None,
+    )
 
 
 async def fail_owned_job(

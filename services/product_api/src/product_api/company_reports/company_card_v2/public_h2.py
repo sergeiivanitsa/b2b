@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP, localcontext
 from hashlib import sha256
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from product_api.company_reports.aggregate import CompanyReport
 
 from .canonical_json import canonical_digest, canonical_json_bytes
+from .finance import F5_ROWS, FORM_BY_CODE, build_finance_views
 from .models import CompanyCardV2Snapshot, CompanyCardV2SnapshotV2
 from .narrative.catalog import (
     FALLBACK_DESCRIPTION,
@@ -64,6 +65,7 @@ def build_public_h2(
     *,
     narrative_binding: NarrativeBindingProtocol,
     fixture_finance_views: dict[str, object] | None = None,
+    finance_enabled: bool = False,
 ) -> CompanyPublicH2Response:
     """Build only from an already validated, injected narrative binding.
 
@@ -78,11 +80,109 @@ def build_public_h2(
     checked_date = snapshot.generated_at.astimezone(_MOSCOW).date().isoformat()
     name = snapshot.counterparty.full_name or snapshot.counterparty.short_name or snapshot.subject_inn
     canonical_path = f"/company/{snapshot.subject_inn}-company"
-    finance_blocks = _fixture_finance_blocks(fixture_finance_views) if fixture_finance_views is not None else {}
+    # ``fixture_finance_views`` is retained only for frozen golden callers. A
+    # saved v2 publication policy explicitly enables the same pure projection
+    # at runtime; legacy/v1 callers never enter this branch.
+    views = fixture_finance_views if fixture_finance_views is not None else (
+        build_finance_views(snapshot.finance_basis) if finance_enabled else None
+    )
+    finance_blocks = _fixture_finance_blocks(views) if views is not None else {}
+    finance_codes = {
+        "finance_f1": frozenset(("1250", "1240", "1230", "1500")),
+        "finance_f2": frozenset(("1300", "1400", "1500")),
+        "finance_f3": frozenset(("2110", "1600")),
+        "finance_f4": frozenset(("2110", "2100", "2200", "2400")),
+        "finance_f5": frozenset(code for code, _label in F5_ROWS),
+    }
+    # Limitations belong only to source leaves used by the concrete public
+    # view: correct source form and that view's selected calendar window.
+    # A historical/wrong-form cell must never downgrade a current projection.
+    finance_state_codes: dict[str, tuple[str, ...]] = {}
+    finance_formula_codes: dict[str, tuple[str, ...]] = {}
+    relevant_cells: dict[str, tuple[object, ...]] = {}
+    if finance_enabled and views is not None:
+        view_years = {
+            "finance_f1": (() if views["F1"] is None else (views["F1"]["year"],)),
+            "finance_f2": (() if views["F2"] is None else tuple(period["year"] for period in views["F2"]["periods"])),
+            "finance_f3": (() if views["F3"] is None else tuple(point["year"] for point in views["F3"]["points"])),
+            "finance_f4": (() if views["F4"] is None else (views["F4"]["year"],)),
+            "finance_f5": (() if views["F5"] is None else tuple(views["F5"]["years"])),
+        }
+        for block, codes in finance_codes.items():
+            if not view_years[block]:
+                candidates = [
+                    cell.year for cell in snapshot.finance_basis.cells
+                    if cell.code in codes and cell.form == FORM_BY_CODE[cell.code]
+                ]
+                if candidates:
+                    anchor = max(candidates)
+                    view_years[block] = (anchor,) if block in {"finance_f1", "finance_f4"} else tuple(range(anchor - 6, anchor + 1))
+            relevant_cells[block] = tuple(
+                cell for cell in snapshot.finance_basis.cells
+                if cell.code in codes
+                and cell.form == FORM_BY_CODE[cell.code]
+                and cell.year in view_years[block]
+            )
+            states = sorted({cell.state for cell in relevant_cells[block] if cell.state != "available_nonzero"})
+            finance_state_codes[block] = tuple(f"finance_{state}" for state in states)
+        if views["F1"] is not None and "receivables_collection_unassessed" in views["F1"].get("limitations", ()):
+            finance_formula_codes["finance_f1"] = ("receivables_collection_unassessed",)
+        for block, view in (("finance_f2", views["F2"]), ("finance_f4", views["F4"])):
+            if view is None:
+                continue
+            raw = (
+                tuple(code for period in view["periods"] for code in period.get("limitations", ()))
+                if block == "finance_f2" else tuple(view.get("limitations", ()))
+            )
+            approved = tuple(sorted(set(raw) & {"finance_denominator_non_positive"}))
+            if approved:
+                finance_formula_codes[block] = approved
+    stored_limitations = (*snapshot.limitations, *snapshot.arbitration_basis.limitations)
+    if finance_enabled:
+        # Rebuild finance limitations from the exact selected form/window
+        # below. Carrying snapshot-wide finance rows here would let an old or
+        # wrong-form leaf downgrade an unrelated current view.
+        stored_limitations = tuple(
+            item for item in stored_limitations
+            if not (
+                (item.field is not None and item.field.startswith("finance."))
+                or item.code.startswith("finance_")
+            )
+        )
     limitations = [
         PublicH2Limitation(code=item.code, field_id=item.field, message="Данные недоступны в текущем подтверждённом контуре.")
-        for item in (*snapshot.limitations, *snapshot.arbitration_basis.limitations)
+        for item in stored_limitations
     ]
+    if finance_enabled:
+        seen_finance_fields: set[tuple[str, str]] = set()
+        seen_finance_states: set[str] = set()
+        for block, cells in relevant_cells.items():
+            for cell in cells:
+                if cell.state == "available_nonzero":
+                    continue
+                key = (cell.state, f"finance.{cell.form}.{cell.code}.{cell.year}")
+                if key in seen_finance_fields:
+                    continue
+                seen_finance_fields.add(key)
+                state_code = f"finance_{cell.state}"
+                if state_code not in seen_finance_states:
+                    seen_finance_states.add(state_code)
+                    limitations.append(PublicH2Limitation(
+                        code=state_code,
+                        field_id=None,
+                        message="Часть финансовых показателей не подтверждена в сохранённом снимке.",
+                    ))
+                limitations.append(PublicH2Limitation(
+                    code=f"finance-{cell.state}-{cell.form}-{cell.code}-{cell.year}",
+                    field_id=key[1],
+                    message="Часть финансовых показателей не подтверждена в сохранённом снимке.",
+                ))
+        for code in sorted({code for codes in finance_formula_codes.values() for code in codes}):
+            limitations.append(PublicH2Limitation(
+                code=code,
+                field_id=None,
+                message="Расчёт финансового показателя ограничен сохранёнными исходными данными.",
+            ))
     # Every unavailable leaf has an explicit linked limitation.  Do not reuse
     # private/provider text as a message.
     # Requisites are deliberately conservative: the available snapshot core
@@ -90,6 +190,8 @@ def build_public_h2(
     limitations.append(PublicH2Limitation(code="requisites_partial", block_id="requisites", field_id=None, message="Часть реквизитов недоступна в текущем подтверждённом контуре."))
     for block in (*COVERAGE_BLOCKS[2:7], *COVERAGE_BLOCKS[7:12]):
         if block.startswith("finance_") and finance_blocks.get(block) is not None:
+            continue
+        if block.startswith("finance_") and finance_enabled:
             continue
         code = f"{block}_gate_closed"
         limitations.append(PublicH2Limitation(code=code, block_id=block, field_id=None, message="Раздел недоступен до закрытия обязательного evidence gate."))
@@ -107,7 +209,13 @@ def build_public_h2(
         elif block == "sources_limitations":
             coverage.append(PublicH2CoverageItem(block_id=block, state="available", population_scope="not_applicable", limitation_codes=()))
         elif block.startswith("finance_") and finance_blocks.get(block) is not None:
-            coverage.append(PublicH2CoverageItem(block_id=block, state="available", population_scope="not_applicable", limitation_codes=()))
+            # F1's receivables-collection notice is an approved advisory, not
+            # an incompleteness signal for an otherwise complete calculation.
+            formula_codes = () if block == "finance_f1" else finance_formula_codes.get(block, ())
+            codes = (*finance_state_codes.get(block, ()), *formula_codes)
+            coverage.append(PublicH2CoverageItem(block_id=block, state="partial" if codes else "available", population_scope="not_applicable", limitation_codes=codes))
+        elif block.startswith("finance_") and finance_enabled:
+            coverage.append(PublicH2CoverageItem(block_id=block, state="missing", population_scope="not_applicable", limitation_codes=finance_state_codes.get(block, ())))
         else:
             coverage.append(PublicH2CoverageItem(block_id=block, state="gate_closed", population_scope="not_applicable", limitation_codes=(f"{block}_gate_closed",)))
     primary_activity = None
@@ -364,15 +472,28 @@ def _decimal(value: Decimal) -> str:
 def _money(value: Decimal) -> PublicFinanceMoney:
     if not isinstance(value, Decimal) or not value.is_finite():
         raise ValueError("fixture finance values must be finite Decimal")
-    source = _decimal(value)
-    rub = _decimal(value * Decimal("1000"))
-    million = _decimal(value / Decimal("1000"))
+    with localcontext() as context:
+        context.prec = 128
+        context.rounding = ROUND_HALF_UP
+        source = _decimal(value)
+        rub = _decimal(value * Decimal("1000"))
+        # Exact public money intentionally keeps thousandth-million precision
+        # for integral source units: 10 -> 0,010; 273325 -> 273,325.
+        million_value = value / Decimal("1000")
+        million = _decimal(million_value)
+        exact_million = format(million_value.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP), "f") if value == value.to_integral_value() else million
+        compact = million_value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    def shown(number: Decimal | str) -> str:
+        rendered = _decimal(number) if isinstance(number, Decimal) else number
+        return rendered.replace("-", "−", 1).replace(".", ",")
     return PublicFinanceMoney(
         source_thousand_decimal=source,
         rub_decimal=rub,
         million_decimal=million,
-        display_exact=f"{rub} ₽",
-        display_compact=f"{million} млн ₽",
+        # Source units are thousands of roubles.  Preserve exact decimal
+        # million precision separately from the one-decimal compact label.
+        display_exact=f"{shown(exact_million)} млн ₽",
+        display_compact=f"{shown(compact)} млн ₽",
     )
 
 
@@ -435,7 +556,9 @@ def _f1(value: object) -> PublicF1 | None:
     )
 
 
-def _f2(value: object) -> PublicF2:
+def _f2(value: object) -> PublicF2 | None:
+    if value is None:
+        return None
     item = _mapping(value, label="F2")
     periods: list[PublicF2Period] = []
     for raw in item["periods"]:
@@ -480,7 +603,9 @@ def _summary(value: object, metric_id: str) -> PublicF3SeriesSummary:
     )
 
 
-def _f3(value: object) -> PublicF3:
+def _f3(value: object) -> PublicF3 | None:
+    if value is None:
+        return None
     item = _mapping(value, label="F3")
     points = []
     for raw in item["points"]:
@@ -522,7 +647,9 @@ def _f4(value: object) -> PublicF4 | None:
     )
 
 
-def _f5(value: object) -> PublicF5:
+def _f5(value: object) -> PublicF5 | None:
+    if value is None:
+        return None
     item = _mapping(value, label="F5")
     rows = []
     for raw in item["rows"]:

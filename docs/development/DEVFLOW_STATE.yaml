@@ -237,8 +237,8 @@ iterations:
   - id: 23
     slug: company-card-v2-finance-charts
     title: "Финансовые графики Company Card v2"
-    status: planned
-    branch: pending
+    status: ready_for_merge
+    branch: feat/iteration-23-company-card-v2-finance-charts
     commit: pending
     merged_at: null
     block_reason: null
