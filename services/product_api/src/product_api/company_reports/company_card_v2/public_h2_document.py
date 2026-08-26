@@ -69,6 +69,109 @@ def _block_surface(dto: CompanyPublicH2Response, prefix: str) -> str:
     return "<ul>" + "".join(rows) + "</ul>"
 
 
+def _money(value: object | None) -> str:
+    if value is None:
+        return "—"
+    return f'<span title="{escape(value.display_exact)}">{escape(value.display_compact)}</span>'
+
+
+_F1_ADVISORY = "Срок и вероятность погашения дебиторской задолженности не оцениваются."
+
+
+def _finance_limitations(dto: CompanyPublicH2Response, block_id: str, *, advisory: bool) -> str:
+    coverage = _coverage(dto, block_id)
+    codes = list(coverage.limitation_codes)
+    known = {item.code: item for item in dto.limitations}
+    if (
+        advisory
+        and "receivables_collection_unassessed" in known
+        and "receivables_collection_unassessed" not in codes
+    ):
+        codes.append("receivables_collection_unassessed")
+    if codes:
+        limitations = "<ul>" + "".join(
+            f'<li data-h2-finance-limitation="{escape(code)}"><a href="#limitation-{escape(code)}">'
+            f'{escape(known[code].message)}</a></li>'
+            for code in codes
+        ) + "</ul>"
+    else:
+        limitations = "<p>Ограничения для этого представления не указаны.</p>"
+    return (
+        f'<section aria-label="Ограничения финансового представления" '
+        f'data-h2-finance-limitations="{escape(block_id)}"><h4>Ограничения</h4>'
+        f"{limitations}</section>"
+    )
+
+
+def _finance_article(
+    dto: CompanyPublicH2Response,
+    article_id: str,
+    block_id: str,
+    title: str,
+    body: str,
+    *,
+    advisory: bool = False,
+) -> str:
+    advisory_html = (
+        '<p data-h2-finance-advisory="receivables_collection_unassessed">'
+        f"{_F1_ADVISORY}</p>"
+        if advisory else ""
+    )
+    return (
+        f'<article id="{article_id}" data-h2-finance-article="{article_id}"><h3>{title}</h3>'
+        f'<p data-h2-finance-coverage="{escape(block_id)}">Покрытие представления: '
+        f'{escape(_coverage(dto, block_id).state)}.</p>'
+        f"{advisory_html}{body}{_finance_limitations(dto, block_id, advisory=advisory)}"
+        f'<div class="company-public-h2__finance-enhancement" data-h2-finance-enhancement="{article_id}" aria-hidden="true"></div></article>'
+    )
+
+
+def _finance_facts(dto: CompanyPublicH2Response) -> str:
+    """The immutable server surface mirrored exactly by ``FinanceFacts``.
+
+    It is table/dl first: the optional SVG enhancer is intentionally empty in
+    SSR so a failed chunk cannot remove report facts.
+    """
+    f1, f2, f3, f4, f5 = (getattr(dto.blocks, f"finance_f{number}") for number in range(1, 6))
+    missing = "<p>Подтверждённые финансовые данные не опубликованы.</p>"
+    if f1 is None:
+        f1_body = missing
+    else:
+        rows = (("Денежные средства", f1.cash_1250), ("Финансовые вложения", f1.investments_1240), ("Дебиторская задолженность", f1.receivables_1230), ("Краткосрочные обязательства", f1.short_liabilities_1500), ("Доступно без запасов", f1.available_without_inventory), ("Разница", f1.difference))
+        f1_body = f"<p>Период: <time>{f1.year}</time></p><dl>" + "".join(f"<dt>{label}</dt><dd>{_money(value)}</dd>" for label, value in rows) + "</dl>"
+    if f2 is None:
+        f2_body = missing
+    else:
+        rows = "".join(f"<tr><th scope=\"row\">{period.year}</th><td>{_money(period.equity_1300)}</td><td>{_money(period.debt)}</td><td>{period.equity_share_decimal + ' %' if period.equity_share_decimal is not None else '—'}</td><td>{period.debt_share_decimal + ' %' if period.debt_share_decimal is not None else '—'}</td></tr>" for period in f2.periods)
+        f2_body = '<table><caption>Структура финансирования по годам</caption><thead><tr><th scope="col">Год</th><th scope="col">Собственные средства</th><th scope="col">Долг</th><th scope="col">Доля собственных средств</th><th scope="col">Доля долга</th></tr></thead><tbody>' + rows + '</tbody></table>'
+    if f3 is None:
+        f3_body = missing
+    else:
+        def panel(label: str, money_key: str, yoy_key: str, summary: object) -> str:
+            rows = "".join(f"<tr><th scope=\"row\">{point.year}</th><td>{_money(getattr(point, money_key))}</td><td>{getattr(point, yoy_key) + ' %' if getattr(point, yoy_key) is not None else '—'}</td></tr>" for point in f3.points)
+            multiple = summary.multiple_decimal + " ×" if summary.multiple_decimal is not None else "—"
+            return f'<section aria-label="{label}"><h4>{label}</h4><table><caption>{label} по годам</caption><thead><tr><th scope="col">Год</th><th scope="col">Значение</th><th scope="col">Изменение год к году</th></tr></thead><tbody>{rows}</tbody></table><p>Изменение за период: {_money(summary.change)}; мультипликатор: {multiple}</p></section>'
+        f3_body = panel("Выручка", "revenue_2110", "revenue_yoy_decimal", f3.revenue_summary) + panel("Активы", "assets_1600", "assets_yoy_decimal", f3.assets_summary)
+    if f4 is None:
+        f4_body = missing
+    else:
+        rows = (("Выручка", f4.revenue_per_100_decimal), ("Валовая прибыль", f4.gross_per_100_decimal), ("Прибыль от продаж", f4.operating_per_100_decimal), ("Чистая прибыль", f4.net_per_100_decimal))
+        f4_body = f"<p>Период: <time>{f4.year}</time></p><dl>" + "".join(f"<dt>{label}</dt><dd>{value + ' ₽ из 100 ₽' if value is not None else '—'}</dd>" for label, value in rows) + "</dl>"
+    if f5 is None:
+        f5_body = missing
+    else:
+        headers = "".join(f'<th scope="col">{year}</th>' for year in f5.years)
+        rows = "".join(f'<tr><th scope="row">{row.label}</th>{"".join(f"<td>{_money(cell.value)}</td>" for cell in row.cells)}</tr>' for row in f5.rows)
+        f5_body = f'<div class="company-public-h2__finance-table"><table><caption>Финансовые показатели по годам</caption><thead><tr><th scope="col">Показатель</th>{headers}</tr></thead><tbody>{rows}</tbody></table></div>'
+    return "".join((
+        _finance_article(dto, "finance-f1", "finance_f1", "Ликвидность", f1_body, advisory=f1 is not None),
+        _finance_article(dto, "finance-f2", "finance_f2", "Структура финансирования", f2_body),
+        _finance_article(dto, "finance-f3", "finance_f3", "Выручка и активы", f3_body),
+        _finance_article(dto, "finance-f4", "finance_f4", "Прибыль на 100 рублей выручки", f4_body),
+        _finance_article(dto, "finance-f5", "finance_f5", "Финансовые показатели по годам", f5_body),
+    ))
+
+
 def render_public_h2_body(dto: CompanyPublicH2Response) -> str:
     """Render factual shell only; charts and computed conclusions are absent."""
     h = escape
@@ -116,12 +219,12 @@ def render_public_h2_body(dto: CompanyPublicH2Response) -> str:
 <section id="narrative" aria-labelledby="narrative-title"><h2 id="narrative-title">{narrative_heading}</h2><p data-h2-field="narrative.description">{h(dto.narrative.description)}</p><h3>Покрытие описания</h3><ul>{_coverage_row(_coverage(dto, "narrative"))}</ul></section>
 <nav id="in-page-navigation" aria-label="Разделы отчёта"><ol>{nav}</ol></nav>
 <section id="requisites"><h2>Реквизиты</h2><dl>{''.join(requisites)}</dl>{f'<h3>Налоговые режимы</h3><ul>{"".join(f"<li>{h(item.label)}</li>" for item in dto.blocks.requisites.tax_modes)}</ul>' if dto.blocks.requisites.tax_modes else ''}{f'<h3>Дополнительные виды деятельности</h3><ul>{activities}</ul>' if activities else ''}{f'<h3>Руководители</h3><ul>{managers}</ul>' if managers else ''}{f'<h3>Владельцы</h3><ul>{owners}</ul>' if owners else ''}{f'<p>Численность: {employees.count} ({h(employees.period)})</p>' if employees else ''}{f'<p>Налоговый орган: {h(tax_authority.label)}</p>' if tax_authority else ''}<h3>Покрытие реквизитов</h3><ul>{_coverage_row(_coverage(dto, "requisites"))}</ul></section>
-<section id="finance"><h2>Финансы</h2><h3>Покрытие</h3><ul>{finance_coverage}</ul>{_block_surface(dto, "finance")}</section>
+<section id="finance"><h2>Финансы</h2><h3>Покрытие</h3><ul>{finance_coverage}</ul>{_finance_facts(dto)}</section>
 <section id="arbitration"><h2>Арбитраж</h2><h3>Покрытие</h3><ul>{arbitration_coverage}</ul>{_block_surface(dto, "arbitration")}</section>
 <section id="sources-limitations"><h2>Источники и ограничения</h2><h3>Покрытие раздела</h3><ul>{_coverage_row(_coverage(dto, "sources_limitations"))}</ul><h3>Источники</h3><ul>{sources}</ul><h3>Ограничения</h3><ul>{limitations}</ul></section>
 <section id="neutral-actions"><h2>Действия</h2><a class="company-public-h2__button company-public-h2__button--accent" href="{h(dto.actions[0].path)}">{h(dto.actions[0].label)}</a><a class="company-public-h2__button company-public-h2__button--accent" href="{h(dto.actions[1].path)}">{h(dto.actions[1].label)}</a></section>
 <aside class="company-public-h2__cta" aria-label="Подготовка претензии"><h2>{h(dto.primary_claim_cta.heading)}</h2><p class="company-public-h2__cta-copy">{h(dto.primary_claim_cta.desktop_copy)}</p><a class="company-public-h2__button company-public-h2__button--accent" href="{h(dto.primary_claim_cta.path)}">{h(dto.primary_claim_cta.button_label)}</a></aside>
-<div class="company-public-h2__cta-reserver" inert aria-hidden="true"></div><p class="company-public-h2__live" aria-live="polite"></p></main>'''
+<div class="company-public-h2__cta-reserver" inert aria-hidden="true"></div><p class="company-public-h2__live" role="status" aria-live="polite"></p></main>'''
 
 
 def render_public_h2_document(dto: CompanyPublicH2Response, manifest: PublicH2AssetManifest, nonce: str | None = None, robots: str = "noindex,follow") -> str:

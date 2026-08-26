@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 import pytest
-from sqlalchemy import func, select, text, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 TESTS_UNIT = Path(__file__).resolve().parents[1] / "tests_unit"
@@ -40,7 +40,11 @@ from product_api.company_reports.persistence import (
     heartbeat_job,
     reconcile_expired_jobs,
 )
-from product_api.company_reports.persistence.models import CompanyCardNarrativeOutbox
+from product_api.company_reports.persistence.models import (
+    CompanyCardNarrativeOutbox,
+    CompanyReportPresentationPin,
+    CompanyReportSubject,
+)
 from product_api.company_reports.persistence.narratives import insert_narrative_outbox
 
 pytestmark = pytest.mark.asyncio
@@ -164,6 +168,11 @@ async def _company_card_v2_boundary_state(engine, *, job_id, report_id):
                     CompanyCardNarrativeOutbox.report_id == report_id
                 )
             ),
+            "pins": await session.scalar(
+                select(func.count(CompanyReportPresentationPin.generation)).where(
+                    CompanyReportPresentationPin.report_id == report_id
+                )
+            ),
             "datasets": await session.scalar(
                 select(func.count(CompanyReportDataset.id)).where(
                     CompanyReportDataset.report_id == report_id
@@ -211,7 +220,7 @@ async def test_company_card_v2_completion_commits_snapshot_job_and_one_outbox(
     assert before["job"][0] == "running"
     assert before["report"][0] == "pending"
     assert before["report"][3:7] == (None, None, None, None)
-    assert before["outbox"] == before["datasets"] == before["provider_requests"] == 0
+    assert before["outbox"] == before["pins"] == before["datasets"] == before["provider_requests"] == 0
 
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         completed = await complete_claimed_company_card_v2_job(
@@ -244,6 +253,7 @@ async def test_company_card_v2_completion_commits_snapshot_job_and_one_outbox(
     }
     assert after["report"][7:] == ([], None)
     assert after["outbox"] == 1
+    assert after["pins"] == 1
     # V3 finalization stays outside the H1 provider-journal and signal/scoring
     # persistence path.  Its only derivative write is the durable outbox row.
     assert after["datasets"] == after["provider_requests"] == 0
@@ -308,9 +318,10 @@ async def test_company_card_v2_outbox_failure_rolls_back_all_completion_writes(
     assert after["job"][0] == "running"
     assert after["report"][0] == "pending"
     assert after["outbox"] == 0
+    assert after["pins"] == 0
 
 
-async def test_company_card_v2_repeated_completion_is_fenced_and_outbox_is_idempotent(
+async def test_company_card_v2_exact_completion_retry_is_reused_and_replacement_is_fenced(
     engine,
 ):
     claimed = await _enqueue_and_claim_company_card_v2(engine)
@@ -329,6 +340,24 @@ async def test_company_card_v2_repeated_completion_is_fenced_and_outbox_is_idemp
         job_id=claimed.job_id,
         report_id=claimed.report_id,
     )
+    async with AsyncSession(bind=engine) as session:
+        retried = await complete_claimed_company_card_v2_job(
+            session,
+            claimed=claimed,
+            snapshot=original,
+            lifecycle_status="complete",
+        )
+        await session.commit()
+    assert (retried.report_id, retried.lifecycle_status) == (
+        claimed.report_id,
+        "complete",
+    )
+    assert await _company_card_v2_boundary_state(
+        engine,
+        job_id=claimed.job_id,
+        report_id=claimed.report_id,
+    ) == committed
+
     async with AsyncSession(bind=engine) as session:
         with pytest.raises(
             (CompanyReportJobFencingError, CompanyReportJobStateConflictError)
@@ -369,8 +398,121 @@ async def test_company_card_v2_repeated_completion_is_fenced_and_outbox_is_idemp
     )
     assert after == committed
     assert after["outbox"] == 1
+    assert after["pins"] == 1
     assert after["report"][0] == "complete"
     assert after["report"][3]["counterparty"]["full_name"] == "Тестовое общество"
+
+
+@pytest.mark.parametrize("missing_boundary", ("pin", "outbox"))
+async def test_company_card_v2_terminal_retry_does_not_backfill_missing_boundary(
+    engine,
+    missing_boundary: str,
+):
+    claimed = await _enqueue_and_claim_company_card_v2(engine)
+    snapshot = _company_card_v2_snapshot(claimed)
+    async with AsyncSession(bind=engine) as session:
+        await complete_claimed_company_card_v2_job(
+            session,
+            claimed=claimed,
+            snapshot=snapshot,
+            lifecycle_status="complete",
+        )
+        await session.commit()
+
+    async with AsyncSession(bind=engine) as session:
+        model = (
+            CompanyReportPresentationPin
+            if missing_boundary == "pin"
+            else CompanyCardNarrativeOutbox
+        )
+        await session.execute(delete(model).where(model.report_id == claimed.report_id))
+        await session.commit()
+
+    damaged = await _company_card_v2_boundary_state(
+        engine,
+        job_id=claimed.job_id,
+        report_id=claimed.report_id,
+    )
+    boundary_key = "pins" if missing_boundary == "pin" else "outbox"
+    assert damaged[boundary_key] == 0
+
+    async with AsyncSession(bind=engine) as session:
+        with pytest.raises(
+            CompanyReportJobStateConflictError,
+            match="completed .*?(pin|outbox)",
+        ):
+            await complete_claimed_company_card_v2_job(
+                session,
+                claimed=claimed,
+                snapshot=snapshot,
+                lifecycle_status="complete",
+            )
+        await session.rollback()
+
+    after = await _company_card_v2_boundary_state(
+        engine,
+        job_id=claimed.job_id,
+        report_id=claimed.report_id,
+    )
+    assert after == damaged
+
+
+async def test_company_card_v2_completion_and_reenqueue_share_subject_lock_order(
+    engine,
+):
+    claimed = await _enqueue_and_claim_company_card_v2(engine)
+    terminal = AsyncSession(bind=engine, expire_on_commit=False)
+    await terminal.execute(
+        select(CompanyReportSubject)
+        .where(CompanyReportSubject.id == claimed.subject_id)
+        .with_for_update()
+    )
+    enqueue_started = asyncio.Event()
+
+    async def enqueue_new_report():
+        async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+            enqueue_started.set()
+            result = await enqueue_company_report_job(
+                session,
+                claimed.normalized_identifier,
+                decision=WriterDecision(
+                    writer_profile="company_card_v2_writer_v3",
+                    report_version="3",
+                    presentation_contract="company_public_h2_v1",
+                    rollout_generation=1,
+                ),
+            )
+            await session.commit()
+            return result
+
+    enqueue_task = asyncio.create_task(enqueue_new_report())
+    await enqueue_started.wait()
+    await asyncio.sleep(0.1)
+    assert enqueue_task.done() is False
+
+    try:
+        completed = await complete_claimed_company_card_v2_job(
+            terminal,
+            claimed=claimed,
+            snapshot=_company_card_v2_snapshot(claimed),
+            lifecycle_status="complete",
+        )
+        await terminal.commit()
+    finally:
+        await terminal.close()
+    enqueued = await asyncio.wait_for(enqueue_task, timeout=5)
+
+    assert completed.report_id == claimed.report_id
+    assert enqueued.reused is False
+    assert enqueued.report_id != claimed.report_id
+    first = await _company_card_v2_boundary_state(
+        engine,
+        job_id=claimed.job_id,
+        report_id=claimed.report_id,
+    )
+    assert first["job"][0] == "succeeded"
+    assert first["report"][0] == "complete"
+    assert first["pins"] == first["outbox"] == 1
 
 
 async def test_concurrent_enqueue_reuses_one_pending_report_and_job(engine):

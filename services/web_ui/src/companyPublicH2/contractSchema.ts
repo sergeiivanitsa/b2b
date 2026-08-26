@@ -49,13 +49,42 @@ export interface PublicH2NarrativeDto extends StrictJsonObject {
   readonly render_digest: string
 }
 export interface PublicH2ViewDto extends StrictJsonObject { readonly view_id: string }
+export interface PublicH2MoneyDto extends StrictJsonObject {
+  readonly source_thousand_decimal: string
+  readonly rub_decimal: string
+  readonly million_decimal: string
+  readonly display_exact: string
+  readonly display_compact: string
+  readonly unit_id: 'RUB'
+  readonly unit_policy_version: 'datanewton_finance_thousand_rub_v2'
+}
+export interface PublicH2AxisDto extends StrictJsonObject { readonly axis_min_decimal: string; readonly axis_max_decimal: string }
+export interface PublicH2IntervalDto extends StrictJsonObject { readonly start_ratio_decimal: string; readonly end_ratio_decimal: string }
+export interface PublicH2PointDto extends StrictJsonObject { readonly ratio_decimal: string }
+export interface PublicH2FinanceF1Dto extends PublicH2ViewDto {
+  readonly view_id: 'finance_f1_liquidity'; readonly year: StrictJsonInteger
+  readonly cash_1250: PublicH2MoneyDto; readonly investments_1240: PublicH2MoneyDto; readonly receivables_1230: PublicH2MoneyDto; readonly short_liabilities_1500: PublicH2MoneyDto
+  readonly available_without_inventory: PublicH2MoneyDto; readonly difference: PublicH2MoneyDto; readonly axis: PublicH2AxisDto
+  readonly segments: readonly { readonly metric_id: '1250' | '1240' | '1230' | '1500'; readonly value: PublicH2MoneyDto; readonly geometry: PublicH2IntervalDto }[]
+}
+export interface PublicH2FinanceF2PeriodDto extends StrictJsonObject {
+  readonly year: StrictJsonInteger; readonly state: 'available' | 'gap' | 'denominator_unavailable'; readonly equity_1300: PublicH2MoneyDto | null; readonly long_liabilities_1400: PublicH2MoneyDto | null; readonly short_liabilities_1500: PublicH2MoneyDto | null; readonly debt: PublicH2MoneyDto | null; readonly denominator: PublicH2MoneyDto | null
+  readonly equity_share_decimal: string | null; readonly debt_share_decimal: string | null; readonly mode: 'stacked_100' | 'diverging_signed' | 'unavailable'; readonly axis: PublicH2AxisDto | null; readonly geometry_by_metric: readonly [PublicH2IntervalDto | null, PublicH2IntervalDto | null]
+}
+export interface PublicH2FinanceF2Dto extends PublicH2ViewDto { readonly view_id: 'finance_f2_funding'; readonly anchor_year: StrictJsonInteger; readonly window_start_year: StrictJsonInteger; readonly periods: readonly PublicH2FinanceF2PeriodDto[] }
+export interface PublicH2FinanceF3PointDto extends StrictJsonObject { readonly year: StrictJsonInteger; readonly revenue_2110: PublicH2MoneyDto | null; readonly assets_1600: PublicH2MoneyDto | null; readonly revenue_yoy_decimal: string | null; readonly assets_yoy_decimal: string | null; readonly geometry_by_metric: readonly [PublicH2PointDto | null, PublicH2PointDto | null] }
+export interface PublicH2FinanceF3SummaryDto extends StrictJsonObject { readonly metric_id: 'revenue_2110' | 'assets_1600'; readonly comparison_start_year: StrictJsonInteger | null; readonly comparison_end_year: StrictJsonInteger | null; readonly multiple_decimal: string | null; readonly change: PublicH2MoneyDto | null; readonly axis: PublicH2AxisDto | null }
+export interface PublicH2FinanceF3Dto extends PublicH2ViewDto { readonly view_id: 'finance_f3_growth'; readonly anchor_year: StrictJsonInteger; readonly window_start_year: StrictJsonInteger; readonly points: readonly PublicH2FinanceF3PointDto[]; readonly revenue_summary: PublicH2FinanceF3SummaryDto; readonly assets_summary: PublicH2FinanceF3SummaryDto }
+export interface PublicH2FinanceF4Dto extends PublicH2ViewDto { readonly view_id: 'finance_f4_profit_per_100'; readonly year: StrictJsonInteger; readonly revenue_2110: PublicH2MoneyDto; readonly gross_2100: PublicH2MoneyDto; readonly operating_2200: PublicH2MoneyDto; readonly net_2400: PublicH2MoneyDto; readonly revenue_per_100_decimal: '100' | null; readonly gross_per_100_decimal: string | null; readonly operating_per_100_decimal: string | null; readonly net_per_100_decimal: string | null; readonly mode: 'per_100' | 'denominator_unavailable'; readonly axis: PublicH2AxisDto | null; readonly geometry_by_metric: readonly [PublicH2IntervalDto | null, PublicH2IntervalDto | null, PublicH2IntervalDto | null, PublicH2IntervalDto | null] }
+export interface PublicH2FinanceF5CellDto extends StrictJsonObject { readonly year: StrictJsonInteger; readonly value: PublicH2MoneyDto | null; readonly yoy_decimal: string | null }
+export interface PublicH2FinanceF5Dto extends PublicH2ViewDto { readonly view_id: 'finance_f5_yearly_table'; readonly anchor_year: StrictJsonInteger; readonly years: readonly StrictJsonInteger[]; readonly rows: readonly { readonly metric_id: '2110' | '1600' | '1250' | '1240' | '1230' | '1210' | '1500' | '1300' | '2400'; readonly label: string; readonly cells: readonly PublicH2FinanceF5CellDto[] }[] }
 export interface PublicH2BlocksDto extends StrictJsonObject {
   readonly requisites: PublicH2RequisitesDto
-  readonly finance_f1: PublicH2ViewDto | null
-  readonly finance_f2: PublicH2ViewDto | null
-  readonly finance_f3: PublicH2ViewDto | null
-  readonly finance_f4: PublicH2ViewDto | null
-  readonly finance_f5: PublicH2ViewDto | null
+  readonly finance_f1: PublicH2FinanceF1Dto | null
+  readonly finance_f2: PublicH2FinanceF2Dto | null
+  readonly finance_f3: PublicH2FinanceF3Dto | null
+  readonly finance_f4: PublicH2FinanceF4Dto | null
+  readonly finance_f5: PublicH2FinanceF5Dto | null
   readonly arbitration_a1: PublicH2ViewDto | null
   readonly arbitration_a2: PublicH2ViewDto | null
   readonly arbitration_a3: PublicH2ViewDto | null

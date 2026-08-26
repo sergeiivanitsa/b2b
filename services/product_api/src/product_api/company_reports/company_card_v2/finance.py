@@ -15,6 +15,10 @@ F5_ROWS = (
     ("1240", "Финансовые вложения"), ("1230", "Долги покупателей"), ("1210", "Запасы"),
     ("1500", "Ближайшие обязательства"), ("1300", "Свои средства"), ("2400", "Чистая прибыль"),
 )
+FORM_BY_CODE = {
+    **{code: BALANCE_FORM for code in ("1210", "1230", "1240", "1250", "1300", "1400", "1500", "1600")},
+    **{code: FINANCIAL_RESULTS_FORM for code in ("2100", "2110", "2200", "2400")},
+}
 
 
 def classify_finance_cell(*, form: str, code: str, year: int, lexemes: Iterable[str] | None, transport_valid: bool) -> FinanceCellV1:
@@ -68,20 +72,45 @@ def build_finance_views(basis: FinanceBasisV1, *, anchor_year: int | None = None
     in a calculation. ``anchor_year`` is injected by the writer, so the pure
     calculation never reads the wall clock.
     """
-    cells = {(cell.code, cell.year): cell for cell in basis.cells if cell.code in APPROVED_CODES}
-    years = sorted({year for _, year in cells})
-    if anchor_year is None:
-        anchor_year = max(years) if years else None
-    if anchor_year is None:
-        return {name: None for name in ("F1", "F2", "F3", "F4", "F5")}
-    value = lambda code, year: _available(cells.get((code, year)))
-    return {
-        "F1": _f1(value, anchor_year),
-        "F2": _f2(value, anchor_year),
-        "F3": _f3(value, anchor_year),
-        "F4": _f4(value, anchor_year),
-        "F5": _f5(value, anchor_year),
+    # The code is not sufficient identity: finance forms may contain similarly
+    # named leaves.  A wrong form is a gap, never a substituted fact.
+    cells = {
+        (cell.form, cell.code, cell.year): cell
+        for cell in basis.cells
+        if cell.code in APPROVED_CODES and FORM_BY_CODE.get(cell.code) == cell.form
     }
+    def value(code: str, year: int) -> Decimal | None:
+        return _available(cells.get((FORM_BY_CODE[code], code, year)))
+
+    def latest_complete(required: tuple[str, ...]) -> int | None:
+        years = sorted({year for _, _, year in cells}, reverse=True)
+        if anchor_year is not None:
+            years = [year for year in years if year <= anchor_year]
+        return next((year for year in years if all(value(code, year) is not None for code in required)), None)
+
+    def latest_any(codes: tuple[str, ...]) -> int | None:
+        years = sorted({year for _, _, year in cells}, reverse=True)
+        if anchor_year is not None:
+            years = [year for year in years if year <= anchor_year]
+        return next((year for year in years if any(value(code, year) is not None for code in codes)), None)
+
+    f1_anchor = latest_complete(("1250", "1240", "1230", "1500"))
+    f2_anchor = latest_complete(("1300", "1400", "1500"))
+    f3_anchor = latest_complete(("2110", "1600"))
+    f4_anchor = latest_complete(("2110", "2100", "2200", "2400"))
+    f5_anchor = latest_any(tuple(code for code, _ in F5_ROWS))
+    with localcontext() as context:
+        # Source decimals are retained exactly; derived display/geometry must
+        # not inherit the process default precision.
+        context.prec = 128
+        context.rounding = ROUND_HALF_UP
+        return {
+            "F1": _f1(value, f1_anchor) if f1_anchor is not None else None,
+            "F2": _f2(value, f2_anchor) if f2_anchor is not None else None,
+            "F3": _f3(value, f3_anchor) if f3_anchor is not None else None,
+            "F4": _f4(value, f4_anchor) if f4_anchor is not None else None,
+            "F5": _f5(value, f5_anchor) if f5_anchor is not None else None,
+        }
 
 
 def _f1(value, year: int) -> dict[str, object] | None:
@@ -90,7 +119,14 @@ def _f1(value, year: int) -> dict[str, object] | None:
         return None
     available = required["1250"] + required["1240"] + required["1230"]
     difference = available - required["1500"]
-    all_values = [*required.values(), difference]
+    # The cumulative endpoints are the actual geometry and therefore belong
+    # to the axis; raw segment values alone would clip a valid stack.
+    cumulative = (
+        required["1250"],
+        required["1250"] + required["1240"],
+        available,
+    )
+    all_values = [*required.values(), *cumulative, difference]
     return {"view_id": "finance_f1_liquidity", "year": year, "values": required, "available_without_inventory": available, "difference": difference, "axis": _axis(all_values), "limitations": ("receivables_collection_unassessed",)}
 
 
@@ -108,7 +144,7 @@ def _f2(value, anchor: int) -> dict[str, object]:
             continue
         equity_share, debt_share = _shares(equity, debt, denominator)
         signed = equity_share < 0 or debt_share < 0
-        periods.append({"year": year, "state": "available", "equity": equity, "long_liabilities": long_debt, "short_liabilities": short_debt, "debt": debt, "denominator": denominator, "equity_share": equity_share, "debt_share": debt_share, "mode": "diverging_signed" if signed else "stacked_100", "axis": _axis([equity_share, debt_share])})
+        periods.append({"year": year, "state": "available", "equity": equity, "long_liabilities": long_debt, "short_liabilities": short_debt, "debt": debt, "denominator": denominator, "equity_share": equity_share, "debt_share": debt_share, "mode": "diverging_signed" if signed else "stacked_100", "axis": _axis([equity_share, debt_share]) if signed else (Decimal("0"), Decimal("100"))})
     return {"view_id": "finance_f2_funding", "anchor_year": anchor, "window_start_year": anchor - 6, "periods": tuple(periods)}
 
 
@@ -118,7 +154,9 @@ def _f3(value, anchor: int) -> dict[str, object]:
     for year in range(anchor - 6, anchor + 1):
         revenue, assets = value("2110", year), value("1600", year)
         sequences["revenue"].append((year, revenue)); sequences["assets"].append((year, assets))
-        points.append({"year": year, "revenue": revenue, "assets": assets, "revenue_yoy": _yoy(value("2110", year - 1), revenue), "assets_yoy": _yoy(value("1600", year - 1), assets)})
+        previous_revenue = value("2110", year - 1) if year > anchor - 6 else None
+        previous_assets = value("1600", year - 1) if year > anchor - 6 else None
+        points.append({"year": year, "revenue": revenue, "assets": assets, "revenue_yoy": _yoy(previous_revenue, revenue), "assets_yoy": _yoy(previous_assets, assets)})
     return {"view_id": "finance_f3_growth", "anchor_year": anchor, "window_start_year": anchor - 6, "points": tuple(points), "revenue_summary": _series_summary(sequences["revenue"]), "assets_summary": _series_summary(sequences["assets"])}
 
 
@@ -139,7 +177,11 @@ def _f5(value, anchor: int) -> dict[str, object]:
     years = tuple(range(anchor - 6, anchor + 1))
     rows = []
     for code, label in F5_ROWS:
-        cells = tuple({"year": year, "value": value(code, year), "yoy": _yoy(value(code, year - 1), value(code, year))} for year in years)
+        cells = tuple({
+            "year": year,
+            "value": value(code, year),
+            "yoy": _yoy(value(code, year - 1) if year > years[0] else None, value(code, year)),
+        } for year in years)
         rows.append({"metric_id": code, "label": label, "cells": cells})
     return {"view_id": "finance_f5_yearly_table", "anchor_year": anchor, "years": years, "rows": tuple(rows)}
 
@@ -183,7 +225,10 @@ def _series_summary(values: list[tuple[int, Decimal | None]]) -> dict[str, objec
     if len(available) < 2:
         return {"comparison_start_year": None, "comparison_end_year": None, "multiple": None, "change": None, "axis": _axis([number for _, number in available]) if available else None}
     (first_year, first), (last_year, last) = available[0], available[-1]
-    multiple = (last / first).quantize(Decimal("0.000001")) if first > 0 and last > 0 else None
+    with localcontext() as context:
+        context.prec = 34
+        context.rounding = ROUND_HALF_UP
+        multiple = (last / first).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP) if first > 0 and last > 0 else None
     return {"comparison_start_year": first_year, "comparison_end_year": last_year, "multiple": multiple, "change": last - first, "axis": _axis([number for _, number in available])}
 
 
@@ -192,4 +237,4 @@ def _axis(values: Iterable[Decimal]) -> tuple[Decimal, Decimal]:
     return min(Decimal("0"), *values), max(Decimal("0"), *values)
 
 
-__all__ = ["APPROVED_CODES", "APPROVED_FINANCE_CELL_COUNT", "F5_ROWS", "build_chart_facts", "build_finance_views", "classify_finance_cell", "finance_limitations"]
+__all__ = ["APPROVED_CODES", "APPROVED_FINANCE_CELL_COUNT", "F5_ROWS", "FORM_BY_CODE", "build_chart_facts", "build_finance_views", "classify_finance_cell", "finance_limitations"]

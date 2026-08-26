@@ -113,7 +113,7 @@
     "f5_cell_year_reject",
     "f5_rows_tuple_reject",
     "f5_cells_tuple_reject",
-    "f5_plain_label_empty_accept",
+    "f5_plain_label_empty_reject",
     "axis_zero_boundary_accept",
     "arbitration_summary_source_nullable_accept",
     "arbitration_summary_count_zero_boundary_accept",
@@ -1346,6 +1346,16 @@
       "mutations": [
         {
           "op": "replace",
+          "path": "/blocks/finance_f2/periods/0/equity_1300",
+          "raw": "{\"source_thousand_decimal\":\"-60\",\"rub_decimal\":\"-60000\",\"million_decimal\":\"-0.06\",\"display_exact\":\"−0,060 млн ₽\",\"display_compact\":\"−0,1 млн ₽\",\"unit_id\":\"RUB\",\"unit_policy_version\":\"datanewton_finance_thousand_rub_v2\"}"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f2/periods/0/denominator",
+          "raw": "{\"source_thousand_decimal\":\"0\",\"rub_decimal\":\"0\",\"million_decimal\":\"0\",\"display_exact\":\"0,000 млн ₽\",\"display_compact\":\"0 млн ₽\",\"unit_id\":\"RUB\",\"unit_policy_version\":\"datanewton_finance_thousand_rub_v2\"}"
+        },
+        {
+          "op": "replace",
           "path": "/blocks/finance_f2/periods/0/state",
           "raw": "\"denominator_unavailable\""
         },
@@ -1452,6 +1462,26 @@
           "op": "replace",
           "path": "/blocks/finance_f3/points/0/geometry_by_metric",
           "raw": "[null,null]"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f3/points/1/revenue_yoy_decimal",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f3/points/1/assets_yoy_decimal",
+          "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f3/revenue_summary/comparison_start_year",
+          "raw": "2020"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f3/assets_summary/comparison_start_year",
+          "raw": "2020"
         }
       ]
     },
@@ -1492,7 +1522,7 @@
     },
     {
       "id": "f3_summary_nullable_accept",
-      "expect": "accept",
+      "expect": "reject",
       "recompute_digest": true,
       "mutations": [
         {
@@ -1527,6 +1557,11 @@
       "expect": "accept",
       "recompute_digest": true,
       "mutations": [
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f4/revenue_2110",
+          "raw": "{\"source_thousand_decimal\":\"0\",\"rub_decimal\":\"0\",\"million_decimal\":\"0\",\"display_exact\":\"0,000 млн ₽\",\"display_compact\":\"0 млн ₽\",\"unit_id\":\"RUB\",\"unit_policy_version\":\"datanewton_finance_thousand_rub_v2\"}"
+        },
         {
           "op": "replace",
           "path": "/blocks/finance_f4/mode",
@@ -1613,6 +1648,11 @@
           "op": "replace",
           "path": "/blocks/finance_f5/rows/0/cells/0/yoy_decimal",
           "raw": "null"
+        },
+        {
+          "op": "replace",
+          "path": "/blocks/finance_f5/rows/0/cells/1/yoy_decimal",
+          "raw": "null"
         }
       ]
     },
@@ -1675,8 +1715,8 @@
       ]
     },
     {
-      "id": "f5_plain_label_empty_accept",
-      "expect": "accept",
+      "id": "f5_plain_label_empty_reject",
+      "expect": "reject",
       "recompute_digest": true,
       "mutations": [
         {
@@ -1688,7 +1728,7 @@
     },
     {
       "id": "axis_zero_boundary_accept",
-      "expect": "accept",
+      "expect": "reject",
       "recompute_digest": true,
       "mutations": [
         {

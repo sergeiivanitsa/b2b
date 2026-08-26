@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from copy import deepcopy
 from decimal import Decimal
 from hashlib import sha256
 import json
@@ -7,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from product_api.company_reports.company_card_v2.canonical_json import canonical_digest
-from product_api.company_reports.company_card_v2.finance import build_chart_facts, build_finance_views
+from product_api.company_reports.company_card_v2.finance import FORM_BY_CODE, build_chart_facts, build_finance_views
 from product_api.company_reports.company_card_v2.models import (
     ArbitrationBasisV1, CompanyCardCounterpartyCoreV1, CompanyCardV2Snapshot,
     FinanceBasisV1, FinanceCellV1,
@@ -93,7 +94,7 @@ def _basis() -> FinanceBasisV1:
     }
     for year in range(2019, 2026):
         for code, value in values.items():
-            cells.append(FinanceCellV1(form="fixture", code=code, year=year, state="available_nonzero", value=Decimal(value)))
+            cells.append(FinanceCellV1(form=FORM_BY_CODE[code], code=code, year=year, state="available_nonzero", value=Decimal(value)))
     return FinanceBasisV1(cells=tuple(cells))
 
 
@@ -145,6 +146,82 @@ def test_fixture_finance_input_is_closed_and_runtime_default_stays_gate_closed()
         build_public_h2(snapshot, narrative_binding=_Binding(), fixture_finance_views={"F1": None})
 
 
+def test_runtime_finance_coverage_uses_only_relevant_form_and_window_cells() -> None:
+    snapshot = _snapshot()
+    cells = tuple(
+        FinanceCellV1(form="financial_results", code=cell.code, year=cell.year, state="missing")
+        if (cell.code, cell.year) == ("1250", 2024) else cell
+        for cell in snapshot.finance_basis.cells
+    )
+    snapshot = snapshot.model_copy(update={
+        "finance_basis": FinanceBasisV1(cells=cells),
+        "chart_facts": build_chart_facts(FinanceBasisV1(cells=cells)),
+    })
+    dto = build_public_h2(snapshot, narrative_binding=_Binding(), finance_enabled=True)
+    f1 = next(item for item in dto.coverage if item.block_id == "finance_f1")
+    assert dto.blocks.finance_f1 is not None
+    assert f1.state == "available"
+    assert f1.limitation_codes == ()
+    assert all(item.field_id != "finance.financial_results.1250.2024" for item in dto.limitations)
+
+    cells = tuple(
+        FinanceCellV1(form=cell.form, code=cell.code, year=cell.year, state="missing")
+        if (cell.code, cell.year) == ("2110", 2024) else cell
+        for cell in snapshot.finance_basis.cells
+    )
+    changed = FinanceBasisV1(cells=cells)
+    dto = build_public_h2(snapshot.model_copy(update={"finance_basis": changed, "chart_facts": build_chart_facts(changed)}), narrative_binding=_Binding(), finance_enabled=True)
+    f3 = next(item for item in dto.coverage if item.block_id == "finance_f3")
+    assert f3.state == "partial" and f3.limitation_codes == ("finance_missing",)
+    exact = next(item for item in dto.limitations if item.field_id == "finance.financial_results.2110.2024")
+    assert exact.code == "finance-missing-financial_results-2110-2024"
+    assert all(item.code != "finance_failed" for item in dto.limitations)
+
+
+def test_runtime_finance_formula_limitations_make_denominator_views_partial() -> None:
+    snapshot = _snapshot()
+    cells = tuple(
+        FinanceCellV1(form=cell.form, code=cell.code, year=cell.year, state="available_nonzero", value=Decimal("-1"))
+        if cell.year == 2025 and cell.code in {"1300", "1400", "1500"} else cell
+        for cell in snapshot.finance_basis.cells
+    )
+    basis = FinanceBasisV1(cells=cells)
+    dto = build_public_h2(snapshot.model_copy(update={"finance_basis": basis, "chart_facts": build_chart_facts(basis)}), narrative_binding=_Binding(), finance_enabled=True)
+    f1 = next(item for item in dto.coverage if item.block_id == "finance_f1")
+    f2 = next(item for item in dto.coverage if item.block_id == "finance_f2")
+    assert f1.state == "available"  # advisory is public but not a coverage gap
+    assert f2.state == "partial"
+    assert f2.limitation_codes == ("finance_denominator_non_positive",)
+    assert any(item.code == "receivables_collection_unassessed" for item in dto.limitations)
+    assert any(item.code == "finance_denominator_non_positive" for item in dto.limitations)
+
+
+def test_runtime_finance_empty_basis_is_missing_not_available() -> None:
+    snapshot = _snapshot()
+    empty = FinanceBasisV1()
+    snapshot = snapshot.model_copy(update={"finance_basis": empty, "chart_facts": build_chart_facts(empty)})
+    dto = build_public_h2(snapshot, narrative_binding=_Binding(), finance_enabled=True)
+    assert all(
+        next(item for item in dto.coverage if item.block_id == f"finance_f{number}").state == "missing"
+        for number in range(1, 6)
+    )
+
+
+def test_null_finance_view_keeps_preserved_relevant_cell_limitation() -> None:
+    snapshot = _snapshot()
+    cells = tuple(
+        FinanceCellV1(form=cell.form, code=cell.code, year=cell.year, state="missing")
+        if cell.code == "2100" else cell
+        for cell in snapshot.finance_basis.cells
+    )
+    basis = FinanceBasisV1(cells=cells)
+    dto = build_public_h2(snapshot.model_copy(update={"finance_basis": basis, "chart_facts": build_chart_facts(basis)}), narrative_binding=_Binding(), finance_enabled=True)
+    assert dto.blocks.finance_f4 is None
+    f4 = next(item for item in dto.coverage if item.block_id == "finance_f4")
+    assert f4.state == "missing" and f4.limitation_codes == ("finance_missing",)
+    assert any(item.field_id == "finance.financial_results.2100.2025" for item in dto.limitations)
+
+
 def test_public_h2_rejects_wrong_root_cardinality_order_and_block_coverage() -> None:
     dto = build_public_h2(_snapshot(), narrative_binding=_Binding())
     payload = dto.model_dump(mode="json")
@@ -161,6 +238,57 @@ def test_public_h2_rejects_wrong_root_cardinality_order_and_block_coverage() -> 
     payload["block_order"] = list(BLOCK_ORDER[:-1])
     with pytest.raises(Exception):
         CompanyPublicH2Response.model_validate(payload)
+
+
+def test_public_h2_rejects_tampered_finance_arithmetic_summaries_and_yoy() -> None:
+    snapshot = _snapshot()
+    original = build_public_h2(
+        snapshot,
+        narrative_binding=_Binding(),
+        finance_enabled=True,
+    ).model_dump(mode="json")
+
+    mutations = []
+
+    f1_axis = deepcopy(original)
+    f1_axis["blocks"]["finance_f1"]["axis"]["axis_max_decimal"] = "999"
+    mutations.append(f1_axis)
+
+    f2_share = deepcopy(original)
+    period = f2_share["blocks"]["finance_f2"]["periods"][0]
+    period["equity_share_decimal"] = "40"
+    period["debt_share_decimal"] = "60"
+    period["geometry_by_metric"] = [
+        {"start_ratio_decimal": "0", "end_ratio_decimal": "40"},
+        {"start_ratio_decimal": "40", "end_ratio_decimal": "100"},
+    ]
+    mutations.append(f2_share)
+
+    f3_summary = deepcopy(original)
+    f3_summary["blocks"]["finance_f3"]["revenue_summary"]["comparison_start_year"] = 2020
+    mutations.append(f3_summary)
+
+    f3_yoy = deepcopy(original)
+    f3_yoy["blocks"]["finance_f3"]["points"][1]["revenue_yoy_decimal"] = "1"
+    mutations.append(f3_yoy)
+
+    f4_ratio = deepcopy(original)
+    f4 = f4_ratio["blocks"]["finance_f4"]
+    f4["gross_per_100_decimal"] = "41"
+    f4["geometry_by_metric"][1]["end_ratio_decimal"] = "41"
+    mutations.append(f4_ratio)
+
+    f5_label = deepcopy(original)
+    f5_label["blocks"]["finance_f5"]["rows"][0]["label"] = "Иное"
+    mutations.append(f5_label)
+
+    f5_yoy = deepcopy(original)
+    f5_yoy["blocks"]["finance_f5"]["rows"][0]["cells"][1]["yoy_decimal"] = "1"
+    mutations.append(f5_yoy)
+
+    for payload in mutations:
+        with pytest.raises(Exception):
+            CompanyPublicH2Response.model_validate(payload)
 
 
 def test_public_h2_rejects_canonical_payload_larger_than_contract_cap() -> None:

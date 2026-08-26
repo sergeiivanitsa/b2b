@@ -165,7 +165,10 @@ class _V3SelectOnlySession:
         raise AssertionError("V3 H2 resolution must not rollback")
 
 
-def _v3_saved_result(kind: str):
+def _v3_saved_result(
+    kind: str,
+    publication_policy: str = "company_public_h2_publication_v1",
+):
     raw = json.loads(
         (_CARD_FIXTURES / "snapshot_v3_complete.json").read_text(encoding="utf-8")
     )
@@ -330,6 +333,7 @@ def _v3_saved_result(kind: str):
     projection = build_public_h2(
         snapshot,
         narrative_binding=SimpleNamespace(narrative=narrative),
+        finance_enabled=publication_policy == "company_public_h2_publication_v2",
     )
     job = SimpleNamespace(
         id=uuid4(),
@@ -357,7 +361,7 @@ def _v3_saved_result(kind: str):
         chart_facts_version=snapshot.chart_facts.version,
         chart_facts_hash=snapshot.chart_facts.hash,
         evidence_registry_version=snapshot.evidence_version,
-        publication_policy_version="company_public_h2_publication_v1",
+        publication_policy_version=publication_policy,
         canonical_path=None,
         indexable=False,
         published_lastmod=None,
@@ -399,6 +403,38 @@ async def test_resolved_v3_saved_result_is_exact_select_only_and_immutable(kind:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("publication_policy", "expected_finance_state"),
+    (
+        ("company_public_h2_publication_v1", "gate_closed"),
+        ("company_public_h2_publication_v2", "missing"),
+    ),
+)
+async def test_resolved_v3_uses_exact_saved_publication_policy_without_writes(
+    publication_policy: str,
+    expected_finance_state: str,
+) -> None:
+    record, _snapshot, pin, presentation, job, artifact = _v3_saved_result(
+        "fallback",
+        publication_policy,
+    )
+    session = _V3SelectOnlySession(presentation, job, artifact)
+
+    response = await service._resolve_exact_v3(
+        session,
+        record,
+        pin=pin,
+        expected_subject_id="subject-id",
+        expected_inn="7701234567",
+    )
+
+    finance = next(item for item in response.coverage if item.block_id == "finance_f1")
+    assert finance.state == expected_finance_state
+    assert response.projection_digest == pin.projection_digest
+    assert session.select_count == 3
+
+
+@pytest.mark.asyncio
 async def test_exact_unresolved_v3_pin_remains_409_without_artifact_lookup() -> None:
     record, _snapshot, pin, presentation, job, artifact = _v3_saved_result("fallback")
     pin.narrative_binding_status = "unresolved"
@@ -426,6 +462,7 @@ async def test_exact_unresolved_v3_pin_remains_409_without_artifact_lookup() -> 
     (
         ("fallback", "pin_projection_digest"),
         ("fallback", "pin_chart_hash"),
+        ("fallback", "pin_policy"),
         ("fallback", "fallback_identity"),
         ("fallback", "fallback_phrase_trace"),
         ("artifact", "generation_identity"),
@@ -445,6 +482,8 @@ async def test_resolved_v3_corruption_matrix_is_terminal_500(
         pin.projection_digest = "f" * 64
     elif corruption == "pin_chart_hash":
         pin.chart_facts_hash = "f" * 64
+    elif corruption == "pin_policy":
+        pin.publication_policy_version = "company_public_h2_publication_unknown"
     elif corruption == "fallback_identity":
         artifact.fallback_identity = "f" * 64
     elif corruption == "fallback_phrase_trace":

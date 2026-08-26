@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -11,15 +12,24 @@ import pytest
 
 from shared.schemas import ChatRequest, ChatResponse
 
-from product_api.company_reports.company_card_v2.narrative.catalog import MODEL_PROFILE
+from product_api.company_reports.company_card_v2.narrative.catalog import (
+    FALLBACK_DESCRIPTION,
+    FALLBACK_PROFILE_ID,
+    FALLBACK_RENDERER_VERSION,
+    MODEL_PROFILE,
+)
 from product_api.company_reports.company_card_v2.narrative.models import NarrativeEvidenceEnvelope
 from product_api.company_reports.company_card_v2.narrative.prompt import build_narrative_gateway_body
 from product_api.company_reports.company_card_v2.narrative.service import (
     NarrativeLimits,
+    NarrativePersistenceError,
     PreparedNarrativeDispatch,
+    fallback_projection_digest,
     validate_gateway_artifact,
     validate_narrative_report,
 )
+from product_api.company_reports.company_card_v2.public_h2 import build_public_h2
+from product_api.company_reports.company_card_v2.public_h2_models import PublicH2Narrative
 from product_api.company_reports.persistence.models import CompanyReportSubject
 from product_api.company_reports.persistence.narratives import NarrativeJobLease
 from product_api.company_reports.persistence.v3 import (
@@ -45,13 +55,31 @@ class _SubjectSession:
         return self.subject
 
 
+class _ScalarRows:
+    def __init__(self, rows: list[object]) -> None:
+        self.rows = rows
+
+    def all(self) -> list[object]:
+        return self.rows
+
+
+class _PolicySubjectSession(_SubjectSession):
+    def __init__(self, subject: object, pins: list[object]) -> None:
+        super().__init__(subject)
+        self.pins = pins
+
+    async def scalars(self, _statement):
+        return _ScalarRows(self.pins)
+
+
 def _raw_snapshot() -> dict[str, object]:
     return json.loads((FIXTURES / "snapshot_v3_narrative_v2.json").read_text(encoding="utf-8"))
 
 
-async def _validated_report():
+def _record_context():
     raw = _raw_snapshot()
-    stored = company_card_v2_to_snapshot(company_card_v2_from_snapshot(raw))
+    card = company_card_v2_from_snapshot(raw)
+    stored = company_card_v2_to_snapshot(card)
     report_id = UUID(str(raw["report_id"]))
     subject = SimpleNamespace(id=uuid4(), normalized_identifier=raw["subject_inn"])
     record = SimpleNamespace(
@@ -65,6 +93,11 @@ async def _validated_report():
         presentation_contract=raw["presentation_contract"],
         rollout_generation=raw["rollout_config_generation"],
     )
+    return card, subject, record
+
+
+async def _validated_report():
+    _card, subject, record = _record_context()
     return await validate_narrative_report(_SubjectSession(subject), record=record)
 
 
@@ -124,6 +157,118 @@ async def test_saved_v2_snapshot_builds_complete_immutable_generation_identity()
     assert report.record.normalized_snapshot == company_card_v2_to_snapshot(
         company_card_v2_from_snapshot(_raw_snapshot())
     )
+
+
+def _unresolved_policy_pin(card, subject, record, policy: str):
+    return SimpleNamespace(
+        subject_id=subject.id,
+        report_id=record.id,
+        presentation_contract="company_public_h2_v1",
+        generation=1,
+        snapshot_hash=record.snapshot_hash,
+        chart_facts_version=card.chart_facts.version,
+        chart_facts_hash=card.chart_facts.hash,
+        evidence_registry_version=card.evidence_version,
+        publication_policy_version=policy,
+        canonical_path=None,
+        indexable=False,
+        published_lastmod=None,
+        projection_digest=None,
+        narrative_binding_status="unresolved",
+        narrative_binding_kind=None,
+        narrative_binding_key=None,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "policy",
+    (
+        "company_public_h2_publication_v1",
+        "company_public_h2_publication_v2",
+    ),
+)
+async def test_narrative_uses_the_one_exact_saved_publication_policy(policy: str) -> None:
+    card, subject, record = _record_context()
+    pin = _unresolved_policy_pin(card, subject, record, policy)
+
+    validated = await validate_narrative_report(
+        _PolicySubjectSession(subject, [pin]),
+        record=record,
+    )
+
+    assert validated.publication_policy_version == policy
+    fallback = PublicH2Narrative(
+        mode="deterministic_fallback",
+        renderer_version=FALLBACK_RENDERER_VERSION,
+        description=FALLBACK_DESCRIPTION,
+        statement_ids=(FALLBACK_PROFILE_ID,),
+        comments=(),
+        render_digest=sha256(FALLBACK_DESCRIPTION.encode("utf-8")).hexdigest(),
+    )
+    finance_enabled = policy == "company_public_h2_publication_v2"
+    expected = build_public_h2(
+        card,
+        narrative_binding=SimpleNamespace(narrative=fallback),
+        finance_enabled=finance_enabled,
+    ).projection_digest
+    opposite = build_public_h2(
+        card,
+        narrative_binding=SimpleNamespace(narrative=fallback),
+        finance_enabled=not finance_enabled,
+    ).projection_digest
+    assert fallback_projection_digest(validated) == expected
+    assert expected != opposite
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("corruption", "message"),
+    (
+        ("missing", "missing or ambiguous"),
+        ("ambiguous", "missing or ambiguous"),
+        ("snapshot", "predecessor identity"),
+        ("chart_version", "predecessor identity"),
+        ("evidence", "predecessor identity"),
+        ("canonical_path", "predecessor identity"),
+        ("binding_status", "predecessor identity"),
+        ("unknown_policy", "publication policy"),
+    ),
+)
+async def test_narrative_rejects_missing_ambiguous_or_corrupt_policy_lineage(
+    corruption: str,
+    message: str,
+) -> None:
+    card, subject, record = _record_context()
+    pin = _unresolved_policy_pin(
+        card,
+        subject,
+        record,
+        "company_public_h2_publication_v2",
+    )
+    pins = [pin]
+    if corruption == "missing":
+        pins = []
+    elif corruption == "ambiguous":
+        pins = [pin, deepcopy(pin)]
+    elif corruption == "snapshot":
+        pin.snapshot_hash = "f" * 64
+    elif corruption == "chart_version":
+        pin.chart_facts_version = "stale"
+    elif corruption == "evidence":
+        pin.evidence_registry_version = "stale"
+    elif corruption == "canonical_path":
+        pin.canonical_path = "/company/should-not-exist"
+    elif corruption == "binding_status":
+        pin.narrative_binding_status = "resolved"
+    elif corruption == "unknown_policy":
+        pin.publication_policy_version = "company_public_h2_publication_unknown"
+
+    with pytest.raises(NarrativePersistenceError, match=message):
+        await validate_narrative_report(
+            _PolicySubjectSession(subject, pins),
+            record=record,
+        )
 
 
 @pytest.mark.asyncio

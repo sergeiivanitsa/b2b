@@ -4,7 +4,7 @@ import pytest
 
 from product_api.company_reports.company_card_v2.decimal_transport import DecimalTransportError, parse_source_decimal
 from product_api.company_reports.company_card_v2.finance import classify_finance_cell
-from product_api.company_reports.company_card_v2.finance import build_finance_views
+from product_api.company_reports.company_card_v2.finance import FORM_BY_CODE, build_finance_views
 from product_api.company_reports.company_card_v2.models import FinanceBasisV1, FinanceCellV1
 from product_api.company_reports.company_card_v2.models import ChartFactsV1
 from product_api.company_reports.company_card_v2.public_h2_models import PublicFinanceMoney
@@ -32,7 +32,7 @@ def test_finance_views_keep_deterministic_seven_year_window_and_signed_ratio() -
     cells = []
     for year in range(2019, 2026):
         for code, value in (("1300", "10"), ("1400", "5"), ("1500", "5"), ("1600", "10"), ("2110", "20"), ("2100", "-2"), ("2200", "3"), ("2400", "4")):
-            cells.append(FinanceCellV1(form="x", code=code, year=year, state="available_nonzero", value=Decimal(value)))
+            cells.append(FinanceCellV1(form=FORM_BY_CODE[code], code=code, year=year, state="available_nonzero", value=Decimal(value)))
     views = build_finance_views(FinanceBasisV1(cells=tuple(cells)), anchor_year=2025)
     assert len(views["F2"]["periods"]) == 7
     assert views["F4"]["gross_per_100"] == Decimal("-10.000000")
@@ -41,7 +41,7 @@ def test_finance_views_keep_deterministic_seven_year_window_and_signed_ratio() -
 
 
 def test_finance_denominator_and_missing_are_unavailable_not_zero() -> None:
-    cells = tuple(FinanceCellV1(form="x", code=code, year=2025, state="available_nonzero", value=Decimal("-1")) for code in ("1300", "1400", "1500"))
+    cells = tuple(FinanceCellV1(form=FORM_BY_CODE[code], code=code, year=2025, state="available_nonzero", value=Decimal("-1")) for code in ("1300", "1400", "1500"))
     views = build_finance_views(FinanceBasisV1(cells=cells), anchor_year=2025)
     assert views["F2"]["periods"][-1]["state"] == "denominator_unavailable"
     assert views["F1"] is None

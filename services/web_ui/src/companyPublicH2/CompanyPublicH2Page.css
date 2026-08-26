@@ -12,6 +12,20 @@
 .company-public-h2__cta-reserver { display: none; }
 .company-public-h2__enhancement { display: contents; }
 .company-public-h2__live { min-height: 1px; }
+.company-public-h2 [data-h2-finance-article] { margin: 20px 0; padding: 16px; border: 1px solid #e2e2e2; border-radius: 8px; }
+.company-public-h2 [data-h2-finance-article] table { width: 100%; border-collapse: collapse; }
+.company-public-h2 [data-h2-finance-article] th, .company-public-h2 [data-h2-finance-article] td { padding: 8px; text-align: left; vertical-align: top; border-bottom: 1px solid #ececec; }
+.company-public-h2__finance-table { overflow-x: auto; }
+.company-public-h2__finance-enhancement { display: block; min-width: 0; max-width: 100%; min-height: 1px; }
+.company-public-h2__chart-layer { position: relative; min-width: 0; max-width: 100%; margin-top: 12px; }
+.company-public-h2__chart-viewport { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
+.company-public-h2__chart { display: block; width: 560px; min-width: 560px; max-width: none; height: 180px; color: #374151; }
+.company-public-h2__chart [data-h2-chart-mark] { cursor: pointer; }
+.company-public-h2__chart [data-h2-chart-mark]:focus { outline: none; stroke: #111827; stroke-width: 3; }
+.company-public-h2__chart-panels { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; min-width: 0; max-width: 100%; gap: 16px; }
+.company-public-h2__chart-panel { width: 100%; min-width: 0; max-width: 100%; }
+.company-public-h2__chart-tooltip { position: absolute; z-index: 2; max-width: min(100%, 340px); margin: 0; padding: 8px 10px; border-radius: 6px; background: #111827; color: #fff; font-size: 14px; }
+@media (min-width: 768px) { .company-public-h2__chart-panels { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (min-width: 1200px) { .company-public-h2 { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 32px; max-width: 1260px; } .company-public-h2 > :not(.company-public-h2__cta):not(.company-public-h2__cta-reserver) { grid-column: 1; } .company-public-h2__cta { grid-column: 2; grid-row: 1 / span 12; align-self: start; position: sticky; top: 24px; } }
 @media (min-width: 768px) and (max-width: 1199px) { .company-public-h2 { padding-bottom: 96px; } .company-public-h2__cta { position: fixed; z-index: 3; inset: auto 0 0; border-radius: 12px 12px 0 0; display: flex; align-items: center; gap: 12px; padding: 12px 24px calc(12px + env(safe-area-inset-bottom)); } .company-public-h2__cta h2, .company-public-h2__cta p { margin: 0; } .company-public-h2__cta-reserver { display: block; height: 80px; } }
 @media (max-width: 1199px) { .company-public-h2__cta-copy { display: none; } }
