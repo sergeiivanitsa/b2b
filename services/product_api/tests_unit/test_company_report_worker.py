@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from pydantic import SecretStr
 
 from company_report_orchestrator_test_helpers import successful_fake_provider
 from company_report_signal_test_helpers import complete_company_report
@@ -44,6 +45,16 @@ class _SessionFactory:
         session = _Session()
         self.sessions.append(session)
         return _SessionContext(session)
+
+
+class _H1ArbitrationSettingsPoison:
+    def __init__(self, settings):
+        self._settings = settings
+
+    def __getattr__(self, name):
+        if name.startswith("company_card_v2_arbitration_"):
+            raise AssertionError("H1 worker must not sample arbitration settings")
+        return getattr(self._settings, name)
 
 
 class _Client:
@@ -85,6 +96,21 @@ def _claimed(report):
     )
 
 
+def _h2_claim(report, *, arbitration_enabled: bool, key_id: str | None):
+    base = _claimed(report)
+    return base.__class__(
+        **{
+            **base.__dict__,
+            "writer_profile": "company_card_v2_writer_v3",
+            "report_version": "3",
+            "presentation_contract": "company_public_h2_v1",
+            "rollout_generation": 1,
+            "arbitration_collection_enabled": arbitration_enabled,
+            "arbitration_mask_key_id": key_id,
+        }
+    )
+
+
 @pytest.mark.asyncio
 async def test_run_one_calls_orchestrator_once_closes_provider_and_finalizes(
     monkeypatch,
@@ -99,7 +125,7 @@ async def test_run_one_calls_orchestrator_once_closes_provider_and_finalizes(
 
     succeeded = await worker.run_one_claimed_job(
         claimed,
-        get_settings(),
+        _H1ArbitrationSettingsPoison(get_settings()),
         session_factory=session_factory,
         client_factory=lambda _settings: client,
         report_builder=builder,
@@ -154,15 +180,12 @@ async def test_v3_job_never_constructs_provider_while_default_off(monkeypatch):
 @pytest.mark.asyncio
 async def test_v3_worker_requires_the_full_immutable_tuple_before_builder(monkeypatch):
     report = complete_company_report()
-    claimed = _claimed(report).__class__(
-        **{
-            **_claimed(report).__dict__,
-            "writer_profile": "company_card_v2_writer_v3",
-            "report_version": "2",
-            "presentation_contract": "company_public_h2_v1",
-            "rollout_generation": 1,
-        }
+    claimed = _h2_claim(
+        report,
+        arbitration_enabled=False,
+        key_id=None,
     )
+    object.__setattr__(claimed, "report_version", "2")
     builder = AsyncMock()
     fail = AsyncMock(return_value=False)
     monkeypatch.setattr(worker, "_try_fail_live_owned_job", fail)
@@ -395,6 +418,118 @@ async def test_production_v3_adapter_uses_injected_provider_and_clock_only():
             f"company-report:{claimed.report_id}:finance",
         ),
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("persisted_enabled", "live_enabled", "key_id", "expected_operation"),
+    [
+        (False, True, None, False),
+        (True, False, "old_key_2026", False),
+        (True, True, "old_key_2026", True),
+    ],
+)
+async def test_production_adapter_uses_only_persisted_decision_and_claimed_key(
+    monkeypatch,
+    persisted_enabled: bool,
+    live_enabled: bool,
+    key_id: str | None,
+    expected_operation: bool,
+) -> None:
+    from product_api.company_reports.company_card_v2 import arbitration_keyring
+    from product_api.company_reports.company_card_v2 import writer as card_writer
+
+    seed = complete_company_report()
+    claimed = _h2_claim(
+        seed,
+        arbitration_enabled=persisted_enabled,
+        key_id=key_id,
+    )
+    captured: dict[str, object] = {}
+    resolved: list[tuple[object, object]] = []
+
+    async def build(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    def resolve(*, key_id, keyring_json):
+        resolved.append((key_id, keyring_json))
+        return b"k" * 32
+
+    monkeypatch.setattr(card_writer, "build_company_card_v2_snapshot_outcome", build)
+    monkeypatch.setattr(arbitration_keyring, "resolve_arbitration_mask_secret_bytes", resolve)
+    settings = get_settings().model_copy(
+        update={
+            "company_card_v2_arbitration_collection_enabled": live_enabled,
+            "company_card_v2_arbitration_mask_active_key_id": "new_key_2027",
+            "company_card_v2_arbitration_mask_keyring_json": object(),
+        }
+    )
+    client = _Client()
+
+    await worker._build_production_v3_outcome(
+        claimed,
+        settings=settings,
+        client_factory=lambda _settings: client,
+        clock=lambda: datetime(2026, 8, 27, tzinfo=timezone.utc),
+    )
+
+    assert captured["arbitration_enabled"] is persisted_enabled
+    assert captured["arbitration_operation_enabled"] is expected_operation
+    assert captured["arbitration_key_id"] == key_id
+    assert captured["arbitration_key_secret"] == (
+        b"k" * 32 if persisted_enabled and live_enabled else None
+    )
+    assert resolved == (
+        [("old_key_2026", settings.company_card_v2_arbitration_mask_keyring_json)]
+        if persisted_enabled and live_enabled
+        else []
+    )
+    assert captured.get("arbitration_key_id") != "new_key_2027"
+    assert client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_production_adapter_maps_recursive_keyring_to_unavailable_secret(
+    monkeypatch,
+) -> None:
+    from product_api.company_reports.company_card_v2 import writer as card_writer
+
+    seed = complete_company_report()
+    claimed = _h2_claim(
+        seed,
+        arbitration_enabled=True,
+        key_id="active",
+    )
+    captured: dict[str, object] = {}
+
+    async def build(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(card_writer, "build_company_card_v2_snapshot_outcome", build)
+    recursive_json = "[" * 1500 + "0" + "]" * 1500
+    settings = get_settings().model_copy(
+        update={
+            "company_card_v2_arbitration_collection_enabled": True,
+            "company_card_v2_arbitration_mask_keyring_json": SecretStr(
+                recursive_json
+            ),
+        }
+    )
+    client = _Client()
+
+    await worker._build_production_v3_outcome(
+        claimed,
+        settings=settings,
+        client_factory=lambda _settings: client,
+        clock=lambda: datetime(2026, 8, 27, tzinfo=timezone.utc),
+    )
+
+    assert captured["arbitration_operation_enabled"] is True
+    assert captured["arbitration_key_id"] == "active"
+    assert captured["arbitration_key_secret"] is None
+    assert client.closed is True
 
 
 @pytest.mark.asyncio

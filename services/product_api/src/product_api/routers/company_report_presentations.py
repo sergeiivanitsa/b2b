@@ -17,6 +17,9 @@ from product_api.company_reports.persistence.models import CompanyReportPresenta
 from product_api.company_reports.persistence.presentations import PresentationAssignmentConflict, create_or_reuse_h2_presentation
 from product_api.company_reports.persistence.errors import CompanyReportJobStateConflictError
 from product_api.company_reports.company_card_v2.service import h2_cohort_selected
+from product_api.company_reports.company_card_v2.arbitration_keyring import (
+    normalize_arbitration_mask_key_id,
+)
 from product_api.db.session import get_session
 from product_api.settings import get_settings
 
@@ -39,11 +42,21 @@ async def create_presentation(payload: _CreatePresentation, request: Request) ->
         return _disabled()
     if not settings.company_card_v2_writer_enabled:
         return JSONResponse(status_code=503, content={"detail": {"code": "company_card_v2_writer_unavailable", "message": "company card v2 writer is unavailable"}})
+    arbitration_enabled = settings.company_card_v2_arbitration_collection_enabled
+    arbitration_key_id = (
+        normalize_arbitration_mask_key_id(
+            settings.company_card_v2_arbitration_mask_active_key_id
+        )
+        if arbitration_enabled
+        else None
+    )
     async for session in get_session():
         try:
             presentation, enqueued, _head = await create_or_reuse_h2_presentation(
                 session, identifier=payload.identifier,
                 rollout_generation=settings.company_card_v2_rollout_generation,
+                arbitration_collection_enabled=arbitration_enabled,
+                arbitration_mask_key_id=arbitration_key_id,
             )
             await session.commit()
             return JSONResponse(status_code=202, content={

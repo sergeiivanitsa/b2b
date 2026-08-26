@@ -44,10 +44,12 @@ from product_api.settings import Settings, get_settings
 from .catalog import MODEL_PROFILE
 from .service import (
     NarrativeLimits,
+    NarrativeResponseValidationContextV1,
     PreparedNarrativeDispatch,
     claim_narrative_reconciliation,
     fallback_projection_digest,
     prepare_narrative_dispatch,
+    projection_digest_for_narrative,
     reconcile_claimed_narrative_outbox,
     reconcile_expired_narrative_jobs,
     requeue_pre_dispatch_failure,
@@ -389,7 +391,16 @@ async def _run_claimed_dispatch(
                     lease=lease,
                     now=now,
                 )
-        validated = validate_gateway_artifact(prepared, response)
+        validation_context = NarrativeResponseValidationContextV1(
+            gateway_dispatch_id=prepared.request.gateway_dispatch_id,
+            generation_key=prepared.report.generation_key,
+            evidence=prepared.evidence,
+        )
+        validated = validate_gateway_artifact(validation_context, response)
+        projection_digest = projection_digest_for_narrative(
+            prepared.report,
+            validated.public_narrative,
+        )
     except NarrativeStaleOwnership:
         # An expired reconciler already won. The stale response is discarded.
         return changed
@@ -410,7 +421,7 @@ async def _run_claimed_dispatch(
                     session,
                     lease=lease,
                     draft=validated.draft,
-                    projection_digest=validated.projection_digest,
+                    projection_digest=projection_digest,
                     now=now,
                 )
     except NarrativeStaleOwnership:

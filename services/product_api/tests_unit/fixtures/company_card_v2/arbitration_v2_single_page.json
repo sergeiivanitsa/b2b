@@ -1,0 +1,27 @@
+{
+  "total_cases": 1,
+  "offset": 0,
+  "limit": 1000,
+  "data": [
+    {
+      "case_id": "private-case-v2-a",
+      "first_number": "А40-123/2026",
+      "year": 2026,
+      "date_start": "2026-01-02",
+      "date_update": "2026-01-05",
+      "party_result": "WON",
+      "sum": -12.3400,
+      "currency": "RUBLES",
+      "plaintiffs": [{"inn": "7700000000", "name": "RAW TARGET NAME"}],
+      "respondents": [{"inn": "7800000000", "inn_src": "INN", "ogrn": "1027800000000", "name": "RAW OPPONENT NAME", "name_src": "NAME"}],
+      "third_parties": [],
+      "interested_persons": [],
+      "creditors": [],
+      "creditors_current_payments": [],
+      "debtors": [],
+      "applicants": [],
+      "others": [],
+      "kad_arbitr_link": "https://raw.example.invalid/private-case-v2-a"
+    }
+  ]
+}

@@ -93,6 +93,10 @@ class CompanyReportRecord(Base):
             "lifecycle_status IN ('pending', 'complete', 'partial', 'failed')",
             name="company_report_lifecycle_status",
         ),
+        CheckConstraint(
+            "arbitration_collection_enabled OR arbitration_mask_key_id IS NULL",
+            name="company_reports_arbitration_decision",
+        ),
         Index("ix_company_reports_subject_id", "subject_id"),
         Index("ix_company_reports_lifecycle_status", "lifecycle_status"),
         Index("ix_company_reports_generated_at", "generated_at"),
@@ -123,6 +127,16 @@ class CompanyReportRecord(Base):
     writer_profile: Mapped[str] = mapped_column(String(64), nullable=False, default="h1_legacy_writer_v2", server_default=text("'h1_legacy_writer_v2'"))
     presentation_contract: Mapped[str] = mapped_column(String(64), nullable=False, default="company_public_h1_v1", server_default=text("'company_public_h1_v1'"))
     rollout_generation: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default=text("0"))
+    arbitration_collection_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    arbitration_mask_key_id: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+    )
     lifecycle_status: Mapped[str] = mapped_column(String(16), nullable=False)
     request_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -168,6 +182,10 @@ class CompanyReportJob(Base):
         CheckConstraint(
             "attempt_count IN (0, 1)",
             name="company_report_job_attempt_count",
+        ),
+        CheckConstraint(
+            "arbitration_collection_enabled OR arbitration_mask_key_id IS NULL",
+            name="company_report_jobs_arbitration_decision",
         ),
         CheckConstraint(
             "("
@@ -241,6 +259,16 @@ class CompanyReportJob(Base):
     writer_profile: Mapped[str] = mapped_column(String(64), nullable=False, default="h1_legacy_writer_v2", server_default=text("'h1_legacy_writer_v2'"))
     presentation_contract: Mapped[str] = mapped_column(String(64), nullable=False, default="company_public_h1_v1", server_default=text("'company_public_h1_v1'"))
     rollout_generation: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default=text("0"))
+    arbitration_collection_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    arbitration_mask_key_id: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+    )
     fence_generation: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default=text("0"))
     worker_token: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     attempt_count: Mapped[int] = mapped_column(

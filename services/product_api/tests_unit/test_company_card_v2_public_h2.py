@@ -26,7 +26,8 @@ from product_api.company_reports.company_card_v2.public_h2 import (
     build_public_h2,
 )
 from product_api.company_reports.company_card_v2.public_h2_models import (
-    BLOCK_ORDER, COVERAGE_BLOCKS, CompanyPublicH2Response, PublicH2Narrative,
+    BLOCK_ORDER, COVERAGE_BLOCKS, CompanyPublicH2Response,
+    PublicH2CoverageItem, PublicH2Narrative,
 )
 from product_api.company_reports.persistence.serialization import (
     calculate_company_report_snapshot_hash,
@@ -237,6 +238,31 @@ def test_public_h2_rejects_wrong_root_cardinality_order_and_block_coverage() -> 
     payload = dto.model_dump(mode="json")
     payload["block_order"] = list(BLOCK_ORDER[:-1])
     with pytest.raises(Exception):
+        CompanyPublicH2Response.model_validate(payload)
+
+
+def test_public_h2_available_empty_is_available_and_requires_non_null_block() -> None:
+    coverage = PublicH2CoverageItem(
+        block_id="arbitration_a1",
+        state="available_empty",
+        population_scope="complete_collection",
+        total=0,
+        returned=0,
+        eligible=0,
+    )
+    assert coverage.limitation_codes == ()
+
+    dto = build_public_h2(
+        _snapshot(), narrative_binding=_Binding(), finance_enabled=True
+    )
+    payload = dto.model_dump(mode="json")
+    next(
+        item for item in payload["coverage"] if item["block_id"] == "finance_f1"
+    )["state"] = "available_empty"
+    assert CompanyPublicH2Response.model_validate(payload).blocks.finance_f1 is not None
+
+    payload["blocks"]["finance_f1"] = None
+    with pytest.raises(ValueError, match="coverage and block disagree"):
         CompanyPublicH2Response.model_validate(payload)
 
 

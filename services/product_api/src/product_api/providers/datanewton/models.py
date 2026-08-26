@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 from collections.abc import Sequence
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -282,8 +282,11 @@ class DataNewtonResult(BaseModel):
     @field_validator("received_at")
     @classmethod
     def _require_utc_timestamp(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
+        offset = value.utcoffset() if value.tzinfo is not None else None
+        if offset is None:
             raise ValueError("received_at must be timezone-aware")
+        if offset != timedelta(0):
+            raise ValueError("received_at must use a zero UTC offset")
         return value.astimezone(timezone.utc)
 
 

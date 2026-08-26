@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bootstrapCompanyPublicH2, teardownCompanyPublicH2 } from './bootstrap'
 import { collectCompanyPublicH2ParityVector } from './parityVector'
+import { CompanyPublicH2Page } from './CompanyPublicH2Page'
+import { parseCompanyPublicH2 } from './contract'
+import { arbitrationPolicyV3Raw, arbitrationSourceLessRaw } from './arbitrationTestFixture'
+import { renderToStaticMarkup } from 'react-dom/server'
 import sharedHtml from '../../../../shared/fixtures/company_public_h2_ssr_v1.html?raw'
+import sharedArbitrationV3Html from '../../../../shared/fixtures/company_public_h2_ssr_v1_arbitration_v3.html?raw'
 
 const initialDocument = document.documentElement.innerHTML
 const initialPath = window.location.pathname
@@ -11,6 +16,23 @@ function installFixture(): void {
   document.head.innerHTML = fixture.head.innerHTML
   document.body.innerHTML = fixture.body.innerHTML
   window.history.replaceState({}, '', '/company/7701234567-dense-corpus')
+}
+
+function installArbitrationV3Fixture(): void {
+  const fixture = new DOMParser().parseFromString(sharedArbitrationV3Html, 'text/html')
+  document.head.innerHTML = fixture.head.innerHTML
+  document.body.innerHTML = fixture.body.innerHTML
+  window.history.replaceState({}, '', '/company/7700000000-company')
+}
+
+async function installSyntheticFixture(raw: string): Promise<void> {
+  const dto = (await parseCompanyPublicH2(raw)).dto
+  document.head.innerHTML = '<title>Синтетический арбитражный отчёт</title><meta name="description" content="Синтетический тест"><meta name="robots" content="noindex,follow">'
+  document.body.innerHTML = `<main class="company-public-h2" id="company-public-h2-root" data-contract="company_public_h2_v1" data-report-id="${dto.report_id}">${renderToStaticMarkup(<CompanyPublicH2Page dto={dto} />)}</main>`
+  const state = document.createElement('script')
+  state.id = 'company-public-h2-state'; state.type = 'application/json'; state.textContent = raw
+  document.body.append(state)
+  window.history.replaceState({}, '', dto.canonical_path)
 }
 
 function installIntersectionObserverHarness() {
@@ -143,5 +165,67 @@ describe('bootstrapCompanyPublicH2', () => {
     expect(document.querySelector('[data-h2-chart-mark]')).toBeNull()
     expect(document.querySelectorAll('[data-h2-finance-enhancement][aria-hidden="true"]')).toHaveLength(5)
     expect(document.querySelector('[role="status"]')?.textContent).toBe('')
+  })
+
+  it('takes over the exact masked-v3 SSR fixture before arming its arbitration controller', async () => {
+    installArbitrationV3Fixture()
+    const before = collectCompanyPublicH2ParityVector(document)
+    const observers = installIntersectionObserverHarness()
+    const loadFinanceCharts = vi.fn(() => import('./FinanceCharts'))
+    const loadArbitrationCharts = vi.fn(() => import('./ArbitrationCharts'))
+    expect(await bootstrapCompanyPublicH2(document, crypto, loadFinanceCharts, loadArbitrationCharts)).toBe(true)
+    expect(observers).toHaveLength(1)
+    const arbitrationObserver = observers[0]
+    expect((arbitrationObserver.observe.mock.calls[0]?.[0] as HTMLElement | undefined)?.id).toBe('arbitration')
+    arbitrationObserver.callback([{ isIntersecting: true } as IntersectionObserverEntry], arbitrationObserver as unknown as IntersectionObserver)
+    await vi.waitFor(() => expect(document.querySelector('[data-h2-arbitration-chart-mark]')).toBeTruthy())
+    expect(loadArbitrationCharts).toHaveBeenCalledOnce()
+    expect(loadFinanceCharts).not.toHaveBeenCalled()
+    expect(collectCompanyPublicH2ParityVector(document)).toBe(before)
+  })
+
+  it('arms finance and policy-v3 arbitration as independent lazy controllers', async () => {
+    await installSyntheticFixture(await arbitrationPolicyV3Raw())
+    const observers = installIntersectionObserverHarness()
+    const loadFinanceCharts = vi.fn(() => import('./FinanceCharts'))
+    const loadArbitrationCharts = vi.fn(() => import('./ArbitrationCharts'))
+    expect(await bootstrapCompanyPublicH2(document, crypto, loadFinanceCharts, loadArbitrationCharts)).toBe(true)
+    expect(observers).toHaveLength(2)
+    const financeObserver = observers.find(item => (item.observe.mock.calls[0]?.[0] as HTMLElement | undefined)?.id === 'finance')!
+    const arbitrationObserver = observers.find(item => (item.observe.mock.calls[0]?.[0] as HTMLElement | undefined)?.id === 'arbitration')!
+    arbitrationObserver.callback([{ isIntersecting: true } as IntersectionObserverEntry], arbitrationObserver as unknown as IntersectionObserver)
+    await vi.waitFor(() => expect(document.querySelector('[data-h2-arbitration-chart-mark]')).toBeTruthy())
+    expect(loadArbitrationCharts).toHaveBeenCalledOnce()
+    expect(loadFinanceCharts).not.toHaveBeenCalled()
+    expect(document.querySelectorAll('[data-h2-arbitration-article]')).toHaveLength(5)
+    expect(document.querySelector('[data-h2-case-public-id="case_000001"]')).toBeTruthy()
+    expect(financeObserver.disconnect).not.toHaveBeenCalled()
+  })
+
+  it('does not arm or import arbitration for source-less or available_empty policy-v3 facts', async () => {
+    for (const raw of [await arbitrationSourceLessRaw('provider_error'), await arbitrationPolicyV3Raw(false)]) {
+      await installSyntheticFixture(raw)
+      const observers = installIntersectionObserverHarness()
+      const loadArbitrationCharts = vi.fn(() => import('./ArbitrationCharts'))
+      expect(await bootstrapCompanyPublicH2(document, crypto, () => import('./FinanceCharts'), loadArbitrationCharts)).toBe(true)
+      expect(observers.map(item => (item.observe.mock.calls[0]?.[0] as HTMLElement | undefined)?.id)).toEqual(['finance'])
+      expect(loadArbitrationCharts).not.toHaveBeenCalled()
+      expect(document.querySelectorAll('[data-h2-arbitration-article]')).toHaveLength(5)
+      teardownCompanyPublicH2(document)
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('keeps an arbitration import failure local and leaves all factual articles mounted', async () => {
+    installArbitrationV3Fixture()
+    const observers = installIntersectionObserverHarness()
+    const loadArbitrationCharts = vi.fn(() => Promise.reject(new Error('arbitration chunk unavailable')))
+    expect(await bootstrapCompanyPublicH2(document, crypto, () => import('./FinanceCharts'), loadArbitrationCharts)).toBe(true)
+    const observer = observers.find(item => (item.observe.mock.calls[0]?.[0] as HTMLElement | undefined)?.id === 'arbitration')!
+    observer.callback([{ isIntersecting: true } as IntersectionObserverEntry], observer as unknown as IntersectionObserver)
+    await vi.waitFor(() => expect(document.querySelector('[data-h2-arbitration-enhancement] [role="status"]')?.textContent).toContain('фактические данные сохранены'))
+    expect(document.querySelectorAll('[data-h2-arbitration-article]')).toHaveLength(5)
+    expect(document.querySelector('[data-h2-case-public-id="case_000001"]')).toBeTruthy()
+    expect(document.querySelector('[data-h2-arbitration-chart-mark]')).toBeNull()
   })
 })

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 
 import httpx
@@ -80,6 +80,32 @@ def test_result_validates_attempts_duration_and_timestamp(field, value):
 
     with pytest.raises(ValidationError):
         DataNewtonResult(**values)
+
+
+@pytest.mark.parametrize("hours", [-3, 3])
+def test_result_rejects_nonzero_offset_before_utc_canonicalization(hours: int) -> None:
+    values = _result_values()
+    values["received_at"] = datetime(
+        2026,
+        8,
+        27,
+        12,
+        30,
+        tzinfo=timezone(timedelta(hours=hours)),
+    )
+
+    with pytest.raises(ValidationError, match="received_at must use a zero UTC offset"):
+        DataNewtonResult(**values)
+
+
+def test_result_preserves_existing_zero_offset_json_bytes() -> None:
+    values = _result_values()
+    values["received_at"] = datetime(2026, 8, 27, 12, 30, tzinfo=timezone.utc)
+
+    result = DataNewtonResult(**values)
+
+    assert result.received_at.tzinfo is timezone.utc
+    assert result.model_dump(mode="json")["received_at"] == "2026-08-27T12:30:00Z"
 
 
 @pytest.mark.parametrize("missing_field", ["dataset", "endpoint"])

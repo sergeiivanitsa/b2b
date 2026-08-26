@@ -17,13 +17,69 @@ from .models import (
 )
 from .jobs import EnqueuedReportJob, H2_PRESENTATION_CONTRACT, H2_WRITER_PROFILE, WriterDecision, enqueue_company_report_job
 from .v3 import calculate_company_card_v2_snapshot_hash, company_card_v2_from_snapshot
+from product_api.company_reports.company_card_v2.models import (
+    CompanyCardV2SnapshotV1,
+    CompanyCardV2SnapshotV2,
+    CompanyCardV2SnapshotV3,
+)
 
 H2_PUBLICATION_POLICY_V1 = "company_public_h2_publication_v1"
 H2_PUBLICATION_POLICY_V2 = "company_public_h2_publication_v2"
+H2_PUBLICATION_POLICY_V3 = "company_public_h2_publication_v3"
 # Compatibility export used by historical callers; new finalization chooses
 # v2 explicitly and stored pins, never this default, drive read behaviour.
 H2_PUBLICATION_POLICY_VERSION = H2_PUBLICATION_POLICY_V1
-H2_PUBLICATION_POLICY_VERSIONS = frozenset((H2_PUBLICATION_POLICY_V1, H2_PUBLICATION_POLICY_V2))
+H2_PUBLICATION_POLICY_VERSIONS = frozenset(
+    (H2_PUBLICATION_POLICY_V1, H2_PUBLICATION_POLICY_V2, H2_PUBLICATION_POLICY_V3)
+)
+
+
+def _report_arbitration_decision(
+    report: CompanyReportRecord,
+) -> tuple[bool, str | None]:
+    enabled = report.arbitration_collection_enabled
+    if enabled is None:
+        enabled = False
+    if type(enabled) is not bool:
+        raise PresentationAssignmentConflict("H2 arbitration decision is invalid")
+    key_id = report.arbitration_mask_key_id
+    try:
+        WriterDecision(
+            writer_profile=report.writer_profile,
+            report_version=report.report_version,
+            presentation_contract=report.presentation_contract,
+            rollout_generation=report.rollout_generation,
+            arbitration_collection_enabled=enabled,
+            arbitration_mask_key_id=key_id,
+        )
+    except ValueError as exc:
+        raise PresentationAssignmentConflict(
+            "H2 arbitration decision is invalid"
+        ) from exc
+    if not enabled and key_id is not None:
+        raise PresentationAssignmentConflict("H2 arbitration decision is invalid")
+    return enabled, key_id
+
+
+def _validate_h2_snapshot_policy(
+    report: CompanyReportRecord,
+    snapshot: CompanyCardV2SnapshotV1,
+    policy: str,
+) -> None:
+    enabled, intended_key_id = _report_arbitration_decision(report)
+    if policy == H2_PUBLICATION_POLICY_V1:
+        valid = type(snapshot) in {CompanyCardV2SnapshotV1, CompanyCardV2SnapshotV2} and not enabled
+    elif policy == H2_PUBLICATION_POLICY_V2:
+        valid = type(snapshot) is CompanyCardV2SnapshotV2 and not enabled
+    elif policy == H2_PUBLICATION_POLICY_V3:
+        valid = type(snapshot) is CompanyCardV2SnapshotV3 and enabled
+        if valid:
+            effective_key_id = snapshot.arbitration_basis.mask_key_id
+            valid = effective_key_id is None or effective_key_id == intended_key_id
+    else:
+        valid = False
+    if not valid or (not enabled and intended_key_id is not None):
+        raise PresentationAssignmentConflict("H2 snapshot/policy decision is invalid")
 
 
 def _is_digest(value: object) -> bool:
@@ -55,12 +111,19 @@ class PresentationAssignmentConflict(RuntimeError):
 
 
 async def create_or_reuse_h2_presentation(
-    session: AsyncSession, *, identifier: str, rollout_generation: int
+    session: AsyncSession,
+    *,
+    identifier: str,
+    rollout_generation: int,
+    arbitration_collection_enabled: bool = False,
+    arbitration_mask_key_id: str | None = None,
 ) -> tuple[CompanyReportPresentation, EnqueuedReportJob, CompanyReportH2LifecycleHead]:
     """Atomically create/reuse the only H2 writer decision and its durable head."""
     decision = WriterDecision(
         writer_profile=H2_WRITER_PROFILE, report_version="3",
         presentation_contract=H2_PRESENTATION_CONTRACT, rollout_generation=rollout_generation,
+        arbitration_collection_enabled=arbitration_collection_enabled,
+        arbitration_mask_key_id=arbitration_mask_key_id,
     )
     enqueued = await enqueue_company_report_job(session, identifier, decision=decision)
     presentation = await session.scalar(select(CompanyReportPresentation).where(
@@ -124,6 +187,23 @@ async def append_presentation_pin(
             existing.report_id == report.id
             and existing.snapshot_hash == report.snapshot_hash
             and existing.presentation_contract == contract
+            and existing.publication_policy_version == publication_policy_version
+            and existing.canonical_path == canonical_path
+            and existing.published_lastmod == published_lastmod
+            and existing.indexable
+            == (False if contract == H2_PRESENTATION_CONTRACT else indexable)
+            and existing.chart_facts_version == chart_facts_version
+            and existing.chart_facts_hash == chart_facts_hash
+            and existing.evidence_registry_version == evidence_registry_version
+            and (
+                contract != H2_PRESENTATION_CONTRACT
+                or (
+                    existing.projection_digest is None
+                    and existing.narrative_binding_status == "unresolved"
+                    and existing.narrative_binding_kind is None
+                    and existing.narrative_binding_key is None
+                )
+            )
         ):
             return existing
         raise PresentationAssignmentConflict("presentation pin generation conflicts")
@@ -141,6 +221,11 @@ async def append_presentation_pin(
             snapshot = company_card_v2_from_snapshot(deepcopy(report.normalized_snapshot))
         except Exception as exc:
             raise PresentationAssignmentConflict("H2 pin snapshot is invalid") from exc
+        _validate_h2_snapshot_policy(
+            report,
+            snapshot,
+            publication_policy_version or "",
+        )
         if (
             report.snapshot_hash != calculate_company_card_v2_snapshot_hash(snapshot)
             or snapshot.report_id != str(report.id)
@@ -203,6 +288,13 @@ async def _resolve_unresolved_h2_pin(
     ):
         raise PresentationAssignmentConflict("H2 v2 pin report decision is invalid")
     snapshot = company_card_v2_from_snapshot(deepcopy(report.normalized_snapshot))
+    if type(snapshot) is CompanyCardV2SnapshotV2:
+        expected_policy = H2_PUBLICATION_POLICY_V2
+    elif type(snapshot) is CompanyCardV2SnapshotV3:
+        expected_policy = H2_PUBLICATION_POLICY_V3
+    else:
+        raise PresentationAssignmentConflict("H2 current pin snapshot version is invalid")
+    _validate_h2_snapshot_policy(report, snapshot, expected_policy)
     if (
         snapshot.report_id != str(report.id)
         or snapshot.rollout_config_generation != report.rollout_generation
@@ -229,7 +321,7 @@ async def _resolve_unresolved_h2_pin(
     # Reject before selecting an unresolved row so retry never masks corruption.
     for pin in exact:
         if (
-            pin.publication_policy_version != H2_PUBLICATION_POLICY_V2
+            pin.publication_policy_version != expected_policy
             or pin.snapshot_hash != report.snapshot_hash
             or pin.chart_facts_version != snapshot.chart_facts.version
             or pin.chart_facts_hash != snapshot.chart_facts.hash
@@ -243,7 +335,7 @@ async def _resolve_unresolved_h2_pin(
         pin = unresolved[0]
         if (
             pin.snapshot_hash != report.snapshot_hash
-            or pin.publication_policy_version != H2_PUBLICATION_POLICY_V2
+            or pin.publication_policy_version != expected_policy
             or pin.narrative_binding_status != "unresolved"
             or pin.chart_facts_version != snapshot.chart_facts.version
             or pin.chart_facts_hash != snapshot.chart_facts.hash
@@ -265,7 +357,7 @@ async def _resolve_unresolved_h2_pin(
         report=report,
         contract=H2_PRESENTATION_CONTRACT,
         generation=max((pin.generation for pin in pins), default=0) + 1,
-        publication_policy_version=H2_PUBLICATION_POLICY_V2,
+        publication_policy_version=expected_policy,
         chart_facts_version=snapshot.chart_facts.version,
         chart_facts_hash=snapshot.chart_facts.hash,
         evidence_registry_version=snapshot.evidence_version,
@@ -371,6 +463,7 @@ async def append_resolved_h2_pin(
     if len(unresolved) != 1 or unresolved[0].publication_policy_version not in H2_PUBLICATION_POLICY_VERSIONS:
         raise PresentationAssignmentConflict("resolved H2 pin has no exact unresolved lineage")
     policy = unresolved[0].publication_policy_version
+    _validate_h2_snapshot_policy(report, snapshot, policy)
     predecessor = unresolved[0]
     if (
         predecessor.subject_id != report.subject_id
@@ -490,6 +583,11 @@ async def assign_pin_cas(session: AsyncSession, *, subject_id: UUID, pin: Compan
 
 
 __all__ = [
+    "H2_PUBLICATION_POLICY_V1",
+    "H2_PUBLICATION_POLICY_V2",
+    "H2_PUBLICATION_POLICY_V3",
+    "H2_PUBLICATION_POLICY_VERSION",
+    "H2_PUBLICATION_POLICY_VERSIONS",
     "PresentationAssignmentConflict",
     "append_presentation_pin",
     "append_resolved_h2_pin",

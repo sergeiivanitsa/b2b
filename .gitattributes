@@ -1,0 +1,5 @@
+services/product_api/src/product_api/company_reports/company_card_v2/public_h2_asset_manifest.json text eol=lf
+services/product_api/tests_unit/fixtures/company_card_v2/*.json text eol=lf
+shared/fixtures/*.json text eol=lf
+shared/fixtures/*.html text eol=lf
+shared/fixtures/company_public_h2_ssr_v1_closed.html -text

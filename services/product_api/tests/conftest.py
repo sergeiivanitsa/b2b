@@ -102,6 +102,8 @@ SELF_MANAGED_DATABASE_TESTS = {
     "test_company_card_narrative_populated_legacy_backfill_and_downgrade_refusal",
     "test_company_card_narrative_corrupt_backfill_aborts_atomically",
     "test_company_card_narrative_resolved_pin_refuses_downgrade",
+    "test_iteration24_active_h2_guard_is_independent_and_pre_ddl",
+    "test_iteration24_terminal_defaults_checks_and_round_trip",
 }
 
 

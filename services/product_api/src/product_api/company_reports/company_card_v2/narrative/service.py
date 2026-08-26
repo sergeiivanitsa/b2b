@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from hashlib import sha256
 import json
+import re
 from uuid import UUID
 
 from sqlalchemy import select
@@ -16,6 +17,7 @@ from product_api.company_reports.company_card_v2.finance import build_chart_fact
 from product_api.company_reports.company_card_v2.models import (
     CompanyCardV2SnapshotV1,
     CompanyCardV2SnapshotV2,
+    CompanyCardV2SnapshotV3,
     FinanceBasisV1,
 )
 from product_api.company_reports.company_card_v2.public_h2 import build_public_h2
@@ -28,8 +30,11 @@ from product_api.company_reports.persistence.models import (
     CompanyReportSubject,
 )
 from product_api.company_reports.persistence.presentations import (
-    H2_PUBLICATION_POLICY_V1, H2_PUBLICATION_POLICY_V2,
+    H2_PUBLICATION_POLICY_V1,
+    H2_PUBLICATION_POLICY_V2,
+    H2_PUBLICATION_POLICY_V3,
 )
+from product_api.company_reports.persistence.jobs import WriterDecision
 from product_api.company_reports.persistence.errors import CompanyReportSnapshotError
 from product_api.company_reports.persistence.narrative_outbox import (
     NarrativeOutboxLease,
@@ -149,9 +154,24 @@ class PreparedNarrativeDispatch:
 
 
 @dataclass(frozen=True)
+class NarrativeResponseValidationContextV1:
+    gateway_dispatch_id: UUID
+    generation_key: str
+    evidence: NarrativeEvidenceEnvelope
+
+    def __post_init__(self) -> None:
+        if type(self.gateway_dispatch_id) is not UUID:
+            raise TypeError("narrative validation dispatch id must be an exact UUID")
+        if re.fullmatch(r"[0-9a-f]{64}", self.generation_key) is None:
+            raise ValueError("narrative validation generation key is invalid")
+        if type(self.evidence) is not NarrativeEvidenceEnvelope:
+            raise TypeError("narrative validation evidence has an invalid type")
+
+
+@dataclass(frozen=True)
 class ValidatedGatewayArtifact:
     draft: NarrativeArtifactDraft
-    projection_digest: str
+    public_narrative: PublicH2Narrative
 
 
 class _NarrativeBinding:
@@ -228,7 +248,9 @@ def _projection_digest(
     return build_public_h2(
         snapshot,
         narrative_binding=_NarrativeBinding(narrative),
-        finance_enabled=publication_policy_version == H2_PUBLICATION_POLICY_V2,
+        finance_enabled=publication_policy_version
+        in {H2_PUBLICATION_POLICY_V2, H2_PUBLICATION_POLICY_V3},
+        arbitration_enabled=publication_policy_version == H2_PUBLICATION_POLICY_V3,
     ).projection_digest
 
 
@@ -245,6 +267,24 @@ def _fallback_projection(report: ValidatedNarrativeReport) -> str | None:
 def fallback_projection_digest(report: ValidatedNarrativeReport) -> str | None:
     """Expose the already-validated write-side fallback projection digest."""
     return _fallback_projection(report)
+
+
+def projection_digest_for_narrative(
+    report: ValidatedNarrativeReport,
+    narrative: PublicH2Narrative,
+) -> str:
+    """Bind a validated narrative to the separately held durable snapshot."""
+    if type(report) is not ValidatedNarrativeReport:
+        raise TypeError("narrative projection report has an invalid type")
+    if type(narrative) is not PublicH2Narrative:
+        raise TypeError("public narrative has an invalid type")
+    if not report.is_v3 or not isinstance(report.snapshot, CompanyCardV2SnapshotV1):
+        raise NarrativePersistenceError("v3 narrative snapshot is unavailable")
+    return _projection_digest(
+        report.snapshot,
+        narrative,
+        report.publication_policy_version,
+    )
 
 
 async def validate_narrative_report(
@@ -355,7 +395,48 @@ async def validate_narrative_report(
         ):
             raise NarrativePersistenceError("v3 publication predecessor identity is invalid")
         publication_policy_version = predecessor.publication_policy_version
-        if publication_policy_version not in {H2_PUBLICATION_POLICY_V1, H2_PUBLICATION_POLICY_V2}:
+        if publication_policy_version not in {
+            H2_PUBLICATION_POLICY_V1,
+            H2_PUBLICATION_POLICY_V2,
+            H2_PUBLICATION_POLICY_V3,
+        }:
+            raise NarrativePersistenceError("v3 publication policy is invalid")
+        arbitration_enabled = getattr(
+            record,
+            "arbitration_collection_enabled",
+            False,
+        )
+        arbitration_key_id = getattr(record, "arbitration_mask_key_id", None)
+        try:
+            WriterDecision(
+                writer_profile=record.writer_profile,
+                report_version=record.report_version,
+                presentation_contract=record.presentation_contract,
+                rollout_generation=record.rollout_generation,
+                arbitration_collection_enabled=arbitration_enabled,
+                arbitration_mask_key_id=arbitration_key_id,
+            )
+        except ValueError as exc:
+            raise NarrativePersistenceError(
+                "v3 arbitration decision is invalid"
+            ) from exc
+        if type(arbitration_enabled) is not bool or (
+            not arbitration_enabled and arbitration_key_id is not None
+        ):
+            raise NarrativePersistenceError("v3 arbitration decision is invalid")
+        if publication_policy_version == H2_PUBLICATION_POLICY_V3:
+            if type(card) is not CompanyCardV2SnapshotV3 or not arbitration_enabled:
+                raise NarrativePersistenceError("v3 publication policy is invalid")
+            effective_key_id = card.arbitration_basis.mask_key_id
+            if effective_key_id is not None and effective_key_id != arbitration_key_id:
+                raise NarrativePersistenceError("v3 arbitration decision is invalid")
+        elif publication_policy_version == H2_PUBLICATION_POLICY_V2:
+            if type(card) is not CompanyCardV2SnapshotV2 or arbitration_enabled:
+                raise NarrativePersistenceError("v3 publication policy is invalid")
+        elif (
+            type(card) not in {CompanyCardV2SnapshotV1, CompanyCardV2SnapshotV2}
+            or arbitration_enabled
+        ):
             raise NarrativePersistenceError("v3 publication policy is invalid")
 
     identity = GenerationIdentityV2(
@@ -592,10 +673,12 @@ def _json_without_duplicate_keys(raw: str) -> object:
 
 
 def validate_gateway_artifact(
-    prepared: PreparedNarrativeDispatch,
+    context: NarrativeResponseValidationContextV1,
     response: ChatResponse,
 ) -> ValidatedGatewayArtifact:
-    dispatch_id = prepared.request.gateway_dispatch_id
+    if type(context) is not NarrativeResponseValidationContextV1:
+        raise TypeError("narrative response validation context has an invalid type")
+    dispatch_id = context.gateway_dispatch_id
     if (
         dispatch_id is None
         or response.gateway_dispatch_id != dispatch_id
@@ -614,8 +697,8 @@ def validate_gateway_artifact(
         raise NarrativeValidationError("render plan is invalid") from exc
     if first_plan != second_plan:
         raise NarrativeValidationError("render plan validation is nondeterministic")
-    first_render = validate_render_plan(deepcopy(raw_plan), prepared.evidence)
-    second_render = validate_render_plan(deepcopy(raw_plan), prepared.evidence)
+    first_render = validate_render_plan(deepcopy(raw_plan), context.evidence)
+    second_render = validate_render_plan(deepcopy(raw_plan), context.evidence)
     if first_render != second_render:
         raise NarrativeValidationError("narrative double render mismatch")
     if normalize_text(first_render.description) != first_render.description:
@@ -656,7 +739,7 @@ def validate_gateway_artifact(
     rendered_hash = sha256(first_render.description.encode("utf-8")).hexdigest()
     artifact_identity = identity_key(
         ArtifactIdentityV1(
-            generation_key=prepared.report.generation_key,
+            generation_key=context.generation_key,
             resolved_model_version=response.resolved_model,
             validated_render_plan_bytes_sha256=plan_hash,
             rendered_output_bytes_sha256=rendered_hash,
@@ -676,13 +759,10 @@ def validate_gateway_artifact(
         renderer_version=RENDERER_VERSION,
         rendered_output_bytes_sha256=rendered_hash,
     )
-    snapshot = prepared.report.snapshot
-    if not isinstance(snapshot, CompanyCardV2SnapshotV1):
-        raise NarrativeValidationError("narrative artifact snapshot is invalid")
-    projection_digest = _projection_digest(
-        snapshot, _artifact_public_narrative(first_render), prepared.report.publication_policy_version,
+    return ValidatedGatewayArtifact(
+        draft=draft,
+        public_narrative=_artifact_public_narrative(first_render),
     )
-    return ValidatedGatewayArtifact(draft=draft, projection_digest=projection_digest)
 
 
 async def requeue_pre_dispatch_failure(
@@ -814,11 +894,13 @@ async def reconcile_expired_narrative_jobs(
 
 __all__ = [
     "NarrativeLimits",
+    "NarrativeResponseValidationContextV1",
     "PreparedNarrativeDispatch",
     "ValidatedGatewayArtifact",
     "ValidatedNarrativeReport",
     "claim_narrative_reconciliation",
     "fallback_projection_digest",
+    "projection_digest_for_narrative",
     "prepare_narrative_dispatch",
     "reconcile_claimed_narrative_outbox",
     "reconcile_expired_narrative_jobs",

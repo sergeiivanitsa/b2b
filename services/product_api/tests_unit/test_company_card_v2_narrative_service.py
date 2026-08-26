@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from dataclasses import fields
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -23,8 +24,10 @@ from product_api.company_reports.company_card_v2.narrative.prompt import build_n
 from product_api.company_reports.company_card_v2.narrative.service import (
     NarrativeLimits,
     NarrativePersistenceError,
+    NarrativeResponseValidationContextV1,
     PreparedNarrativeDispatch,
     fallback_projection_digest,
+    projection_digest_for_narrative,
     validate_gateway_artifact,
     validate_narrative_report,
 )
@@ -118,6 +121,17 @@ async def _prepared() -> PreparedNarrativeDispatch:
         lease_expires_at=NOW + timedelta(minutes=1),
     )
     return PreparedNarrativeDispatch(lease=lease, report=report, evidence=evidence, request=request)
+
+
+def _validation_context(
+    prepared: PreparedNarrativeDispatch,
+) -> NarrativeResponseValidationContextV1:
+    assert prepared.request.gateway_dispatch_id is not None
+    return NarrativeResponseValidationContextV1(
+        gateway_dispatch_id=prepared.request.gateway_dispatch_id,
+        generation_key=prepared.report.generation_key,
+        evidence=prepared.evidence,
+    )
 
 
 def _plan_text() -> str:
@@ -273,7 +287,8 @@ async def test_narrative_rejects_missing_ambiguous_or_corrupt_policy_lineage(
 
 @pytest.mark.asyncio
 async def test_valid_gateway_artifact_is_canonical_grounded_and_has_complete_scalar_trace() -> None:
-    artifact = validate_gateway_artifact(await _prepared(), _response())
+    prepared = await _prepared()
+    artifact = validate_gateway_artifact(_validation_context(prepared), _response())
     draft = artifact.draft
 
     assert draft.validated_render_plan_cjson == _plan_text().encode("utf-8")
@@ -296,14 +311,36 @@ async def test_valid_gateway_artifact_is_canonical_grounded_and_has_complete_sca
         assert draft.rendered_description[item["scalar_start"]:item["scalar_end"]]
         previous_end = item["scalar_end"]
     assert previous_end == len(draft.rendered_description)
-    assert len(artifact.projection_digest) == 64
+    assert artifact.public_narrative.mode == "artifact"
+    assert len(
+        projection_digest_for_narrative(prepared.report, artifact.public_narrative)
+    ) == 64
+
+
+@pytest.mark.asyncio
+async def test_gateway_validator_context_cannot_carry_report_or_snapshot() -> None:
+    prepared = await _prepared()
+    context = _validation_context(prepared)
+
+    assert tuple(item.name for item in fields(context)) == (
+        "gateway_dispatch_id",
+        "generation_key",
+        "evidence",
+    )
+    assert not hasattr(context, "report")
+    assert not hasattr(context, "snapshot")
+    with pytest.raises(TypeError, match="validation context"):
+        validate_gateway_artifact(prepared, _response())  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
 async def test_duplicate_json_keys_are_rejected_before_model_validation() -> None:
     prepared = await _prepared()
     with pytest.raises(NarrativeValidationError, match="duplicate JSON object key"):
-        validate_gateway_artifact(prepared, _response('{"x":1,"x":2}'))
+        validate_gateway_artifact(
+            _validation_context(prepared),
+            _response('{"x":1,"x":2}'),
+        )
 
 
 @pytest.mark.asyncio
@@ -317,17 +354,19 @@ async def test_duplicate_json_keys_are_rejected_before_model_validation() -> Non
     ],
 )
 async def test_gateway_identity_mismatch_is_terminal(overrides: dict[str, object]) -> None:
+    prepared = await _prepared()
     with pytest.raises(NarrativeValidationError, match="gateway narrative identity is invalid"):
-        validate_gateway_artifact(await _prepared(), _response(**overrides))
+        validate_gateway_artifact(_validation_context(prepared), _response(**overrides))
 
 
 @pytest.mark.asyncio
 async def test_gateway_response_exact_utf8_byte_cap() -> None:
     prepared = await _prepared()
+    context = _validation_context(prepared)
     raw = _plan_text()
     exact = raw + " " * (16384 - len(raw.encode("utf-8")))
     assert len(exact.encode("utf-8")) == 16384
-    validate_gateway_artifact(prepared, _response(exact))
+    validate_gateway_artifact(context, _response(exact))
 
     with pytest.raises(NarrativeValidationError, match="gateway narrative identity is invalid"):
-        validate_gateway_artifact(prepared, _response(exact + " "))
+        validate_gateway_artifact(context, _response(exact + " "))

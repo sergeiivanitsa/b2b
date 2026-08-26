@@ -2,7 +2,7 @@ import re
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from shared.constants import AI_EXPLANATION_MODEL_PROFILE
 
@@ -178,6 +178,18 @@ class Settings(BaseSettings):
     company_card_v2_rollout_generation: int = Field(default=0, validation_alias="COMPANY_CARD_V2_ROLLOUT_GENERATION")
     company_card_v2_allowlist_inns: Annotated[list[str], NoDecode] = Field(default=[], validation_alias="COMPANY_CARD_V2_ALLOWLIST_INNS")
     company_card_v2_percentage_basis_points: int = Field(default=0, validation_alias="COMPANY_CARD_V2_PERCENTAGE_BASIS_POINTS")
+    company_card_v2_arbitration_collection_enabled: bool = Field(
+        default=False,
+        validation_alias="COMPANY_CARD_V2_ARBITRATION_COLLECTION_ENABLED",
+    )
+    company_card_v2_arbitration_mask_active_key_id: str | None = Field(
+        default=None,
+        validation_alias="COMPANY_CARD_V2_ARBITRATION_MASK_ACTIVE_KEY_ID",
+    )
+    company_card_v2_arbitration_mask_keyring_json: SecretStr | None = Field(
+        default=None,
+        validation_alias="COMPANY_CARD_V2_ARBITRATION_MASK_KEYRING_JSON",
+    )
     company_card_v2_narrative_enabled: bool = Field(default=False, validation_alias="COMPANY_CARD_AI_NARRATIVE_ENABLED")
     company_card_v2_narrative_kill_switch: bool = Field(default=True, validation_alias="COMPANY_CARD_AI_NARRATIVE_KILL_SWITCH")
     company_card_v2_narrative_daily_limit: int = Field(default=0, validation_alias="COMPANY_CARD_AI_NARRATIVE_DAILY_DISPATCH_CREDITS")

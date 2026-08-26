@@ -8,18 +8,40 @@ from pydantic import ValidationError
 
 from product_api.company_reports.company_card_v2.canonical_json import canonical_digest
 from product_api.company_reports.company_card_v2.models import (
-    CompanyCardV2Snapshot, CompanyCardV2SnapshotV1, CompanyCardV2SnapshotV2,
+    CompanyCardV2Snapshot,
+    CompanyCardV2SnapshotV1,
+    CompanyCardV2SnapshotV2,
+    CompanyCardV2SnapshotV3,
 )
 from .errors import CompanyReportSnapshotError
 
 
-CompanyCardV2SnapshotAny = CompanyCardV2SnapshotV1 | CompanyCardV2SnapshotV2
+CompanyCardV2SnapshotAny = (
+    CompanyCardV2SnapshotV1 | CompanyCardV2SnapshotV2 | CompanyCardV2SnapshotV3
+)
 
 
 def company_card_v2_to_snapshot(snapshot: CompanyCardV2SnapshotAny) -> dict[str, Any]:
+    if type(snapshot) not in {
+        CompanyCardV2SnapshotV1,
+        CompanyCardV2SnapshotV2,
+        CompanyCardV2SnapshotV3,
+    }:
+        raise CompanyReportSnapshotError("company card v2 snapshot schema is invalid")
     data = snapshot.model_dump(mode="json")
     if data.get("report_version") != "3":
         raise CompanyReportSnapshotError("company card v2 snapshot version is invalid")
+    # ``model_copy(update=...)`` deliberately skips Pydantic validation.  The
+    # persistence boundary therefore reparses the emitted mapping and requires
+    # the same exact runtime model and byte-equivalent re-emission before a
+    # digest can be accepted.  This binds V1/V2/V3 to their discriminator and
+    # closes other validation-bypass mutations without changing valid bytes.
+    restored = company_card_v2_from_snapshot(data)
+    if (
+        type(restored) is not type(snapshot)
+        or restored.model_dump(mode="json") != data
+    ):
+        raise CompanyReportSnapshotError("company card v2 snapshot schema is invalid")
     return data
 
 
@@ -33,13 +55,18 @@ def company_card_v2_from_snapshot(snapshot: object) -> CompanyCardV2SnapshotAny:
             return CompanyCardV2SnapshotV1.model_validate(snapshot)
         if snapshot.get("snapshot_schema_version") == "company_card_v2_snapshot_v2":
             return CompanyCardV2SnapshotV2.model_validate(snapshot)
+        if snapshot.get("snapshot_schema_version") == "company_card_v2_snapshot_v3":
+            return CompanyCardV2SnapshotV3.model_validate(snapshot)
         raise CompanyReportSnapshotError("company card v2 snapshot schema is invalid")
     except ValidationError as exc:
         raise CompanyReportSnapshotError("company card v2 snapshot is invalid") from exc
 
 
 def calculate_company_card_v2_snapshot_hash(snapshot: CompanyCardV2SnapshotAny | dict[str, Any]) -> str:
-    payload = company_card_v2_to_snapshot(snapshot) if isinstance(snapshot, (CompanyCardV2SnapshotV1, CompanyCardV2SnapshotV2)) else snapshot
+    payload = company_card_v2_to_snapshot(snapshot) if isinstance(
+        snapshot,
+        (CompanyCardV2SnapshotV1, CompanyCardV2SnapshotV2, CompanyCardV2SnapshotV3),
+    ) else snapshot
     return canonical_digest(payload)
 
 

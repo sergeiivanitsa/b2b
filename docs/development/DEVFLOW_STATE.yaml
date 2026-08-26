@@ -245,11 +245,11 @@ iterations:
   - id: 24
     slug: company-card-v2-arbitration-charts
     title: "Арбитражные графики Company Card v2"
-    status: planned
-    branch: pending
+    status: in_progress
+    branch: codex/iteration-24-company-card-v2-arbitration-charts
     commit: pending
     merged_at: null
-    block_reason: "Ожидает arbitration completeness/outcome/currency/entity-type/privacy gates итераций 19–20"
+    block_reason: "Disposable PostgreSQL acceptance blocked locally: Docker Desktop daemon unavailable; no database was touched."
   - id: 25
     slug: company-card-v2-qa-rollout
     title: "QA и rollout Company Card v2"

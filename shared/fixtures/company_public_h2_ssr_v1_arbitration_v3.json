@@ -1,0 +1,23 @@
+{
+  "contract_version": "company_public_h2_v1",
+  "profile": "finance_arbitration_masked_v3",
+  "dto_fixture": "shared/fixtures/company_public_h2_contract_v1_arbitration_masked_v3.json",
+  "html_fixture": "shared/fixtures/company_public_h2_ssr_v1_arbitration_v3.html",
+  "nonce": "fixture-v3-nonce",
+  "robots": "noindex,follow",
+  "html_sha256": "210553097664162c0dd61b557f3cd5cc47b18cf40bed3073bad4a5f972bf93e5",
+  "required_ids": [
+    "hero-status",
+    "narrative",
+    "requisites",
+    "finance",
+    "arbitration",
+    "arbitration-a1",
+    "arbitration-a2",
+    "arbitration-a3",
+    "arbitration-a4",
+    "arbitration-a5",
+    "sources-limitations",
+    "neutral-actions"
+  ]
+}

@@ -1493,55 +1493,83 @@ Slug: company-card-v2-finance-charts
 ID: 24
 Slug: company-card-v2-arbitration-charts
 
-Статус: planning input; merge finance charts итерации 23 выполнен. Старт после
-прохождения arbitration completeness/outcome/currency/entity-type/privacy
-gates.
+Статус: код утверждённого scope реализован 2026-08-27 и получил финальный
+независимый code-review verdict `APPROVED`; доступные unit, frontend, build,
+gateway, release и migration-contract проверки проходят. Итерация остаётся
+`in_progress`: disposable PostgreSQL acceptance локально заблокирован
+недоступным Docker Desktop daemon, никакая БД не затрагивалась.
+Scope намеренно сужен до single-page completeness, observed years, RUB-only A4
+и all-masked A5. Production provider operation, publication и feature
+activation не разрешены.
 
 ### Зависимости
 
 - Merged chart shell/interaction patterns итераций 22–23.
-- Доказанные full-pagination, `party_result`, exact-role, currency, entity-type
-  и public/privacy contracts итераций 19–20.
+- `arbitration-contract-evidence-v3.md` с официальным OpenAPI binding.
+- `iteration-24-owner-scope-decision-v1.md` и
+  `iteration-24-gate-readiness-v2.md`.
 
 ### Цель
 
-Показать пять утверждённых арбитражных представлений по доказанно загруженной
-выборке без двойной атрибуции, экстраполяции и раскрытия лишних данных.
+Показать пять утверждённых арбитражных представлений по exact provider
+population либо честно обозначенной returned slice без двойной атрибуции,
+экстраполяции и раскрытия идентификаторов или имён сторон.
 
 ### Scope
 
-- Активность по годам и exact-INN roles.
-- Plaintiff/respondent distribution с отдельными `other` и `unattributed`.
-- Outcome distribution только из versioned `party_result` mapping.
-- Суммы по делам с source currency, role, date, result и safe court link; сумма
-  не называется задолженностью.
-- Opposing-party aggregates с exact-INN grouping и deterministic display name.
-- Полные aggregates, top-20 details, `показано N из M`, partial limitations и
-  отсутствие календарных zero без доказанной полноты.
-- Юридические лица/государственные органы допустимы; физические лица
-  маскируются; external HTTPS host allowlist и telemetry/Webvisor protection.
-- Mouse/keyboard/touch interactions, textual fallback, long/large-N fixtures,
-  component/contract/accessibility/visual tests.
-- Feature gate остаётся выключенным для production-default route.
+- Versioned `case_id`-only basis-v2 и новый immutable snapshot/publication
+  lineage без переосмысления старых `ArbitrationBasisV1`/policy v1/v2.
+- Additive report/job decision migration для immutable arbitration-enabled и
+  mask-key-ID binding; race-free pre-DDL guard запрещает upgrade при любом
+  старом active H2 lifecycle, terminal legacy rows остаются `false/null`, а
+  production upgrade не выполняется в этой итерации.
+- Один exact request `inn + company_role=ALL + offset=0 + limit=1000`; при
+  `total_cases>1000` результат всегда partial и второй request запрещён.
+- A1 только по observed start years, с отдельным unknown-year bucket и без
+  synthetic calendar zero.
+- A2 exact-INN roles: `plaintiff`, `respondent`, `other`, `unattributed`.
+- A3 только из narrow mapping `WON/LOST/RETURNED/unknown`, без win rate.
+- A4 только для exact `RUBLES -> RUB`; claim price не называется долгом,
+  `OTHER`/unknown исключаются с limitation, FX запрещён.
+- A5 только actual opposing collections; все стороны `masked_unknown`,
+  report-scoped HMAC grouping и fixed labels `Сторона скрыта N` без имён.
+- Полные aggregates, top-20 details, exact `показано N из M`, honest
+  available-empty/partial/failed states и отсутствие экстраполяции.
+- Optional `first_number`; `result_type`, instances/courts и KAD links остаются
+  null в первой реализации.
+- SSR/React factual parity, lazy mouse/keyboard/touch SVG enhancement, textual
+  fallback, long/large-N/privacy fixtures и component/contract/a11y tests.
+- Отдельный arbitration operation gate и все production defaults остаются off.
 
 ### Вне scope
 
-- Collection probability, прогноз исхода, трактовка claim amount как долга,
-  FX conversion, natural-person publication, новые provider datasets и
-  production activation.
+- Multi-request/full-pagination completeness, доказательство historical
+  calendar horizon и synthetic zero years.
+- Named opponents, entity-type inference, natural/legal/state party names,
+  OGRN/name/fuzzy target matching и raw/HMAC/provider identifiers.
+- Non-RUB currency groups, FX, collection probability, прогноз исхода,
+  трактовка claim amount как долга/award/collection и win rate.
+- Initial result detail, instance/court labels, KAD links, новые provider
+  datasets, live provider/AI calls, deploy и production activation.
 
 ### Критерии приёмки
 
-- Одно дело входит ровно в один role bucket, а multiple roles попадают в
-  `other`.
-- Outcome берётся только из доказанного `party_result`; unknown не подменяется
-  проигрышем или возвратом.
-- Partial page никогда не выглядит полной и не используется для
-  экстраполированных выводов.
-- Large-N UI остаётся ограниченным, доступным и показывает точный scope
-  отображаемых деталей.
-- Публичная страница не раскрывает персональные идентификаторы и физических
-  лиц в opposing parties.
+- Exact complete возможен только для валидного single-page envelope при
+  `total_cases<=1000`; любой larger/drift/malformed/conflict/cap result честно
+  остаётся partial/failed и не экстраполируется.
+- Одно normalized дело входит ровно в один role bucket, multiple roles дают
+  `other`, а unknown outcome не подменяется loss/return.
+- A1 не создаёт ненаблюдавшиеся years; A4 показывает exact Decimal только в RUB и
+  сохраняет explicit zero/negative sign.
+- Large-N UI ограничен top-20, доступен и показывает exact nested N/M и
+  complete-collection либо returned-slice scope.
+- Публичные DTO, SSR, embedded state, client, aria/live text, logs, telemetry и
+  Claims не раскрывают party/case identity, name, HMAC или arbitrary URL.
+- V1/V2 snapshots и finance-only publication policy v2 остаются совместимыми;
+  новый provider path и production publication выключены по умолчанию.
+- Enqueue/claim/retry сохраняют exact arbitration/key decision; rotation
+  влияет только на новые jobs, а missing old key даёт safe failure до
+  arbitration fetch callback.
 
 ---
 
