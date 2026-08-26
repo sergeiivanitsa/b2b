@@ -17,6 +17,7 @@ from product_api.company_reports.company_card_v2.models import (
     CompanyCardV2Snapshot,
     CompanyCardV2SnapshotV1,
     CompanyCardV2SnapshotV2,
+    CompanyCardV2SnapshotV3,
 )
 from product_api.company_reports.company_card_v2.public_h2 import build_public_h2
 from product_api.company_reports.company_card_v2.public_h2_models import (
@@ -87,6 +88,59 @@ def test_discriminated_v3_v2_fixture_has_exact_round_trip_hash_and_bytes() -> No
     assert len(canonical_json_bytes(emitted)) == 2077
 
 
+def test_discriminated_v3_arbitration_fixture_has_exact_cjson_hash_and_bytes() -> None:
+    path = _FIXTURES / "company_card_v2" / "snapshot_v3_arbitration_v3.json"
+    fixture_bytes = path.read_bytes()
+    fixture_cjson = fixture_bytes.rstrip(b"\r\n")
+    raw = json.loads(fixture_bytes)
+
+    restored = company_card_v2_from_snapshot(copy.deepcopy(raw))
+    emitted = company_card_v2_to_snapshot(restored)
+    emitted_cjson = canonical_json_bytes(emitted)
+
+    assert type(restored) is CompanyCardV2SnapshotV3
+    assert fixture_bytes in {fixture_cjson, fixture_cjson + b"\n", fixture_cjson + b"\r\n"}
+    assert fixture_cjson == canonical_json_bytes(raw)
+    assert emitted_cjson == fixture_cjson
+    assert company_card_v2_to_snapshot(company_card_v2_from_snapshot(emitted)) == emitted
+    assert emitted["snapshot_schema_version"] == "company_card_v2_snapshot_v3"
+    assert emitted["arbitration_basis"]["sanitized_cases"][0] == {
+        "case_id": "private-case-v2-a",
+        "first_number": "A40-123/2026",
+        "year": 2026,
+        "role": "plaintiff",
+        "outcome": "won",
+        "date_start": "2026-01-02",
+        "date_update": "2026-01-05",
+        "duration_days": 3,
+        "amount_state": "available",
+        "amount": "-12.34",
+        "currency_state": "rub",
+        "opponent_tokens": [
+            {
+                "algorithm_version": "opponent_hmac_sha256_v1",
+                "key_id": "active_2026",
+                "value": "c247da23c29bb20cdcc5cc1c2ab259a7622ff7e7e03efad27df70cfe43d67d7d",
+            }
+        ],
+        "limitations": [],
+    }
+    assert calculate_company_card_v2_snapshot_hash(emitted) == (
+        "b60621a9f208ad067e6d77bd67f36acd7f64ab1c360c56f9ff254b778b9adc0b"
+    )
+    assert len(emitted_cjson) == 4322
+    for forbidden in (
+        b"RAW TARGET NAME",
+        b"RAW OPPONENT NAME",
+        b"7800000000",
+        b"1027800000000",
+        b"raw.example.invalid",
+        b"inn_src",
+        b"name_src",
+    ):
+        assert forbidden not in emitted_cjson
+
+
 @pytest.mark.parametrize("discriminator", [None, True, 2, "unknown_v1", " company_card_v2_snapshot_v2"])
 def test_v3_parser_rejects_unknown_or_coerced_snapshot_discriminators(discriminator: object) -> None:
     raw = _json("company_card_v2", "snapshot_v3_narrative_v2.json")
@@ -106,6 +160,41 @@ def test_v1_v2_cross_shapes_fail_closed_instead_of_inferring_a_schema() -> None:
     narrative.pop("snapshot_schema_version")
     with pytest.raises(CompanyReportSnapshotError):
         company_card_v2_from_snapshot(narrative)
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "tampered_discriminator"),
+    (
+        ("snapshot_v3_narrative_v2.json", "company_card_v2_snapshot_v3"),
+        ("snapshot_v3_narrative_v2.json", "unknown_snapshot_v9"),
+        ("snapshot_v3_arbitration_v3.json", "company_card_v2_snapshot_v2"),
+    ),
+)
+def test_persistence_rejects_model_copy_discriminator_bypass(
+    fixture_name: str,
+    tampered_discriminator: str,
+) -> None:
+    snapshot = company_card_v2_from_snapshot(
+        _json("company_card_v2", fixture_name)
+    )
+    tampered = snapshot.model_copy(
+        update={"snapshot_schema_version": tampered_discriminator}
+    )
+
+    with pytest.raises(CompanyReportSnapshotError):
+        company_card_v2_to_snapshot(tampered)
+    with pytest.raises(CompanyReportSnapshotError):
+        calculate_company_card_v2_snapshot_hash(tampered)
+    with pytest.raises(CompanyReportSnapshotError):
+        validate_company_card_v2_finalization(
+            tampered,
+            report_id=UUID(tampered.report_id),
+            subject_inn=tampered.subject_inn,
+            writer_profile=tampered.writer_profile,
+            report_version=tampered.report_version,
+            presentation_contract=tampered.presentation_contract,
+            rollout_config_generation=tampered.rollout_config_generation,
+        )
 
 
 def test_v3_snapshot_rejects_noncanonical_writer_identity_timestamp_and_chart_facts() -> None:

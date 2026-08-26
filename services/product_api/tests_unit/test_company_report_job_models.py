@@ -21,6 +21,8 @@ def test_company_report_job_metadata_has_exact_lifecycle_shape():
         "writer_profile",
         "presentation_contract",
         "rollout_generation",
+        "arbitration_collection_enabled",
+        "arbitration_mask_key_id",
         "fence_generation",
         "worker_token",
         "attempt_count",
@@ -48,6 +50,7 @@ def test_company_report_job_metadata_has_exact_lifecycle_shape():
     for suffix in (
         "company_report_job_state",
         "company_report_job_attempt_count",
+        "company_report_jobs_arbitration_decision",
         "company_report_job_state_shape",
     ):
         assert any(name and name.endswith(suffix) for name in constraint_names)

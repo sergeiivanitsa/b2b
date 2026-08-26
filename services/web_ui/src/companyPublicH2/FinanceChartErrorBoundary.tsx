@@ -6,5 +6,5 @@ export class FinanceChartErrorBoundary extends Component<Props, State> {
   state: State = { failed: false }
   static getDerivedStateFromError(): State { return { failed: true } }
   componentDidCatch(error: Error, info: ErrorInfo): void { void error; void info; this.props.onError() }
-  render(): ReactNode { return this.state.failed ? null : this.props.children }
+  render(): ReactNode { return this.state.failed ? <p className="company-public-h2__chart-status" role="status" aria-live="polite">Интерактивный график недоступен; фактические данные сохранены.</p> : this.props.children }
 }

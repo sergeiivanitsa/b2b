@@ -10,6 +10,9 @@ import pytest
 from shared.schemas import ChatResponse
 
 from product_api.company_reports.company_card_v2.narrative.catalog import MODEL_PROFILE
+from product_api.company_reports.company_card_v2.narrative.models import (
+    NarrativeEvidenceEnvelope,
+)
 from product_api.company_reports.company_card_v2.narrative import worker
 from product_api.company_reports.persistence.narratives import (
     NarrativeJobLease,
@@ -63,7 +66,11 @@ def _lease() -> NarrativeJobLease:
 def _prepared(lease: NarrativeJobLease) -> SimpleNamespace:
     return SimpleNamespace(
         lease=lease,
-        report=object(),
+        report=SimpleNamespace(generation_key=lease.generation_key),
+        evidence=NarrativeEvidenceEnvelope(
+            evidence_registry_version="company_card_v2_evidence_registry_v1",
+            primary_activity_label="Разработка программного обеспечения",
+        ),
         request=SimpleNamespace(gateway_dispatch_id=DISPATCH_ID),
     )
 
@@ -136,8 +143,16 @@ def _install_common(monkeypatch: pytest.MonkeyPatch) -> tuple[NarrativeJobLease,
     monkeypatch.setattr(worker, "fallback_projection_digest", lambda _report: "c" * 64)
     monkeypatch.setattr(
         worker,
+        "projection_digest_for_narrative",
+        lambda _report, _narrative: "d" * 64,
+    )
+    monkeypatch.setattr(
+        worker,
         "validate_gateway_artifact",
-        lambda _prepared, _response: SimpleNamespace(draft=object(), projection_digest="d" * 64),
+        lambda _context, _response: SimpleNamespace(
+            draft=object(),
+            public_narrative=object(),
+        ),
     )
     return lease, prepared, events
 

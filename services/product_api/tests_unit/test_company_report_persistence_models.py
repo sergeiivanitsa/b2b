@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import CHAR, JSON, DateTime, LargeBinary, SmallInteger
+from sqlalchemy import Boolean, CHAR, JSON, DateTime, LargeBinary, SmallInteger, String
 
 from product_api.company_reports.persistence.models import (
     CompanyCardNarrativeArtifact,
@@ -9,6 +9,7 @@ from product_api.company_reports.persistence.models import (
     CompanyCardNarrativeOutbox,
     CompanyCardNarrativeRuntimeControl,
     CompanyReportDataset,
+    CompanyReportJob,
     CompanyReportPresentationPin,
     CompanyReportProviderRequest,
     CompanyReportRecord,
@@ -72,6 +73,29 @@ def test_orm_repr_is_safe():
     assert "0000000000" not in repr(subject)
     assert "secret_marker" not in repr(report)
     assert "secret_marker" not in repr(dataset)
+
+
+def test_report_and_job_models_expose_default_off_arbitration_decision() -> None:
+    for table in (CompanyReportRecord.__table__, CompanyReportJob.__table__):
+        enabled = table.c.arbitration_collection_enabled
+        key_id = table.c.arbitration_mask_key_id
+        decision = next(
+            constraint
+            for constraint in table.constraints
+            if constraint.name.endswith(f"{table.name}_arbitration_decision")
+        )
+
+        assert isinstance(enabled.type, Boolean)
+        assert enabled.nullable is False
+        assert enabled.default is not None and enabled.default.arg is False
+        assert enabled.server_default is not None
+        assert str(enabled.server_default.arg) == "false"
+        assert isinstance(key_id.type, String)
+        assert key_id.type.length == 32
+        assert key_id.nullable is True
+        assert str(decision.sqltext) == (
+            "arbitration_collection_enabled OR arbitration_mask_key_id IS NULL"
+        )
 
 
 def test_narrative_orm_matches_resolved_pin_and_runtime_migration_shape():

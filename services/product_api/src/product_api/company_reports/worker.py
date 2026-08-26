@@ -22,6 +22,7 @@ from product_api.company_reports.persistence import (
     fail_owned_job,
     heartbeat_job,
     reconcile_expired_jobs,
+    WriterDecision,
 )
 from product_api.db.session import AsyncSessionMaker
 from product_api.company_reports.scoring import score_signals
@@ -44,12 +45,18 @@ def _utc_now() -> datetime:
 
 
 def _is_exact_v3_claim(claimed: ClaimedReportJob) -> bool:
-    return (
-        claimed.writer_profile == "company_card_v2_writer_v3"
-        and claimed.report_version == "3"
-        and claimed.presentation_contract == "company_public_h2_v1"
-        and claimed.rollout_generation > 0
-    )
+    try:
+        WriterDecision(
+            writer_profile=claimed.writer_profile,
+            report_version=claimed.report_version,
+            presentation_contract=claimed.presentation_contract,
+            rollout_generation=claimed.rollout_generation,
+            arbitration_collection_enabled=claimed.arbitration_collection_enabled,
+            arbitration_mask_key_id=claimed.arbitration_mask_key_id,
+        )
+    except ValueError:
+        return False
+    return claimed.writer_profile == "company_card_v2_writer_v3"
 
 
 async def _build_production_v3_outcome(
@@ -65,13 +72,35 @@ async def _build_production_v3_outcome(
     and an explicit timestamp.  Importing it lazily avoids making any public
     path or default-off worker cycle construct a provider client.
     """
-    from product_api.company_reports.company_card_v2.writer import (
-        build_company_card_v2_snapshot_v2_outcome,
+    from product_api.company_reports.company_card_v2.arbitration_keyring import (
+        resolve_arbitration_mask_secret_bytes,
     )
+    from product_api.company_reports.company_card_v2.evidence import (
+        ARBITRATION_EVIDENCE_BINDING_V2,
+        arbitration_v2_evidence_allowed,
+    )
+    from product_api.company_reports.company_card_v2.writer import (
+        build_company_card_v2_snapshot_outcome,
+    )
+
+    arbitration_operation_enabled = False
+    arbitration_key_secret: bytes | None = None
+    if claimed.arbitration_collection_enabled:
+        arbitration_operation_enabled = (
+            settings.company_card_v2_arbitration_collection_enabled
+        )
+        if (
+            arbitration_operation_enabled
+            and arbitration_v2_evidence_allowed(ARBITRATION_EVIDENCE_BINDING_V2)
+        ):
+            arbitration_key_secret = resolve_arbitration_mask_secret_bytes(
+                key_id=claimed.arbitration_mask_key_id,
+                keyring_json=settings.company_card_v2_arbitration_mask_keyring_json,
+            )
 
     client = client_factory(settings)
     async with client:
-        return await build_company_card_v2_snapshot_v2_outcome(
+        return await build_company_card_v2_snapshot_outcome(
             provider=client,
             report_id=claimed.report_id,
             subject_inn=claimed.normalized_identifier,
@@ -81,6 +110,11 @@ async def _build_production_v3_outcome(
             presentation_contract=claimed.presentation_contract,
             rollout_config_generation=claimed.rollout_generation,
             now=clock(),
+            arbitration_enabled=claimed.arbitration_collection_enabled,
+            arbitration_operation_enabled=arbitration_operation_enabled,
+            arbitration_key_id=claimed.arbitration_mask_key_id,
+            arbitration_key_secret=arbitration_key_secret,
+            arbitration_evidence=ARBITRATION_EVIDENCE_BINDING_V2,
             request_id=f"company-report:{claimed.report_id}",
         )
 

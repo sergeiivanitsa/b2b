@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import re
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -52,7 +53,12 @@ from .v3 import (
     company_card_v2_to_snapshot,
     validate_company_card_v2_finalization,
 )
-from product_api.company_reports.company_card_v2.models import CompanyCardV2Snapshot
+from product_api.company_reports.company_card_v2.models import (
+    CompanyCardV2Snapshot,
+    CompanyCardV2SnapshotV1,
+    CompanyCardV2SnapshotV2,
+    CompanyCardV2SnapshotV3,
+)
 
 
 @dataclass(frozen=True)
@@ -153,6 +159,8 @@ async def create_pending_report(
         id=report_id or uuid4(),
         subject_id=subject.id,
         report_version=report_version,
+        arbitration_collection_enabled=False,
+        arbitration_mask_key_id=None,
         lifecycle_status=REPORT_PENDING_STATUS,
         request_id=request_id,
         started_at=_as_utc(started_at or _utc_now()),
@@ -189,6 +197,16 @@ async def finalize_report(
         raise CompanyReportStateConflictError("company report subject does not match")
     if record.report_version != report.report_version:
         raise CompanyReportStateConflictError("company report version does not match")
+    if (
+        (
+            record.arbitration_collection_enabled is not False
+            and record.arbitration_collection_enabled is not None
+        )
+        or record.arbitration_mask_key_id is not None
+    ):
+        raise CompanyReportStateConflictError(
+            "H1 report cannot carry an arbitration decision"
+        )
 
     if record.lifecycle_status != REPORT_PENDING_STATUS:
         if record.snapshot_hash == snapshot_hash:
@@ -217,11 +235,13 @@ async def finalize_report(
 
 async def finalize_company_card_v2_report(
     session: AsyncSession,
-    snapshot_model: CompanyCardV2Snapshot,
+    snapshot_model: CompanyCardV2SnapshotV1 | CompanyCardV2SnapshotV2 | CompanyCardV2SnapshotV3,
     *,
     report_id: UUID,
     subject_id: UUID,
     finished_at: datetime,
+    arbitration_collection_enabled: bool,
+    arbitration_mask_key_id: str | None,
 ) -> StoredReportRecord:
     """Finalize a v3 record without entering H1 dataset/signal logic."""
     # Rebuild the derivative at this persistence boundary as well as at
@@ -246,6 +266,58 @@ async def finalize_company_card_v2_report(
         or record.rollout_generation != snapshot_model.rollout_config_generation
     ):
         raise CompanyReportStateConflictError("company card v2 writer decision does not match")
+    arbitration_enabled = record.arbitration_collection_enabled
+    if arbitration_enabled is None:
+        arbitration_enabled = False
+    if (
+        type(arbitration_enabled) is not bool
+        or type(arbitration_collection_enabled) is not bool
+        or arbitration_enabled != arbitration_collection_enabled
+        or record.arbitration_mask_key_id != arbitration_mask_key_id
+        or (
+            arbitration_mask_key_id is not None
+            and (
+                type(arbitration_mask_key_id) is not str
+                or re.fullmatch(
+                    r"[a-z][a-z0-9_]{0,31}",
+                    arbitration_mask_key_id,
+                )
+                is None
+            )
+        )
+    ):
+        raise CompanyReportStateConflictError("company card v2 arbitration decision is invalid")
+    if type(snapshot_model) is CompanyCardV2SnapshotV3:
+        from product_api.company_reports.company_card_v2.arbitration_v2 import (
+            arbitration_chart_facts_hash,
+            build_arbitration_chart_facts,
+        )
+
+        expected_arbitration_facts = build_arbitration_chart_facts(
+            snapshot_model.arbitration_basis
+        )
+        if (
+            not arbitration_enabled
+            or snapshot_model.arbitration_chart_facts != expected_arbitration_facts
+            or snapshot_model.arbitration_chart_facts_hash
+            != arbitration_chart_facts_hash(expected_arbitration_facts)
+            or (
+                snapshot_model.arbitration_basis.mask_key_id is not None
+                and snapshot_model.arbitration_basis.mask_key_id
+                != record.arbitration_mask_key_id
+            )
+        ):
+            raise CompanyReportStateConflictError(
+                "company card v2 arbitration snapshot decision does not match"
+            )
+    elif (
+        type(snapshot_model) not in {CompanyCardV2SnapshotV1, CompanyCardV2SnapshotV2}
+        or arbitration_enabled
+        or record.arbitration_mask_key_id is not None
+    ):
+        raise CompanyReportStateConflictError(
+            "company card v2 arbitration snapshot decision does not match"
+        )
     try:
         snapshot, digest = validate_company_card_v2_finalization(
             snapshot_model,

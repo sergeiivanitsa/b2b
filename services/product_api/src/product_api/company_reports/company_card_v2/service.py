@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from product_api.company_reports.persistence.jobs import (
     H2_PRESENTATION_CONTRACT,
     H2_WRITER_PROFILE,
+    WriterDecision,
 )
 from product_api.company_reports.persistence.models import (
     CompanyCardNarrativeArtifact,
@@ -27,7 +28,9 @@ from product_api.company_reports.persistence.models import (
     CompanyReportSubject,
 )
 from product_api.company_reports.persistence.presentations import (
-    H2_PUBLICATION_POLICY_V1, H2_PUBLICATION_POLICY_V2,
+    H2_PUBLICATION_POLICY_V1,
+    H2_PUBLICATION_POLICY_V2,
+    H2_PUBLICATION_POLICY_V3,
 )
 from product_api.company_reports.persistence.v3 import (
     calculate_company_card_v2_snapshot_hash,
@@ -36,7 +39,11 @@ from product_api.company_reports.persistence.v3 import (
 )
 from product_api.company_reports.persistence.serialization import calculate_company_report_snapshot_hash, company_report_from_snapshot
 from .canonical_json import canonical_json_bytes
-from .models import CompanyCardV2SnapshotV1, CompanyCardV2SnapshotV2
+from .models import (
+    CompanyCardV2SnapshotV1,
+    CompanyCardV2SnapshotV2,
+    CompanyCardV2SnapshotV3,
+)
 from .narrative.catalog import (
     CONNECTOR_CATALOG_VERSION,
     EVIDENCE_BY_STATEMENT,
@@ -219,6 +226,11 @@ async def _resolve_exact_v3(
         raise PublicH2Failed("report_failed")
     try:
         snapshot = company_card_v2_from_snapshot(deepcopy(record.normalized_snapshot))
+        _validate_saved_snapshot_policy(
+            record,
+            snapshot,
+            pin.publication_policy_version,
+        )
         _serialized, calculated_hash = validate_company_card_v2_finalization(
             snapshot,
             report_id=record.id,
@@ -265,7 +277,11 @@ async def _resolve_exact_v3(
             or pin.chart_facts_version != snapshot.chart_facts.version
             or pin.chart_facts_hash != snapshot.chart_facts.hash
             or pin.evidence_registry_version != snapshot.evidence_version
-            or pin.publication_policy_version not in {H2_PUBLICATION_POLICY_V1, H2_PUBLICATION_POLICY_V2}
+            or pin.publication_policy_version not in {
+                H2_PUBLICATION_POLICY_V1,
+                H2_PUBLICATION_POLICY_V2,
+                H2_PUBLICATION_POLICY_V3,
+            }
             or pin.indexable is not False
             or pin.canonical_path is not None
             or pin.published_lastmod is not None
@@ -321,7 +337,10 @@ async def _resolve_exact_v3(
         response = build_public_h2(
             snapshot,
             narrative_binding=narrative_binding,
-            finance_enabled=pin.publication_policy_version == H2_PUBLICATION_POLICY_V2,
+            finance_enabled=pin.publication_policy_version
+            in {H2_PUBLICATION_POLICY_V2, H2_PUBLICATION_POLICY_V3},
+            arbitration_enabled=pin.publication_policy_version
+            == H2_PUBLICATION_POLICY_V3,
         )
         if response.projection_digest != pin.projection_digest:
             raise ValueError("company card v2 projection digest is invalid")
@@ -788,6 +807,46 @@ def _validated_saved_fallback(
         comments=(),
         render_digest=digest,
     ))
+
+
+def _validate_saved_snapshot_policy(
+    record: CompanyReportRecord,
+    snapshot: CompanyCardV2SnapshotV1,
+    policy: object,
+) -> None:
+    enabled = record.arbitration_collection_enabled
+    if enabled is None:
+        enabled = False
+    key_id = record.arbitration_mask_key_id
+    try:
+        WriterDecision(
+            writer_profile=record.writer_profile,
+            report_version=record.report_version,
+            presentation_contract=record.presentation_contract,
+            rollout_generation=record.rollout_generation,
+            arbitration_collection_enabled=enabled,
+            arbitration_mask_key_id=key_id,
+        )
+    except ValueError as exc:
+        raise ValueError("saved arbitration decision is invalid") from exc
+    if type(enabled) is not bool or (not enabled and key_id is not None):
+        raise ValueError("saved arbitration decision is invalid")
+    if policy == H2_PUBLICATION_POLICY_V1:
+        valid = type(snapshot) in {
+            CompanyCardV2SnapshotV1,
+            CompanyCardV2SnapshotV2,
+        } and not enabled
+    elif policy == H2_PUBLICATION_POLICY_V2:
+        valid = type(snapshot) is CompanyCardV2SnapshotV2 and not enabled
+    elif policy == H2_PUBLICATION_POLICY_V3:
+        valid = type(snapshot) is CompanyCardV2SnapshotV3 and enabled
+        if valid:
+            effective_key_id = snapshot.arbitration_basis.mask_key_id
+            valid = effective_key_id is None or effective_key_id == key_id
+    else:
+        valid = False
+    if not valid:
+        raise ValueError("saved snapshot/publication policy is invalid")
 
 
 def _is_hex64(value: object) -> bool:

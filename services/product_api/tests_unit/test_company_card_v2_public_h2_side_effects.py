@@ -199,6 +199,8 @@ def _v3_saved_result(
         generated_at=snapshot.generated_at,
         normalized_snapshot=raw,
         snapshot_hash=snapshot_hash,
+        arbitration_collection_enabled=False,
+        arbitration_mask_key_id=None,
     )
     generation_identity = service._v3_generation_identity(
         record=record,

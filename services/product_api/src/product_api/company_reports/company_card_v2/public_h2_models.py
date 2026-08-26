@@ -4,10 +4,11 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP, localcontext
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationInfo, model_validator
 
 from .canonical_json import canonical_digest, canonical_json_bytes
 
@@ -22,10 +23,117 @@ _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}
 _PATH = re.compile(r"^/[A-Za-z0-9_./?=&-]{1,2047}$")
 _DECIMAL = re.compile(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?$")
 _ACTIVITY = re.compile(r"^[0-9.]{2,16}$")
+_CASE_PUBLIC_ID = re.compile(r"^case_([0-9]{6})$")
+_OPPONENT_PUBLIC_ID = re.compile(r"^opponent_([0-9]{6})$")
+_FIRST_NUMBER = re.compile(r"^(?:(?:А|A)[0-9]{1,3}|СИП)-[0-9]{1,12}/[0-9]{4}$")
 CanonicalDecimal = Annotated[str, StringConstraints(pattern=_DECIMAL.pattern)]
 
 BLOCK_ORDER = ("hero_status", "narrative", "in_page_navigation", "requisites", "finance_f1_liquidity", "finance_f2_funding", "finance_f3_growth", "finance_f4_profit_per_100", "finance_f5_yearly_table", "arbitration_a1_activity", "arbitration_a2_roles", "arbitration_a3_outcomes", "arbitration_a4_case_amounts", "arbitration_a5_opponents", "sources_limitations", "neutral_actions")
 COVERAGE_BLOCKS = ("requisites", "narrative", "finance_f1", "finance_f2", "finance_f3", "finance_f4", "finance_f5", "arbitration_a1", "arbitration_a2", "arbitration_a3", "arbitration_a4", "arbitration_a5", "sources_limitations")
+_ARBITRATION_BLOCKS = COVERAGE_BLOCKS[7:12]
+_ARBITRATION_PRE_RESULT_REASONS = {
+    "operation_gate_closed": "gate_closed",
+    "evidence_gate_closed": "gate_closed",
+    "privacy_key_unavailable": "failed",
+    "provider_error": "failed",
+    "provider_binding_invalid": "failed",
+}
+_ARBITRATION_BOUND_FAILURE_REASONS = {
+    "lexical_transport_invalid",
+    "envelope_invalid",
+}
+_ARBITRATION_COMPLETION_PRECEDENCE = (
+    "operation_gate_closed",
+    "evidence_gate_closed",
+    "privacy_key_unavailable",
+    "provider_error",
+    "provider_binding_invalid",
+    "lexical_transport_invalid",
+    "envelope_invalid",
+    "malformed_rows",
+    "duplicate_conflict",
+    "oversized_case",
+    "storage_cap_exhausted",
+    "opponent_group_cap_exhausted",
+    "source_total_exceeds_cap",
+    "complete",
+)
+_ARBITRATION_COMPLETION_REASONS = set(_ARBITRATION_COMPLETION_PRECEDENCE)
+_ARBITRATION_LIMITATION_CODES = {
+    *(_ARBITRATION_COMPLETION_REASONS - {"complete"}),
+    "arbitration_calendar_unverified",
+    "arbitration_unknown_year",
+    "arbitration_date_invalid",
+    "arbitration_date_inversion",
+    "arbitration_year_conflict",
+    "arbitration_first_number_unavailable",
+    "arbitration_first_number_identity_collision",
+    "arbitration_amount_missing",
+    "arbitration_amount_invalid",
+    "arbitration_currency_missing",
+    "arbitration_currency_unidentified",
+    "arbitration_currency_invalid",
+    "arbitration_public_projection_cap_exhausted",
+}
+_ARBITRATION_CAP_CODE = "arbitration_public_projection_cap_exhausted"
+_ARBITRATION_SOURCE_NORMALIZATION = "company_card_arbitration_normalization_v2"
+_ARBITRATION_SOURCE_EVIDENCE = "datanewton_arbitration_registry_v2"
+_MAX_ARBITRATION_ROWS = 1_000
+_MAX_SOURCE_TOTAL = (1 << 63) - 1
+_ARBITRATION_A1_LIMITATIONS = {
+    "arbitration_calendar_unverified",
+    "arbitration_unknown_year",
+}
+_ARBITRATION_A4_LIMITATIONS = {
+    "arbitration_amount_missing",
+    "arbitration_amount_invalid",
+    "arbitration_currency_missing",
+    "arbitration_currency_unidentified",
+    "arbitration_currency_invalid",
+}
+_ARBITRATION_LIMITATION_PRECEDENCE = (
+    *_ARBITRATION_COMPLETION_PRECEDENCE[:-1],
+    "arbitration_calendar_unverified",
+    "arbitration_unknown_year",
+    "arbitration_date_invalid",
+    "arbitration_date_inversion",
+    "arbitration_year_conflict",
+    "arbitration_first_number_unavailable",
+    "arbitration_first_number_identity_collision",
+    "arbitration_amount_missing",
+    "arbitration_amount_invalid",
+    "arbitration_currency_missing",
+    "arbitration_currency_unidentified",
+    "arbitration_currency_invalid",
+)
+ARBITRATION_PUBLIC_LIMITATION_MESSAGES = {
+    "operation_gate_closed": "Сбор арбитражных данных отключён операционным ограничением.",
+    "evidence_gate_closed": "Арбитражные данные недоступны до подтверждения evidence gate.",
+    "privacy_key_unavailable": "Арбитражные данные недоступны из-за закрытого privacy-контура.",
+    "provider_error": "Подтверждённый источник арбитражных данных временно недоступен.",
+    "provider_binding_invalid": "Ответ источника не прошёл проверку привязки к отчёту.",
+    "lexical_transport_invalid": "Числовой транспорт ответа источника не подтверждён.",
+    "envelope_invalid": "Структура ответа источника не прошла проверку.",
+    "malformed_rows": "Часть строк источника не прошла проверку структуры.",
+    "duplicate_conflict": "Конфликтующие дубликаты дел исключены из представления.",
+    "oversized_case": "Строка дела превысила допустимый безопасный размер.",
+    "storage_cap_exhausted": "Сохранён безопасный префикс данных в пределах лимита.",
+    "opponent_group_cap_exhausted": "Группировка скрытых сторон недоступна из-за лимита приватности.",
+    "source_total_exceeds_cap": "Источник сообщает больше дел, чем возвращено в подтверждённом срезе.",
+    "arbitration_calendar_unverified": "Календарная полнота арбитражных данных не подтверждена.",
+    "arbitration_unknown_year": "Для части дел год не подтверждён.",
+    "arbitration_date_invalid": "Для части дел дата не прошла строгую проверку.",
+    "arbitration_date_inversion": "Для части дел порядок дат не подтверждён.",
+    "arbitration_year_conflict": "Для части дел год не согласуется с датой начала.",
+    "arbitration_first_number_unavailable": "Для части дел безопасный номер не опубликован.",
+    "arbitration_first_number_identity_collision": "Номер дела скрыт из-за совпадения с приватным идентификатором.",
+    "arbitration_amount_missing": "Для части дел цена иска отсутствует.",
+    "arbitration_amount_invalid": "Для части дел цена иска не прошла точную числовую проверку.",
+    "arbitration_currency_missing": "Для части дел валюта цены иска отсутствует.",
+    "arbitration_currency_unidentified": "Для части дел валюта цены иска не идентифицирована как рубль.",
+    "arbitration_currency_invalid": "Для части дел значение валюты некорректно.",
+    _ARBITRATION_CAP_CODE: "Арбитражные представления не опубликованы из-за предельного размера ответа.",
+}
 
 
 class PublicH2Model(BaseModel):
@@ -242,7 +350,7 @@ class PublicH2CoverageItem(PublicH2Model):
     def _valid(self) -> "PublicH2CoverageItem":
         if self.block_id not in COVERAGE_BLOCKS or len(set(self.limitation_codes)) != len(self.limitation_codes) or not all(_CODE.fullmatch(item) for item in self.limitation_codes):
             raise ValueError("invalid coverage")
-        if self.state not in {"available", "missing"} and not self.limitation_codes:
+        if self.state not in {"available", "available_empty", "missing"} and not self.limitation_codes:
             raise ValueError("unavailable coverage requires limitation")
         return self
 
@@ -760,12 +868,12 @@ class PublicF5(PublicH2Model):
 
 
 class PublicArbitrationSummary(PublicH2Model):
-    source_total: int | None = Field(default=None, ge=0)
-    rows_observed: int = Field(ge=0)
-    unique_case_count: int = Field(ge=0)
-    malformed_count: int = Field(ge=0)
-    duplicate_identical_count: int = Field(ge=0)
-    duplicate_conflict_count: int = Field(ge=0)
+    source_total: int | None = Field(default=None, ge=0, le=_MAX_SOURCE_TOTAL)
+    rows_observed: int = Field(ge=0, le=_MAX_ARBITRATION_ROWS)
+    unique_case_count: int = Field(ge=0, le=_MAX_ARBITRATION_ROWS)
+    malformed_count: int = Field(ge=0, le=_MAX_ARBITRATION_ROWS)
+    duplicate_identical_count: int = Field(ge=0, le=_MAX_ARBITRATION_ROWS)
+    duplicate_conflict_count: int = Field(ge=0, le=_MAX_ARBITRATION_ROWS)
     collection_complete: bool
     completion_reason: str
     calendar_complete: bool
@@ -923,6 +1031,1182 @@ class PublicH2Blocks(PublicH2Model):
     arbitration_a5: PublicA5 | None = None
 
 
+def _arbitration_values(response: "CompanyPublicH2Response") -> tuple[object | None, ...]:
+    return tuple(getattr(response.blocks, block) for block in _ARBITRATION_BLOCKS)
+
+
+def _arbitration_coverage(
+    response: "CompanyPublicH2Response",
+) -> tuple[PublicH2CoverageItem, ...]:
+    by_id = {item.block_id: item for item in response.coverage}
+    return tuple(by_id[block] for block in _ARBITRATION_BLOCKS)
+
+
+def _arbitration_limitations(
+    response: "CompanyPublicH2Response",
+) -> tuple[PublicH2Limitation, ...]:
+    return tuple(
+        item for item in response.limitations
+        if item.code in _ARBITRATION_LIMITATION_CODES
+    )
+
+
+def _is_arbitration_linked_limitation(item: PublicH2Limitation) -> bool:
+    return (
+        item.block_id in _ARBITRATION_BLOCKS
+        or item.code.startswith("arbitration_")
+        or item.code == "opponent_group_cap_exhausted"
+    )
+
+
+def _validate_arbitration_limitation_catalog(
+    response: "CompanyPublicH2Response",
+) -> None:
+    if (
+        any(
+            _is_arbitration_linked_limitation(item)
+            and item.code not in _ARBITRATION_LIMITATION_CODES
+            for item in response.limitations
+        )
+        or any(
+            code not in _ARBITRATION_LIMITATION_CODES
+            for item in _arbitration_coverage(response)
+            for code in item.limitation_codes
+        )
+    ):
+        raise ValueError("unknown policy-v3 arbitration limitation")
+    if any(
+        item.message != ARBITRATION_PUBLIC_LIMITATION_MESSAGES[item.code]
+        for item in _arbitration_limitations(response)
+    ):
+        raise ValueError("invalid policy-v3 arbitration limitation message")
+
+
+def _valid_frozen_source_prefix(response: "CompanyPublicH2Response") -> bool:
+    if len(response.sources) < 2:
+        return False
+    counterparty, finance = response.sources[:2]
+    return (
+        counterparty.dataset == "counterparty"
+        and finance.dataset == "finance"
+        and counterparty.received_at == response.checked_at
+        and finance.received_at == response.checked_at
+        and counterparty.effective_at is None
+        and finance.effective_at is None
+        and counterparty.period is None
+        and finance.period is None
+        and counterparty.normalization_version == "company_card_v2_v1"
+        and finance.normalization_version == "company_card_v2_v1"
+        and counterparty.evidence_version == finance.evidence_version
+    )
+
+
+def _is_exact_bound_arbitration_source(item: PublicH2SourceItem) -> bool:
+    return (
+        item.dataset == "arbitration"
+        and item.effective_at is None
+        and item.period is None
+        and item.normalization_version == _ARBITRATION_SOURCE_NORMALIZATION
+        and item.evidence_version == _ARBITRATION_SOURCE_EVIDENCE
+    )
+
+
+def _v3_semantic_signal(response: "CompanyPublicH2Response") -> bool:
+    coverage = _arbitration_coverage(response)
+    if any(
+        code in _ARBITRATION_LIMITATION_CODES
+        for item in coverage
+        for code in item.limitation_codes
+    ) or any(
+        item.code in _ARBITRATION_LIMITATION_CODES
+        for item in response.limitations
+    ):
+        return True
+    arbitration_sources = tuple(
+        item for item in response.sources if item.dataset == "arbitration"
+    )
+    if any(
+        item.normalization_version == _ARBITRATION_SOURCE_NORMALIZATION
+        or item.evidence_version == _ARBITRATION_SOURCE_EVIDENCE
+        for item in arbitration_sources
+    ):
+        return True
+    for block in _arbitration_values(response):
+        if block is None:
+            continue
+        dumped = block.model_dump(mode="json")
+        stack: list[object] = [dumped]
+        while stack:
+            value = stack.pop()
+            if isinstance(value, dict):
+                stack.extend(value.values())
+            elif isinstance(value, list):
+                stack.extend(value)
+            elif isinstance(value, str) and (
+                _CASE_PUBLIC_ID.fullmatch(value)
+                or _OPPONENT_PUBLIC_ID.fullmatch(value)
+            ):
+                return True
+    return False
+
+
+def _exact_decimal(value: Decimal) -> str:
+    if value == 0:
+        return "0"
+    rendered = format(value, "f")
+    if "." in rendered:
+        rendered = rendered.rstrip("0").rstrip(".")
+    return rendered
+
+
+def _expected_percentages(
+    counts: tuple[int, int, int, int],
+    denominator: int,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    if denominator == 0:
+        return (None, None, None, None)
+    quantum = Decimal("0.000001")
+    with localcontext() as context:
+        context.prec = 34
+        context.rounding = ROUND_HALF_UP
+        unrounded = tuple(
+            Decimal(count) / Decimal(denominator) * Decimal("100")
+            for count in counts
+        )
+        rounded = [
+            value.quantize(quantum, rounding=ROUND_HALF_UP)
+            for value in unrounded
+        ]
+        residual = Decimal("100") - sum(rounded, Decimal("0"))
+        winner = max(
+            range(4),
+            key=lambda index: (abs(unrounded[index] - rounded[index]), -index),
+        )
+        rounded[winner] += residual
+    return tuple(_exact_decimal(value) for value in rounded)  # type: ignore[return-value]
+
+
+def _public_id_ordinal(value: str, pattern: re.Pattern[str], maximum: int) -> int:
+    matched = pattern.fullmatch(value)
+    if matched is None:
+        raise ValueError("invalid policy-v3 public ordinal")
+    ordinal = int(matched.group(1))
+    if not 1 <= ordinal <= maximum:
+        raise ValueError("invalid policy-v3 public ordinal")
+    return ordinal
+
+
+def _policy_v3_date(raw: str | None) -> date | None:
+    if raw is None:
+        return None
+    try:
+        parsed = date.fromisoformat(raw)
+    except ValueError as exc:
+        raise ValueError("invalid policy-v3 case date") from exc
+    if parsed.isoformat() != raw:
+        raise ValueError("invalid policy-v3 case date")
+    return parsed
+
+
+def _policy_v3_decimal(raw: str) -> Decimal:
+    if raw == "-0":
+        raise ValueError("negative zero is invalid in policy-v3 decimal")
+    return Decimal(raw)
+
+
+def _detail_order_key(value: PublicSafeCaseDetail) -> tuple[object, ...]:
+    def descending_date(raw: str | None) -> tuple[int, int]:
+        parsed = _policy_v3_date(raw)
+        if parsed is None:
+            return (1, 0)
+        return (0, -parsed.toordinal())
+
+    return (
+        value.year is None,
+        -(value.year or 0),
+        *descending_date(value.start_date),
+        *descending_date(value.update_date),
+        value.case_public_id,
+    )
+
+
+def _validate_case_detail(value: PublicSafeCaseDetail) -> None:
+    _public_id_ordinal(value.case_public_id, _CASE_PUBLIC_ID, 1000)
+    if value.case_number is not None and _FIRST_NUMBER.fullmatch(value.case_number) is None:
+        raise ValueError("invalid policy-v3 public case number")
+    if value.result_detail is not None or value.instance_count is not None:
+        raise ValueError("deferred policy-v3 case detail is non-null")
+    if value.courts or value.opponents or value.public_case_url is not None:
+        raise ValueError("private policy-v3 case detail escaped")
+    if value.amount is not None:
+        _policy_v3_decimal(value.amount.source_decimal)
+        expected_display = (
+            value.amount.source_decimal.replace("-", "−").replace(".", ",") + " ₽"
+        )
+        if (
+            value.amount.source_currency_id != "RUB"
+            or value.amount.display_exact != expected_display
+        ):
+            raise ValueError("invalid policy-v3 RUB amount")
+    start = _policy_v3_date(value.start_date)
+    update = _policy_v3_date(value.update_date)
+    if value.year is not None and start is not None and value.year != start.year:
+        raise ValueError("invalid policy-v3 year/date pairing")
+    if value.role in {"other", "unattributed"} and value.outcome != "unknown":
+        raise ValueError("invalid policy-v3 role/outcome pairing")
+    expected_days = (
+        (update - start).days
+        if start is not None and update is not None and update >= start
+        else None
+    )
+    if value.days_to_last_update != expected_days:
+        raise ValueError("invalid policy-v3 safe duration")
+
+
+def _validate_case_sequence(values: tuple[PublicSafeCaseDetail, ...]) -> None:
+    if len({item.case_public_id for item in values}) != len(values):
+        raise ValueError("duplicate policy-v3 case detail")
+    for item in values:
+        _validate_case_detail(item)
+    if values != tuple(sorted(values, key=_detail_order_key)):
+        raise ValueError("policy-v3 case details are not ordered")
+
+
+def _a4_detail_order_key(value: PublicSafeCaseDetail) -> tuple[object, ...]:
+    if value.amount is None:
+        raise ValueError("policy-v3 A4 detail lacks an amount")
+    amount = _policy_v3_decimal(value.amount.source_decimal)
+    if value.update_date is None:
+        update_key = (1, 0)
+    else:
+        try:
+            update = date.fromisoformat(value.update_date)
+        except ValueError as exc:
+            raise ValueError("invalid policy-v3 case date") from exc
+        if update.isoformat() != value.update_date:
+            raise ValueError("invalid policy-v3 case date")
+        update_key = (0, -update.toordinal())
+    return (
+        amount.copy_abs().copy_negate(),
+        amount.copy_negate(),
+        value.year is None,
+        -(value.year or 0),
+        *update_key,
+        value.case_public_id,
+    )
+
+
+def _validate_a4_case_sequence(
+    values: tuple[PublicSafeCaseDetail, ...],
+) -> None:
+    if len({item.case_public_id for item in values}) != len(values):
+        raise ValueError("duplicate policy-v3 A4 case detail")
+    for item in values:
+        _validate_case_detail(item)
+    if values != tuple(sorted(values, key=_a4_detail_order_key)):
+        raise ValueError("policy-v3 A4 case details are not ordered")
+
+
+def _validate_scope(
+    scope: PublicDetailScope,
+    *,
+    population_scope: str,
+    source_total: int | None,
+    rows_received: int,
+    eligible_total: int,
+    noun: Literal["дел", "сторон"],
+) -> None:
+    shown = min(eligible_total, 20)
+    if (
+        scope.population_scope != population_scope
+        or scope.source_total != source_total
+        or scope.rows_received != rows_received
+        or scope.eligible_total != eligible_total
+        or scope.shown != shown
+        or scope.cap != 20
+        or scope.label != f"показано {shown} из {eligible_total} {noun}"
+    ):
+        raise ValueError("invalid policy-v3 detail scope")
+
+
+def _validate_summary(
+    summary: PublicArbitrationSummary,
+    *,
+    coverage: tuple[PublicH2CoverageItem, ...],
+) -> tuple[str, int | None, int, int]:
+    a1 = coverage[0]
+    if (
+        summary.calendar_complete
+        or summary.calendar_scope != "unverified"
+        or summary.calendar_start_year is not None
+        or summary.calendar_end_year is not None
+        or summary.calendar_evidence_version is not None
+        or summary.zero_years_proven
+    ):
+        raise ValueError("invalid policy-v3 unverified calendar")
+    if (summary.observed_start_year is None) != (summary.observed_end_year is None):
+        raise ValueError("invalid policy-v3 observed year bounds")
+    if (
+        summary.observed_start_year is not None
+        and summary.observed_start_year > summary.observed_end_year
+    ):
+        raise ValueError("invalid policy-v3 observed year bounds")
+    if (summary.observed_start_year is None) != (
+        summary.unique_case_count == summary.unknown_year_count
+    ):
+        raise ValueError("policy-v3 observed bounds disagree with known population")
+    if summary.unknown_year_count > summary.unique_case_count:
+        raise ValueError("invalid policy-v3 unknown-year count")
+    if (
+        summary.malformed_count > summary.rows_observed
+        or summary.unique_case_count > summary.rows_observed
+        or summary.duplicate_identical_count > summary.rows_observed
+        or summary.duplicate_conflict_count > summary.rows_observed // 2
+        or summary.malformed_count
+        + summary.unique_case_count
+        + summary.duplicate_identical_count
+        + 2 * summary.duplicate_conflict_count
+        > summary.rows_observed
+    ):
+        raise ValueError("invalid policy-v3 public counters")
+    if summary.completion_reason not in _ARBITRATION_COMPLETION_REASONS:
+        raise ValueError("invalid policy-v3 completion reason")
+    if summary.collection_complete != (summary.completion_reason == "complete"):
+        raise ValueError("invalid policy-v3 collection completeness")
+    if summary.collection_complete and (
+        summary.malformed_count != 0
+        or summary.duplicate_conflict_count != 0
+        or summary.unique_case_count + summary.duplicate_identical_count
+        != summary.rows_observed
+    ):
+        raise ValueError("complete policy-v3 counters do not conserve rows")
+    if (
+        summary.source_total is None
+        or summary.source_total < summary.rows_observed
+        or (
+            summary.source_total <= _MAX_ARBITRATION_ROWS
+            and summary.rows_observed != summary.source_total
+        )
+        or (
+            summary.source_total > _MAX_ARBITRATION_ROWS
+            and summary.rows_observed == 0
+        )
+        or (
+            summary.collection_complete
+            and summary.source_total != summary.rows_observed
+        )
+    ):
+        raise ValueError("invalid policy-v3 source population")
+    population_scope = (
+        "complete_collection" if summary.collection_complete else "returned_slice"
+    )
+    if (
+        a1.population_scope != population_scope
+        or a1.total != summary.source_total
+        or a1.returned != summary.rows_observed
+        or a1.eligible != summary.unique_case_count
+    ):
+        raise ValueError("policy-v3 summary and coverage disagree")
+    return population_scope, summary.source_total, summary.rows_observed, summary.unique_case_count
+
+
+def _validate_policy_v3_views(response: "CompanyPublicH2Response") -> None:
+    coverage = _arbitration_coverage(response)
+    a1, a2, a3, a4, a5 = _arbitration_values(response)
+    if not isinstance(a1, PublicA1) or not isinstance(a2, PublicA2) or not isinstance(a3, PublicA3) or not isinstance(a4, PublicA4):
+        raise ValueError("policy-v3 admitted collection requires A1-A4")
+    overflow = (
+        a5 is None
+        and coverage[4].state == "failed"
+        and coverage[4].population_scope == "returned_slice"
+        and coverage[4].eligible is None
+        and coverage[4].limitation_codes == ("opponent_group_cap_exhausted",)
+    )
+    if a5 is None and not overflow:
+        raise ValueError("policy-v3 A5 is missing")
+    if a5 is not None and not isinstance(a5, PublicA5):
+        raise ValueError("invalid policy-v3 A5")
+
+    summaries = [a1.summary, a2.summary, a3.summary, a4.summary]
+    if isinstance(a5, PublicA5):
+        summaries.append(a5.summary)
+    if any(summary != summaries[0] for summary in summaries[1:]):
+        raise ValueError("policy-v3 summaries disagree")
+    population_scope, source_total, rows_received, denominator = _validate_summary(
+        summaries[0], coverage=coverage,
+    )
+    if any(
+        item.population_scope != population_scope
+        or item.total != source_total
+        or item.returned != rows_received
+        for item in coverage[:4]
+    ):
+        raise ValueError("policy-v3 coverage evidence disagrees")
+    if coverage[1].eligible != denominator or coverage[2].eligible != denominator:
+        raise ValueError("policy-v3 A1-A3 denominators disagree")
+    if overflow and (
+        coverage[4].total != source_total
+        or coverage[4].returned != rows_received
+    ):
+        raise ValueError("policy-v3 A5 overflow evidence disagrees")
+
+    case_fingerprints: dict[str, dict[str, object]] = {}
+    visible_case_details: dict[str, PublicSafeCaseDetail] = {}
+    def remember(
+        values: tuple[PublicSafeCaseDetail, ...],
+        *,
+        a4_order: bool = False,
+    ) -> None:
+        if a4_order:
+            _validate_a4_case_sequence(values)
+        else:
+            _validate_case_sequence(values)
+        for item in values:
+            _public_id_ordinal(
+                item.case_public_id,
+                _CASE_PUBLIC_ID,
+                denominator,
+            )
+            dumped = item.model_dump(mode="json")
+            previous = case_fingerprints.setdefault(item.case_public_id, dumped)
+            if previous != dumped:
+                raise ValueError("policy-v3 case detail changed across views")
+            visible_case_details.setdefault(item.case_public_id, item)
+
+    known_years = tuple(bucket.year for bucket in a1.buckets if bucket.year is not None)
+    if known_years != tuple(sorted(set(known_years))) or len(known_years) > 10:
+        raise ValueError("policy-v3 A1 years are not ordered")
+    unknown_buckets = tuple(bucket for bucket in a1.buckets if bucket.year is None)
+    if len(unknown_buckets) > 1 or (unknown_buckets and a1.buckets[-1] is not unknown_buckets[0]):
+        raise ValueError("policy-v3 A1 unknown year bucket is invalid")
+    if a1.displayed_start_year != (known_years[0] if known_years else None) or a1.displayed_end_year != (known_years[-1] if known_years else None):
+        raise ValueError("policy-v3 A1 displayed bounds are invalid")
+    if a1.all_time_case_count != denominator:
+        raise ValueError("policy-v3 A1 all-time count is invalid")
+    if (denominator == 0) != (not a1.buckets):
+        raise ValueError("policy-v3 A1 empty population is invalid")
+    role_order = ("plaintiff", "respondent", "other", "unattributed")
+    displayed_total = 0
+    displayed_role_counts = {role: 0 for role in role_order}
+    for bucket in a1.buckets:
+        counts = (
+            bucket.plaintiff_count,
+            bucket.respondent_count,
+            bucket.other_count,
+            bucket.unattributed_count,
+        )
+        if bucket.total_count == 0 or bucket.total_count != sum(counts):
+            raise ValueError("policy-v3 A1 bucket does not conserve cases")
+        displayed_total += bucket.total_count
+        for role, count in zip(role_order, counts, strict=True):
+            displayed_role_counts[role] += count
+        if tuple(item.role for item in bucket.role_details) != role_order:
+            raise ValueError("policy-v3 A1 role order is invalid")
+        for role, count, detail in zip(role_order, counts, bucket.role_details, strict=True):
+            _validate_scope(
+                detail.scope,
+                population_scope=population_scope,
+                source_total=source_total,
+                rows_received=rows_received,
+                eligible_total=count,
+                noun="дел",
+            )
+            if len(detail.cases) != detail.scope.shown or any(
+                item.role != role or item.year != bucket.year for item in detail.cases
+            ):
+                raise ValueError("policy-v3 A1 details disagree")
+            remember(detail.cases)
+    if displayed_total > denominator:
+        raise ValueError("policy-v3 A1 displayed population is too large")
+    if unknown_buckets and unknown_buckets[0].total_count != summaries[0].unknown_year_count:
+        raise ValueError("policy-v3 A1 unknown-year count disagrees")
+    if not unknown_buckets and summaries[0].unknown_year_count:
+        raise ValueError("policy-v3 A1 unknown-year bucket is missing")
+    known_population = denominator - summaries[0].unknown_year_count
+    if bool(known_years) != (known_population > 0):
+        raise ValueError("policy-v3 A1 observed bounds are invalid")
+    if known_years:
+        displayed_known_population = displayed_total - (
+            unknown_buckets[0].total_count if unknown_buckets else 0
+        )
+        if (
+            summaries[0].observed_end_year != known_years[-1]
+            or summaries[0].observed_start_year is None
+            or (
+                displayed_known_population == known_population
+                and summaries[0].observed_start_year != known_years[0]
+            )
+            or (
+                displayed_known_population < known_population
+                and (
+                    len(known_years) != 10
+                    or summaries[0].observed_start_year >= known_years[0]
+                )
+            )
+        ):
+            raise ValueError("policy-v3 A1 observed bounds are invalid")
+
+    for view, expected_order, category_field in (
+        (a2, role_order, "role"),
+        (a3, ("won", "lost", "returned", "unknown"), "outcome"),
+    ):
+        if view.denominator != denominator or tuple(bar.category_id for bar in view.bars) != expected_order:
+            raise ValueError("policy-v3 count-bar order is invalid")
+        counts = tuple(bar.count for bar in view.bars)
+        if sum(counts) != denominator or tuple(bar.percent_decimal for bar in view.bars) != _expected_percentages(counts, denominator):
+            raise ValueError("policy-v3 count bars do not reconcile")
+        for bar in view.bars:
+            _validate_scope(
+                bar.scope,
+                population_scope=population_scope,
+                source_total=source_total,
+                rows_received=rows_received,
+                eligible_total=bar.count,
+                noun="дел",
+            )
+            if len(bar.cases) != bar.scope.shown or any(
+                getattr(item, category_field) != bar.category_id for item in bar.cases
+            ):
+                raise ValueError("policy-v3 count-bar details disagree")
+            remember(bar.cases)
+
+    a2_role_counts = {bar.category_id: bar.count for bar in a2.bars}
+    undisplayed_a1_cases = denominator - displayed_total
+    if any(
+        not (
+            displayed_role_counts[role]
+            <= a2_role_counts[role]
+            <= displayed_role_counts[role] + undisplayed_a1_cases
+        )
+        for role in role_order
+    ):
+        raise ValueError("policy-v3 A1 and A2 role totals disagree")
+    a3_outcome_counts = {bar.category_id: bar.count for bar in a3.bars}
+    nonparty_case_count = (
+        a2_role_counts["other"] + a2_role_counts["unattributed"]
+    )
+    if a3_outcome_counts["unknown"] < nonparty_case_count:
+        raise ValueError("policy-v3 role and outcome totals disagree")
+
+    if len(a4.currency_groups) > 1:
+        raise ValueError("policy-v3 A4 has more than one currency")
+    if a4.missing_amount_count > denominator or a4.missing_currency_count > denominator:
+        raise ValueError("policy-v3 A4 missing counters are invalid")
+    a4_eligible = coverage[3].eligible
+    if a4_eligible is None:
+        raise ValueError("policy-v3 A4 eligible count is missing")
+    if (
+        a4_eligible > denominator
+        or a4_eligible + a4.missing_amount_count > denominator
+        or a4_eligible + a4.missing_currency_count > denominator
+    ):
+        raise ValueError("policy-v3 A4 counters exceed case population")
+    if not a4.currency_groups:
+        if a4_eligible != 0:
+            raise ValueError("policy-v3 A4 group is missing")
+    else:
+        if a4_eligible == 0:
+            raise ValueError("policy-v3 A4 group is unexpected")
+        group = a4.currency_groups[0]
+        if group.source_currency_id != "RUB" or group.display_currency != "₽":
+            raise ValueError("policy-v3 A4 currency is invalid")
+        _validate_scope(
+            group.scope,
+            population_scope=population_scope,
+            source_total=source_total,
+            rows_received=rows_received,
+            eligible_total=a4_eligible,
+            noun="дел",
+        )
+        if len(group.cases) != group.scope.shown or len(group.case_geometries) != len(group.cases):
+            raise ValueError("policy-v3 A4 detail cardinality is invalid")
+        remember(group.cases, a4_order=True)
+        amounts = tuple(
+            _policy_v3_decimal(item.amount.source_decimal)
+            for item in group.cases
+            if item.amount is not None
+        )
+        if len(amounts) != len(group.cases):
+            raise ValueError("policy-v3 A4 case lacks a RUB amount")
+        expected_axis = (min((Decimal("0"), *amounts)), max((Decimal("0"), *amounts)))
+        if (
+            _policy_v3_decimal(group.axis.axis_min_decimal),
+            _policy_v3_decimal(group.axis.axis_max_decimal),
+        ) != expected_axis:
+            raise ValueError("policy-v3 A4 axis is invalid")
+        for detail, geometry in zip(group.cases, group.case_geometries, strict=True):
+            if (
+                geometry.case_public_id != detail.case_public_id
+                or _policy_v3_decimal(geometry.geometry.start_ratio_decimal) != 0
+                or _policy_v3_decimal(geometry.geometry.end_ratio_decimal)
+                != _policy_v3_decimal(detail.amount.source_decimal)  # type: ignore[union-attr]
+            ):
+                raise ValueError("policy-v3 A4 geometry is invalid")
+
+    if overflow:
+        if summaries[0].collection_complete:
+            raise ValueError("policy-v3 opponent overflow cannot be complete")
+    else:
+        assert isinstance(a5, PublicA5)
+        a5_eligible = coverage[4].eligible
+        if a5_eligible is None:
+            raise ValueError("policy-v3 A5 eligible count is missing")
+        if a5_eligible > 20_000:
+            raise ValueError("policy-v3 A5 eligible count exceeds registry cap")
+        _validate_scope(
+            a5.scope,
+            population_scope=population_scope,
+            source_total=source_total,
+            rows_received=rows_received,
+            eligible_total=a5_eligible,
+            noun="сторон",
+        )
+        cases_with_safe_opponent = denominator - a5.cases_without_safe_opponent
+        if (
+            len(a5.groups) != a5.scope.shown
+            or a5.cases_without_safe_opponent > denominator
+            or a5.cases_without_safe_opponent < nonparty_case_count
+            or a5.multi_opponent_case_count > cases_with_safe_opponent
+            or (a5_eligible == 0) != (
+                a5.cases_without_safe_opponent == denominator
+            )
+        ):
+            raise ValueError("policy-v3 A5 counters are invalid")
+        group_keys = tuple((-group.case_count, group.opponent_public_id) for group in a5.groups)
+        if group_keys != tuple(sorted(group_keys)) or len({group.opponent_public_id for group in a5.groups}) != len(a5.groups):
+            raise ValueError("policy-v3 A5 group order is invalid")
+        visible_memberships: dict[str, int] = {}
+        for group in a5.groups:
+            ordinal = _public_id_ordinal(
+                group.opponent_public_id,
+                _OPPONENT_PUBLIC_ID,
+                a5_eligible,
+            )
+            if (
+                group.display_kind != "masked_unknown"
+                or group.display_name != f"Сторона скрыта {ordinal}"
+                or group.case_count == 0
+                or group.case_count > cases_with_safe_opponent
+                or any(
+                    item.role not in {"plaintiff", "respondent"}
+                    for item in group.cases
+                )
+            ):
+                raise ValueError("policy-v3 opponent is not fully masked")
+            _validate_scope(
+                group.case_scope,
+                population_scope=population_scope,
+                source_total=source_total,
+                rows_received=rows_received,
+                eligible_total=group.case_count,
+                noun="дел",
+            )
+            if len(group.cases) != group.case_scope.shown:
+                raise ValueError("policy-v3 A5 case scope disagrees")
+            remember(group.cases)
+            for item in group.cases:
+                visible_memberships[item.case_public_id] = (
+                    visible_memberships.get(item.case_public_id, 0) + 1
+                )
+        visible_safe_cases = len(visible_memberships)
+        visible_multi_cases = sum(
+            count >= 2 for count in visible_memberships.values()
+        )
+        total_memberships = sum(group.case_count for group in a5.groups)
+        if (
+            a5.cases_without_safe_opponent
+            > denominator - visible_safe_cases
+            or a5.multi_opponent_case_count < visible_multi_cases
+            or total_memberships
+            > cases_with_safe_opponent
+            + a5.multi_opponent_case_count * (len(a5.groups) - 1)
+            or (
+                a5_eligible <= 20
+                and total_memberships
+                < cases_with_safe_opponent + a5.multi_opponent_case_count
+            )
+        ):
+            raise ValueError("policy-v3 A5 counters are invalid")
+        all_memberships_visible = (
+            a5_eligible <= 20
+            and all(group.case_count <= 20 for group in a5.groups)
+        )
+        if all_memberships_visible and (
+            a5.cases_without_safe_opponent
+            != denominator - visible_safe_cases
+            or a5.multi_opponent_case_count != visible_multi_cases
+        ):
+            raise ValueError("policy-v3 A5 visible memberships disagree")
+
+    visible_case_ids = set(case_fingerprints)
+    visible_amount_case_ids = {
+        case_id
+        for case_id, detail in case_fingerprints.items()
+        if detail["amount"] is not None
+    }
+    if (
+        a4_eligible < len(visible_amount_case_ids)
+        or denominator - a4_eligible
+        < len(visible_case_ids - visible_amount_case_ids)
+        or (
+            len(visible_case_ids) == denominator
+            and a4_eligible != len(visible_amount_case_ids)
+        )
+    ):
+        raise ValueError("policy-v3 A4 visible population disagrees")
+
+    for bucket in a1.buckets:
+        counts = (
+            bucket.plaintiff_count,
+            bucket.respondent_count,
+            bucket.other_count,
+            bucket.unattributed_count,
+        )
+        for role, count, detail in zip(
+            role_order, counts, bucket.role_details, strict=True,
+        ):
+            matching = tuple(sorted(
+                (
+                    case
+                    for case in visible_case_details.values()
+                    if case.year == bucket.year and case.role == role
+                ),
+                key=_detail_order_key,
+            ))
+            expected = tuple(
+                item.case_public_id for item in matching[:min(count, 20)]
+            )
+            actual = tuple(item.case_public_id for item in detail.cases)
+            if len(matching) > count or actual != expected:
+                raise ValueError("policy-v3 A1 visible membership disagrees")
+    for view, category_field in ((a2, "role"), (a3, "outcome")):
+        for bar in view.bars:
+            matching = tuple(sorted(
+                (
+                    case
+                    for case in visible_case_details.values()
+                    if getattr(case, category_field) == bar.category_id
+                ),
+                key=_detail_order_key,
+            ))
+            expected = tuple(
+                item.case_public_id for item in matching[:min(bar.count, 20)]
+            )
+            actual = tuple(item.case_public_id for item in bar.cases)
+            if len(matching) > bar.count or actual != expected:
+                raise ValueError("policy-v3 count-bar visible membership disagrees")
+    visible_amount_details = tuple(sorted(
+        (
+            case
+            for case in visible_case_details.values()
+            if case.amount is not None
+        ),
+        key=_a4_detail_order_key,
+    ))
+    expected_a4 = tuple(
+        item.case_public_id
+        for item in visible_amount_details[:min(a4_eligible, 20)]
+    )
+    actual_a4 = (
+        tuple(
+            item.case_public_id
+            for item in a4.currency_groups[0].cases
+        )
+        if a4.currency_groups
+        else ()
+    )
+    if actual_a4 != expected_a4:
+        raise ValueError("policy-v3 A4 visible membership disagrees")
+
+    emitted_codes = {
+        item.code for item in _arbitration_limitations(response)
+    }
+    if len(visible_case_ids) == denominator:
+        if (
+            "arbitration_date_invalid" in emitted_codes
+            and all(
+                item.start_date is not None and item.update_date is not None
+                for item in visible_case_details.values()
+            )
+        ):
+            raise ValueError(
+                "policy-v3 invalid-date limitation lacks a visible candidate"
+            )
+        if (
+            "arbitration_year_conflict" in emitted_codes
+            and not any(
+                item.year is None and item.start_date is not None
+                for item in visible_case_details.values()
+            )
+        ):
+            raise ValueError(
+                "policy-v3 year-conflict limitation lacks a visible candidate"
+            )
+        if (
+            "arbitration_date_inversion" in emitted_codes
+            and not any(
+                item.start_date is not None
+                and item.update_date is not None
+                and item.start_date > item.update_date
+                for item in visible_case_details.values()
+            )
+        ):
+            raise ValueError(
+                "policy-v3 date-inversion limitation lacks a visible candidate"
+            )
+    first_number_codes = emitted_codes & {
+        "arbitration_first_number_unavailable",
+        "arbitration_first_number_identity_collision",
+    }
+    visible_hidden_number_count = sum(
+        item.case_number is None for item in visible_case_details.values()
+    )
+    undisplayed_case_count = denominator - len(visible_case_ids)
+    if (
+        visible_hidden_number_count + undisplayed_case_count
+        < len(first_number_codes)
+    ):
+        raise ValueError(
+            "policy-v3 first-number limitation population is impossible"
+        )
+    for detail in case_fingerprints.values():
+        year = detail["year"]
+        if year is None:
+            if summaries[0].unknown_year_count == 0:
+                raise ValueError("policy-v3 visible unknown year disagrees")
+        elif (
+            summaries[0].observed_start_year is None
+            or summaries[0].observed_end_year is None
+            or year < summaries[0].observed_start_year
+            or year > summaries[0].observed_end_year
+        ):
+            raise ValueError("policy-v3 visible year is outside observed bounds")
+        elif year not in known_years and (
+            len(known_years) != 10 or year > known_years[0]
+        ):
+            raise ValueError("policy-v3 visible year contradicts A1 top years")
+        start = _policy_v3_date(detail["start_date"])  # type: ignore[arg-type]
+        update = _policy_v3_date(detail["update_date"])  # type: ignore[arg-type]
+        if (
+            start is not None
+            and update is not None
+            and start > update
+            and "arbitration_date_inversion" not in emitted_codes
+        ):
+            raise ValueError("policy-v3 visible date inversion is unexplained")
+        if (
+            detail["case_number"] is None
+            and not emitted_codes & {
+                "arbitration_first_number_unavailable",
+                "arbitration_first_number_identity_collision",
+            }
+        ):
+            raise ValueError("policy-v3 hidden case number is unexplained")
+
+    expected_states: tuple[str, ...]
+    if summaries[0].collection_complete:
+        expected_states = (
+            ("available_empty",) * 5
+            if denominator == 0
+            else (
+                "available",
+                "available",
+                "available",
+                "available" if a4_eligible == denominator else "partial",
+                "available" if isinstance(a5, PublicA5) and coverage[4].eligible else "available_empty",
+            )
+        )
+    else:
+        expected_states = ("partial", "partial", "partial", "partial", "failed" if overflow else "partial")
+    if tuple(item.state for item in coverage) != expected_states:
+        raise ValueError("policy-v3 coverage states are invalid")
+
+
+def _validate_cap_fallback(response: "CompanyPublicH2Response") -> None:
+    coverage = _arbitration_coverage(response)
+    if any(_arbitration_values(response)):
+        raise ValueError("policy-v3 projection-cap fallback retained a block")
+    if any(
+        item.state != "failed"
+        or item.limitation_codes != (_ARBITRATION_CAP_CODE,)
+        for item in coverage
+    ):
+        raise ValueError("invalid policy-v3 projection-cap fallback")
+    limitations = _arbitration_limitations(response)
+    if (
+        len(limitations) != 1
+        or limitations[0].code != _ARBITRATION_CAP_CODE
+        or limitations[0].block_id is not None
+        or limitations[0].field_id is not None
+    ):
+        raise ValueError("invalid policy-v3 projection-cap limitation")
+    first = coverage[0]
+    if (
+        first.population_scope not in {"complete_collection", "returned_slice"}
+        or first.total is None
+        or first.returned is None
+        or first.returned > _MAX_ARBITRATION_ROWS
+        or first.total > _MAX_SOURCE_TOTAL
+        or first.total < first.returned
+        or (
+            first.total <= _MAX_ARBITRATION_ROWS
+            and first.returned != first.total
+        )
+        or (
+            first.total > _MAX_ARBITRATION_ROWS
+            and first.returned == 0
+        )
+        or (
+            first.population_scope == "complete_collection"
+            and first.total != first.returned
+        )
+    ):
+        raise ValueError("invalid policy-v3 projection-cap evidence")
+    if any(
+        item.population_scope != first.population_scope
+        or item.total != first.total
+        or item.returned != first.returned
+        for item in coverage[1:]
+    ):
+        raise ValueError("projection-cap fallback changed common evidence")
+    if (
+        first.eligible is None
+        or first.eligible > _MAX_ARBITRATION_ROWS
+        or first.eligible > first.returned
+        or coverage[1].eligible != first.eligible
+        or coverage[2].eligible != first.eligible
+    ):
+        raise ValueError("projection-cap fallback lost A1-A3 counts")
+    if (
+        coverage[3].eligible is None
+        or coverage[3].eligible > _MAX_ARBITRATION_ROWS
+        or coverage[3].eligible > first.eligible
+    ):
+        raise ValueError("projection-cap fallback has invalid A4 count")
+    if coverage[4].eligible is None:
+        if coverage[4].population_scope != "returned_slice":
+            raise ValueError("projection-cap fallback has invalid A5 count")
+    elif (
+        coverage[4].eligible > 20_000
+        or (coverage[4].eligible > 0 and first.eligible == 0)
+    ):
+        raise ValueError("projection-cap fallback has invalid A5 count")
+
+
+def _validate_source_less_v3(response: "CompanyPublicH2Response") -> None:
+    _validate_arbitration_limitation_catalog(response)
+    if len(response.sources) != 2 or not _valid_frozen_source_prefix(response):
+        raise ValueError("invalid source-less policy-v3 source prefix")
+    if any(_arbitration_values(response)):
+        raise ValueError("source-less policy-v3 response owns arbitration facts")
+    coverage = _arbitration_coverage(response)
+    reasons = {code for item in coverage for code in item.limitation_codes}
+    if len(reasons) != 1:
+        raise ValueError("source-less policy-v3 reasons disagree")
+    reason = next(iter(reasons))
+    expected_state = _ARBITRATION_PRE_RESULT_REASONS.get(reason)
+    if expected_state is None or any(
+        item.state != expected_state
+        or item.population_scope != "not_applicable"
+        or item.total is not None
+        or item.returned is not None
+        or item.eligible is not None
+        or item.limitation_codes != (reason,)
+        for item in coverage
+    ):
+        raise ValueError("invalid source-less policy-v3 coverage")
+    limitations = _arbitration_limitations(response)
+    if (
+        len(limitations) != 1
+        or limitations[0].code != reason
+        or limitations[0].block_id is not None
+        or limitations[0].field_id is not None
+    ):
+        raise ValueError("invalid source-less policy-v3 limitation")
+
+
+def _validate_bound_v3(response: "CompanyPublicH2Response") -> None:
+    _validate_arbitration_limitation_catalog(response)
+    if len(response.sources) != 3 or not _valid_frozen_source_prefix(response):
+        raise ValueError("invalid bound policy-v3 source prefix")
+    source = response.sources[2]
+    if not _is_exact_bound_arbitration_source(source):
+        raise ValueError("invalid bound policy-v3 source")
+    coverage = _arbitration_coverage(response)
+    if all(value is None for value in _arbitration_values(response)):
+        if all(item.limitation_codes == (_ARBITRATION_CAP_CODE,) for item in coverage):
+            _validate_cap_fallback(response)
+            return
+        reasons = {code for item in coverage for code in item.limitation_codes}
+        if len(reasons) != 1 or next(iter(reasons)) not in _ARBITRATION_BOUND_FAILURE_REASONS:
+            raise ValueError("invalid bound policy-v3 failure reason")
+        reason = next(iter(reasons))
+        if any(
+            item.state != "failed"
+            or item.population_scope != "not_applicable"
+            or item.total is not None
+            or item.returned is not None
+            or item.eligible is not None
+            or item.limitation_codes != (reason,)
+            for item in coverage
+        ):
+            raise ValueError("invalid bound policy-v3 failed coverage")
+        limitations = _arbitration_limitations(response)
+        if (
+            len(limitations) != 1
+            or limitations[0].code != reason
+            or limitations[0].block_id is not None
+            or limitations[0].field_id is not None
+        ):
+            raise ValueError("invalid bound policy-v3 failed limitation")
+        return
+    _validate_policy_v3_views(response)
+    referenced = {
+        code for item in coverage for code in item.limitation_codes
+        if code in _ARBITRATION_LIMITATION_CODES
+    }
+    emitted = {item.code for item in _arbitration_limitations(response)}
+    if emitted != referenced or _ARBITRATION_CAP_CODE in emitted:
+        raise ValueError("policy-v3 arbitration limitations are not exact")
+    a1 = response.blocks.arbitration_a1
+    a4 = response.blocks.arbitration_a4
+    assert isinstance(a1, PublicA1) and isinstance(a4, PublicA4)
+    summary = a1.summary
+    a4_eligible = coverage[3].eligible
+    assert a4_eligible is not None
+
+    arbitration_items = _arbitration_limitations(response)
+    expected_root_order = tuple(sorted(
+        emitted,
+        key=lambda code: (
+            0 if code in _ARBITRATION_A1_LIMITATIONS else
+            1 if code in _ARBITRATION_A4_LIMITATIONS else
+            2,
+            code,
+        ),
+    ))
+    if tuple(item.code for item in arbitration_items) != expected_root_order:
+        raise ValueError("policy-v3 arbitration limitation order is invalid")
+
+    def limitation_blocks(code: str) -> tuple[str, ...]:
+        if code in _ARBITRATION_A1_LIMITATIONS:
+            return ("arbitration_a1",)
+        if code in _ARBITRATION_A4_LIMITATIONS:
+            return ("arbitration_a4",)
+        return _ARBITRATION_BLOCKS
+
+    overflow = response.blocks.arbitration_a5 is None
+    for coverage_item in coverage:
+        expected_codes = tuple(
+            code
+            for code in _ARBITRATION_LIMITATION_PRECEDENCE
+            if code in emitted and coverage_item.block_id in limitation_blocks(code)
+        )
+        if overflow and coverage_item.block_id == "arbitration_a5":
+            expected_codes = ("opponent_group_cap_exhausted",)
+        if coverage_item.limitation_codes != expected_codes:
+            raise ValueError("policy-v3 arbitration coverage linkage is invalid")
+
+    def require_exact(code: str, condition: bool) -> None:
+        if (code in emitted) != condition:
+            raise ValueError("policy-v3 inferred limitation semantics disagree")
+
+    require_exact("arbitration_calendar_unverified", True)
+    require_exact(
+        "arbitration_unknown_year",
+        summary.unknown_year_count > 0,
+    )
+    require_exact(
+        "arbitration_amount_missing",
+        a4.missing_amount_count > 0,
+    )
+    require_exact(
+        "arbitration_currency_missing",
+        a4.missing_currency_count > 0,
+    )
+    if bool(emitted & _ARBITRATION_A4_LIMITATIONS) != (
+        a4_eligible < summary.unique_case_count
+    ):
+        raise ValueError("policy-v3 inferred limitation semantics disagree")
+    if (
+        a4_eligible
+        + a4.missing_amount_count
+        + int("arbitration_amount_invalid" in emitted)
+        > summary.unique_case_count
+        or a4_eligible
+        + a4.missing_currency_count
+        + int("arbitration_currency_unidentified" in emitted)
+        + int("arbitration_currency_invalid" in emitted)
+        > summary.unique_case_count
+    ):
+        raise ValueError("policy-v3 A4 limitation population is invalid")
+    require_exact("malformed_rows", summary.malformed_count > 0)
+    require_exact(
+        "duplicate_conflict",
+        summary.duplicate_conflict_count > 0,
+    )
+    require_exact(
+        "source_total_exceeds_cap",
+        summary.source_total is not None
+        and summary.source_total > _MAX_ARBITRATION_ROWS,
+    )
+    require_exact(
+        "opponent_group_cap_exhausted",
+        response.blocks.arbitration_a5 is None,
+    )
+    if {"oversized_case", "storage_cap_exhausted"} <= emitted:
+        raise ValueError("policy-v3 storage boundary limitations conflict")
+    boundary_row_count = int(bool(
+        emitted & {"oversized_case", "storage_cap_exhausted"}
+    ))
+    classified_row_minimum = (
+        summary.malformed_count
+        + summary.unique_case_count
+        + summary.duplicate_identical_count
+        + 2 * summary.duplicate_conflict_count
+        + boundary_row_count
+    )
+    if (
+        classified_row_minimum > summary.rows_observed
+        or (
+            summary.duplicate_conflict_count == 0
+            and boundary_row_count == 0
+            and classified_row_minimum != summary.rows_observed
+        )
+    ):
+        raise ValueError("policy-v3 public row classification is invalid")
+    if summary.completion_reason in {
+        *_ARBITRATION_PRE_RESULT_REASONS,
+        *_ARBITRATION_BOUND_FAILURE_REASONS,
+    }:
+        raise ValueError("invalid admitted policy-v3 completion reason")
+    collection_codes = _ARBITRATION_COMPLETION_REASONS - {"complete"}
+    if summary.collection_complete:
+        if emitted & collection_codes:
+            raise ValueError("policy-v3 inferred limitation semantics disagree")
+    else:
+        ordered_emitted = tuple(
+            code
+            for code in _ARBITRATION_COMPLETION_PRECEDENCE[:-1]
+            if code in emitted
+        )
+        if (
+            not ordered_emitted
+            or summary.completion_reason != ordered_emitted[0]
+        ):
+            raise ValueError("policy-v3 completion precedence disagrees")
+    for item in arbitration_items:
+        expected_block = (
+            "arbitration_a1"
+            if item.code in _ARBITRATION_A1_LIMITATIONS
+            else "arbitration_a4"
+            if item.code in _ARBITRATION_A4_LIMITATIONS
+            else None
+        )
+        if item.block_id != expected_block or item.field_id is not None:
+            raise ValueError("policy-v3 arbitration limitation linkage is invalid")
+
+
 class CompanyPublicH2Response(PublicH2Model):
     contract_version: Literal["company_public_h2_v1"] = "company_public_h2_v1"
     projection_digest: str
@@ -948,7 +2232,7 @@ class CompanyPublicH2Response(PublicH2Model):
     breadcrumbs: tuple[PublicH2Breadcrumb, PublicH2Breadcrumb]
     primary_claim_cta: PublicH2ClaimCta
     @model_validator(mode="after")
-    def _valid(self) -> "CompanyPublicH2Response":
+    def _valid(self, info: ValidationInfo) -> "CompanyPublicH2Response":
         if not _DIGEST.fullmatch(self.projection_digest) or not _DIGEST.fullmatch(self.chart_facts_hash) or not _UUID.fullmatch(self.report_id) or not _PATH.fullmatch(self.canonical_path) or not _UTC.fullmatch(self.checked_at) or not _DATE.fullmatch(self.checked_date):
             raise ValueError("invalid public root")
         if not re.fullmatch(rf"/company/{re.escape(self.identity.inn)}-[a-z0-9]+(?:-[a-z0-9]+)*", self.canonical_path):
@@ -981,9 +2265,33 @@ class CompanyPublicH2Response(PublicH2Model):
         pairs = (("finance_f1", self.blocks.finance_f1), ("finance_f2", self.blocks.finance_f2), ("finance_f3", self.blocks.finance_f3), ("finance_f4", self.blocks.finance_f4), ("finance_f5", self.blocks.finance_f5), ("arbitration_a1", self.blocks.arbitration_a1), ("arbitration_a2", self.blocks.arbitration_a2), ("arbitration_a3", self.blocks.arbitration_a3), ("arbitration_a4", self.blocks.arbitration_a4), ("arbitration_a5", self.blocks.arbitration_a5))
         for block, value in pairs:
             state = next(item.state for item in self.coverage if item.block_id == block)
-            if (state in {"available", "partial"}) != (value is not None):
+            if (state in {"available", "available_empty", "partial"}) != (value is not None):
                 raise ValueError("coverage and block disagree")
-        if len(canonical_json_bytes(self.model_dump(mode="json"))) > 524288:
+        arbitration_sources = tuple(
+            item for item in self.sources if item.dataset == "arbitration"
+        )
+        exact_bound = (
+            len(arbitration_sources) == 1
+            and _is_exact_bound_arbitration_source(arbitration_sources[0])
+        )
+        no_arbitration_source = not arbitration_sources
+        if exact_bound:
+            if self.report_version != "3" or self.snapshot_capability != "card_v2":
+                raise ValueError("invalid policy-v3 branch discriminator")
+            _validate_bound_v3(self)
+        elif (
+            self.report_version == "3"
+            and self.snapshot_capability == "card_v2"
+            and no_arbitration_source
+            and all(value is None for value in _arbitration_values(self))
+        ):
+            _validate_source_less_v3(self)
+        elif _v3_semantic_signal(self):
+            raise ValueError("invalid policy-v3 branch discriminator")
+        skip_size_cap = bool(
+            info.context and info.context.get("skip_public_h2_size_cap") is True
+        )
+        if not skip_size_cap and len(canonical_json_bytes(self.model_dump(mode="json"))) > 524288:
             raise ValueError("public_projection_too_large")
         return self
 

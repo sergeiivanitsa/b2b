@@ -22,6 +22,7 @@ _SNAPSHOT_SCHEMA_VERSIONS = frozenset(
         "company_report_snapshot_v2_legacy",
         "company_card_v2_snapshot_v1",
         "company_card_v2_snapshot_v2",
+        "company_card_v2_snapshot_v3",
     }
 )
 

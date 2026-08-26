@@ -1,5 +1,5 @@
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from product_api.settings import Settings
 
@@ -34,6 +34,30 @@ def test_company_report_worker_settings_have_safe_defaults():
     assert settings.company_card_v2_narrative_concurrency == 0
     assert settings.company_card_v2_narrative_gateway_timeout_seconds == 20
     assert settings.company_card_v2_narrative_max_output_tokens == 600
+    assert settings.company_card_v2_arbitration_collection_enabled is False
+    assert settings.company_card_v2_arbitration_mask_active_key_id is None
+    assert settings.company_card_v2_arbitration_mask_keyring_json is None
+
+
+def test_arbitration_settings_preserve_unparsed_values_and_mask_keyring_secret() -> None:
+    raw_secret = '{"active_key":"private-keyring-marker"}'
+    settings = Settings.model_validate(
+        _base_settings_payload(
+            COMPANY_CARD_V2_ARBITRATION_COLLECTION_ENABLED=True,
+            COMPANY_CARD_V2_ARBITRATION_MASK_ACTIVE_KEY_ID=" active_key ",
+            COMPANY_CARD_V2_ARBITRATION_MASK_KEYRING_JSON=raw_secret,
+        )
+    )
+
+    assert settings.company_card_v2_arbitration_collection_enabled is True
+    assert settings.company_card_v2_arbitration_mask_active_key_id == " active_key "
+    assert isinstance(settings.company_card_v2_arbitration_mask_keyring_json, SecretStr)
+    assert (
+        settings.company_card_v2_arbitration_mask_keyring_json.get_secret_value()
+        == raw_secret
+    )
+    assert raw_secret not in repr(settings)
+    assert raw_secret not in settings.model_dump_json()
 
 
 @pytest.mark.parametrize(

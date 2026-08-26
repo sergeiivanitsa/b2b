@@ -78,6 +78,135 @@ export interface PublicH2FinanceF3Dto extends PublicH2ViewDto { readonly view_id
 export interface PublicH2FinanceF4Dto extends PublicH2ViewDto { readonly view_id: 'finance_f4_profit_per_100'; readonly year: StrictJsonInteger; readonly revenue_2110: PublicH2MoneyDto; readonly gross_2100: PublicH2MoneyDto; readonly operating_2200: PublicH2MoneyDto; readonly net_2400: PublicH2MoneyDto; readonly revenue_per_100_decimal: '100' | null; readonly gross_per_100_decimal: string | null; readonly operating_per_100_decimal: string | null; readonly net_per_100_decimal: string | null; readonly mode: 'per_100' | 'denominator_unavailable'; readonly axis: PublicH2AxisDto | null; readonly geometry_by_metric: readonly [PublicH2IntervalDto | null, PublicH2IntervalDto | null, PublicH2IntervalDto | null, PublicH2IntervalDto | null] }
 export interface PublicH2FinanceF5CellDto extends StrictJsonObject { readonly year: StrictJsonInteger; readonly value: PublicH2MoneyDto | null; readonly yoy_decimal: string | null }
 export interface PublicH2FinanceF5Dto extends PublicH2ViewDto { readonly view_id: 'finance_f5_yearly_table'; readonly anchor_year: StrictJsonInteger; readonly years: readonly StrictJsonInteger[]; readonly rows: readonly { readonly metric_id: '2110' | '1600' | '1250' | '1240' | '1230' | '1210' | '1500' | '1300' | '2400'; readonly label: string; readonly cells: readonly PublicH2FinanceF5CellDto[] }[] }
+export type PublicH2ArbitrationRoleDto = 'plaintiff' | 'respondent' | 'other' | 'unattributed'
+export type PublicH2ArbitrationOutcomeDto = 'won' | 'lost' | 'returned' | 'unknown'
+export interface PublicH2ArbitrationSummaryDto extends StrictJsonObject {
+  readonly source_total: StrictJsonInteger | null
+  readonly rows_observed: StrictJsonInteger
+  readonly unique_case_count: StrictJsonInteger
+  readonly malformed_count: StrictJsonInteger
+  readonly duplicate_identical_count: StrictJsonInteger
+  readonly duplicate_conflict_count: StrictJsonInteger
+  readonly collection_complete: boolean
+  readonly completion_reason: string
+  readonly calendar_complete: boolean
+  readonly calendar_scope: 'unverified' | 'all_time' | 'bounded_interval'
+  readonly calendar_start_year: StrictJsonInteger | null
+  readonly calendar_end_year: StrictJsonInteger | null
+  readonly calendar_evidence_version: string | null
+  readonly observed_start_year: StrictJsonInteger | null
+  readonly observed_end_year: StrictJsonInteger | null
+  readonly unknown_year_count: StrictJsonInteger
+  readonly zero_years_proven: boolean
+}
+export interface PublicH2DetailScopeDto extends StrictJsonObject {
+  readonly population_scope: 'complete_collection' | 'returned_slice'
+  readonly source_total: StrictJsonInteger | null
+  readonly rows_received: StrictJsonInteger
+  readonly eligible_total: StrictJsonInteger
+  readonly shown: StrictJsonInteger
+  readonly cap: StrictJsonInteger
+  readonly label: string
+}
+export interface PublicH2SafeOpponentDto extends StrictJsonObject {
+  readonly opponent_public_id: string
+  readonly display_name: string
+  readonly display_kind: 'legal' | 'state' | 'masked_natural' | 'masked_unknown'
+}
+export interface PublicH2CaseAmountDto extends StrictJsonObject {
+  readonly source_decimal: string
+  readonly source_currency_id: string
+  readonly display_exact: string
+}
+export interface PublicH2SafeCaseDetailDto extends StrictJsonObject {
+  readonly case_public_id: string
+  readonly case_number: string | null
+  readonly year: StrictJsonInteger | null
+  readonly role: PublicH2ArbitrationRoleDto
+  readonly outcome: PublicH2ArbitrationOutcomeDto
+  readonly result_detail: string | null
+  readonly amount: PublicH2CaseAmountDto | null
+  readonly start_date: string | null
+  readonly update_date: string | null
+  readonly days_to_last_update: StrictJsonInteger | null
+  readonly instance_count: StrictJsonInteger | null
+  readonly courts: readonly string[]
+  readonly opponents: readonly PublicH2SafeOpponentDto[]
+  readonly public_case_url: string | null
+}
+export interface PublicH2RoleDetailDto extends StrictJsonObject {
+  readonly role: PublicH2ArbitrationRoleDto
+  readonly scope: PublicH2DetailScopeDto
+  readonly cases: readonly PublicH2SafeCaseDetailDto[]
+}
+export interface PublicH2A1YearBucketDto extends StrictJsonObject {
+  readonly year: StrictJsonInteger | null
+  readonly plaintiff_count: StrictJsonInteger
+  readonly respondent_count: StrictJsonInteger
+  readonly other_count: StrictJsonInteger
+  readonly unattributed_count: StrictJsonInteger
+  readonly total_count: StrictJsonInteger
+  readonly role_details: readonly [PublicH2RoleDetailDto, PublicH2RoleDetailDto, PublicH2RoleDetailDto, PublicH2RoleDetailDto]
+}
+export interface PublicH2ArbitrationA1Dto extends PublicH2ViewDto {
+  readonly view_id: 'arbitration_a1_activity'
+  readonly summary: PublicH2ArbitrationSummaryDto
+  readonly displayed_start_year: StrictJsonInteger | null
+  readonly displayed_end_year: StrictJsonInteger | null
+  readonly buckets: readonly PublicH2A1YearBucketDto[]
+  readonly all_time_case_count: StrictJsonInteger
+}
+export interface PublicH2CountBarDto extends StrictJsonObject {
+  readonly category_id: PublicH2ArbitrationRoleDto | PublicH2ArbitrationOutcomeDto
+  readonly count: StrictJsonInteger
+  readonly percent_decimal: string | null
+  readonly scope: PublicH2DetailScopeDto
+  readonly cases: readonly PublicH2SafeCaseDetailDto[]
+}
+export interface PublicH2ArbitrationA2Dto extends PublicH2ViewDto {
+  readonly view_id: 'arbitration_a2_roles'
+  readonly summary: PublicH2ArbitrationSummaryDto
+  readonly denominator: StrictJsonInteger
+  readonly bars: readonly [PublicH2CountBarDto, PublicH2CountBarDto, PublicH2CountBarDto, PublicH2CountBarDto]
+}
+export interface PublicH2ArbitrationA3Dto extends PublicH2ViewDto {
+  readonly view_id: 'arbitration_a3_outcomes'
+  readonly summary: PublicH2ArbitrationSummaryDto
+  readonly denominator: StrictJsonInteger
+  readonly bars: readonly [PublicH2CountBarDto, PublicH2CountBarDto, PublicH2CountBarDto, PublicH2CountBarDto]
+}
+export interface PublicH2A4CaseGeometryDto extends StrictJsonObject { readonly case_public_id: string; readonly geometry: PublicH2IntervalDto }
+export interface PublicH2A4CurrencyGroupDto extends StrictJsonObject {
+  readonly source_currency_id: string
+  readonly display_currency: string
+  readonly axis: PublicH2AxisDto
+  readonly case_geometries: readonly PublicH2A4CaseGeometryDto[]
+  readonly scope: PublicH2DetailScopeDto
+  readonly cases: readonly PublicH2SafeCaseDetailDto[]
+}
+export interface PublicH2ArbitrationA4Dto extends PublicH2ViewDto {
+  readonly view_id: 'arbitration_a4_case_amounts'
+  readonly summary: PublicH2ArbitrationSummaryDto
+  readonly currency_groups: readonly PublicH2A4CurrencyGroupDto[]
+  readonly missing_amount_count: StrictJsonInteger
+  readonly missing_currency_count: StrictJsonInteger
+}
+export interface PublicH2A5OpponentGroupDto extends StrictJsonObject {
+  readonly opponent_public_id: string
+  readonly display_name: string
+  readonly display_kind: 'legal' | 'state' | 'masked_natural' | 'masked_unknown'
+  readonly case_count: StrictJsonInteger
+  readonly case_scope: PublicH2DetailScopeDto
+  readonly cases: readonly PublicH2SafeCaseDetailDto[]
+}
+export interface PublicH2ArbitrationA5Dto extends PublicH2ViewDto {
+  readonly view_id: 'arbitration_a5_opponents'
+  readonly summary: PublicH2ArbitrationSummaryDto
+  readonly scope: PublicH2DetailScopeDto
+  readonly groups: readonly PublicH2A5OpponentGroupDto[]
+  readonly cases_without_safe_opponent: StrictJsonInteger
+  readonly multi_opponent_case_count: StrictJsonInteger
+}
 export interface PublicH2BlocksDto extends StrictJsonObject {
   readonly requisites: PublicH2RequisitesDto
   readonly finance_f1: PublicH2FinanceF1Dto | null
@@ -85,16 +214,16 @@ export interface PublicH2BlocksDto extends StrictJsonObject {
   readonly finance_f3: PublicH2FinanceF3Dto | null
   readonly finance_f4: PublicH2FinanceF4Dto | null
   readonly finance_f5: PublicH2FinanceF5Dto | null
-  readonly arbitration_a1: PublicH2ViewDto | null
-  readonly arbitration_a2: PublicH2ViewDto | null
-  readonly arbitration_a3: PublicH2ViewDto | null
-  readonly arbitration_a4: PublicH2ViewDto | null
-  readonly arbitration_a5: PublicH2ViewDto | null
+  readonly arbitration_a1: PublicH2ArbitrationA1Dto | null
+  readonly arbitration_a2: PublicH2ArbitrationA2Dto | null
+  readonly arbitration_a3: PublicH2ArbitrationA3Dto | null
+  readonly arbitration_a4: PublicH2ArbitrationA4Dto | null
+  readonly arbitration_a5: PublicH2ArbitrationA5Dto | null
 }
 export interface PublicH2CoverageItemDto extends StrictJsonObject {
   readonly block_id: string
-  readonly state: string
-  readonly population_scope: string
+  readonly state: 'available' | 'available_empty' | 'partial' | 'missing' | 'not_requested' | 'failed' | 'conflict' | 'gate_closed' | 'legacy_unavailable'
+  readonly population_scope: 'not_applicable' | 'complete_collection' | 'returned_slice'
   readonly total: StrictJsonInteger | null
   readonly returned: StrictJsonInteger | null
   readonly eligible: StrictJsonInteger | null

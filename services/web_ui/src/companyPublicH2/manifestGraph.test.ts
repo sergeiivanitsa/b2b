@@ -13,7 +13,7 @@ describe('Company Public H2 Vite manifest closure', () => {
         file: 'assets/company-public-h2.entry0000.js',
         css: ['assets/company-public-h2.entry0000.css'],
         imports: ['static.ts'],
-        dynamicImports: ['charts.ts'],
+        dynamicImports: ['charts.ts', 'arbitration-charts.ts'],
         isEntry: true,
       },
       'static.ts': {
@@ -29,12 +29,21 @@ describe('Company Public H2 Vite manifest closure', () => {
         imports: ['chart-helper.ts', entry],
       },
       'chart-helper.ts': { file: 'assets/company-public-h2.bbbbbbbb.js' },
+      'arbitration-charts.ts': {
+        file: 'assets/company-public-h2.arbitration999.js',
+        css: ['assets/company-public-h2.arbitration111.css'],
+        imports: ['arbitration-helper.ts', entry],
+      },
+      'arbitration-helper.ts': { file: 'assets/company-public-h2.arbitration555.js' },
     })
 
     expect(graph.entryJsFile).toBe('assets/company-public-h2.entry0000.js')
     expect(graph.entryCssFile).toBe('assets/company-public-h2.entry0000.css')
     expect(graph.reachableFiles).toEqual([
       'assets/company-public-h2.aaaaaaaa.css',
+      'assets/company-public-h2.arbitration111.css',
+      'assets/company-public-h2.arbitration555.js',
+      'assets/company-public-h2.arbitration999.js',
       'assets/company-public-h2.bbbbbbbb.js',
       'assets/company-public-h2.entry0000.css',
       'assets/company-public-h2.entry0000.js',
@@ -45,6 +54,9 @@ describe('Company Public H2 Vite manifest closure', () => {
     ])
     expect(graph.optionalFiles).toEqual([
       'assets/company-public-h2.aaaaaaaa.css',
+      'assets/company-public-h2.arbitration111.css',
+      'assets/company-public-h2.arbitration555.js',
+      'assets/company-public-h2.arbitration999.js',
       'assets/company-public-h2.bbbbbbbb.js',
       'assets/company-public-h2.mmmmmmmm.js',
       'assets/company-public-h2.static000.css',

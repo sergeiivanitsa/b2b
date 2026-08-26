@@ -8,6 +8,7 @@ from product_api.company_reports.company_card_v2.public_h2 import _money
 from product_api.company_reports.persistence.presentations import (
     H2_PUBLICATION_POLICY_V1,
     H2_PUBLICATION_POLICY_V2,
+    H2_PUBLICATION_POLICY_V3,
     H2_PUBLICATION_POLICY_VERSIONS,
 )
 
@@ -90,4 +91,5 @@ def test_money_formatter_preserves_three_million_decimals_and_context() -> None:
 def test_saved_publication_policy_is_an_explicit_closed_set() -> None:
     assert H2_PUBLICATION_POLICY_V1 in H2_PUBLICATION_POLICY_VERSIONS
     assert H2_PUBLICATION_POLICY_V2 in H2_PUBLICATION_POLICY_VERSIONS
-    assert len(H2_PUBLICATION_POLICY_VERSIONS) == 2
+    assert H2_PUBLICATION_POLICY_V3 in H2_PUBLICATION_POLICY_VERSIONS
+    assert len(H2_PUBLICATION_POLICY_VERSIONS) == 3

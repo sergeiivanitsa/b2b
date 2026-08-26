@@ -17,16 +17,28 @@ from uuid import UUID
 from product_api.company_reports.normalizers.finance import normalize_finance
 from product_api.providers.datanewton import COUNTERPARTY_ENDPOINT, FINANCE_ENDPOINT
 
+from .arbitration_v2 import (
+    arbitration_chart_facts_hash,
+    build_arbitration_chart_facts,
+    empty_arbitration_basis_v2,
+    normalize_arbitration_result_v2,
+)
 from .counterparty import CounterpartyShapeError, parse_observed_counterparty
 from .decimal_transport import json_pointer_escape
 from .finance import APPROVED_CODES, build_chart_facts, classify_finance_cell, finance_limitations
 from .models import (
     ArbitrationBasisV1,
     CompanyCardV2SnapshotV2,
+    CompanyCardV2SnapshotV3,
     FinanceBasisV1,
     FinanceCellV1,
     NarrativeEvidenceV1,
     PrimaryActivitySnapshotV1,
+)
+from .evidence import (
+    ARBITRATION_EVIDENCE_BINDING_V2,
+    ArbitrationEvidenceBindingV2,
+    arbitration_v2_evidence_allowed,
 )
 from .primary_activity import SOURCE_PROFILE_VERSION, PrimaryActivityV1, parse_primary_activity
 
@@ -34,6 +46,7 @@ from .primary_activity import SOURCE_PROFILE_VERSION, PrimaryActivityV1, parse_p
 H2_WRITER_PROFILE = "company_card_v2_writer_v3"
 H2_PRESENTATION_CONTRACT = "company_public_h2_v1"
 V2_SNAPSHOT_SCHEMA_VERSION = "company_card_v2_snapshot_v2"
+V3_SNAPSHOT_SCHEMA_VERSION = "company_card_v2_snapshot_v3"
 _REPORT_VERSION = "3"
 _INN_LENGTHS = frozenset({10, 12})
 _MISSING = object()
@@ -58,6 +71,18 @@ class CompanyCardV2WriterProvider(CounterpartyProvider, Protocol):
         self,
         identifier: str,
         *,
+        request_id: str | None = None,
+    ) -> object: ...
+
+
+class CompanyCardV2WriterProviderV3(CompanyCardV2WriterProvider, Protocol):
+    async def fetch_arbitration_cases(
+        self,
+        identifier: str,
+        *,
+        offset: int = 0,
+        limit: int = 1000,
+        company_role: str | None = "ALL",
         request_id: str | None = None,
     ) -> object: ...
 
@@ -90,6 +115,12 @@ class CompanyCardV2BuildOutcome:
     """
 
     snapshot: CompanyCardV2SnapshotV2
+    lifecycle_status: Literal["complete", "partial"]
+
+
+@dataclass(frozen=True)
+class CompanyCardV2BuildOutcomeV3:
+    snapshot: CompanyCardV2SnapshotV3
     lifecycle_status: Literal["complete", "partial"]
 
 
@@ -269,6 +300,243 @@ async def build_company_card_v2_snapshot_v2_outcome(
     return CompanyCardV2BuildOutcome(
         snapshot=snapshot,
         lifecycle_status="complete" if finance_available else "partial",
+    )
+
+
+async def build_company_card_v2_snapshot_v3(
+    *,
+    provider: CompanyCardV2WriterProviderV3,
+    report_id: UUID,
+    subject_inn: str,
+    target_inn: str,
+    writer_profile: str,
+    report_version: str,
+    presentation_contract: str,
+    rollout_config_generation: int,
+    now: datetime,
+    arbitration_operation_enabled: bool,
+    arbitration_key_id: str | None,
+    arbitration_key_secret: bytes | None,
+    arbitration_evidence: ArbitrationEvidenceBindingV2 = ARBITRATION_EVIDENCE_BINDING_V2,
+    request_id: str | None = None,
+) -> CompanyCardV2SnapshotV3:
+    return (
+        await build_company_card_v2_snapshot_v3_outcome(
+            provider=provider,
+            report_id=report_id,
+            subject_inn=subject_inn,
+            target_inn=target_inn,
+            writer_profile=writer_profile,
+            report_version=report_version,
+            presentation_contract=presentation_contract,
+            rollout_config_generation=rollout_config_generation,
+            now=now,
+            arbitration_operation_enabled=arbitration_operation_enabled,
+            arbitration_key_id=arbitration_key_id,
+            arbitration_key_secret=arbitration_key_secret,
+            arbitration_evidence=arbitration_evidence,
+            request_id=request_id,
+        )
+    ).snapshot
+
+
+async def build_company_card_v2_snapshot_v3_outcome(
+    *,
+    provider: CompanyCardV2WriterProviderV3,
+    report_id: UUID,
+    subject_inn: str,
+    target_inn: str,
+    writer_profile: str,
+    report_version: str,
+    presentation_contract: str,
+    rollout_config_generation: int,
+    now: datetime,
+    arbitration_operation_enabled: bool,
+    arbitration_key_id: str | None,
+    arbitration_key_secret: bytes | None,
+    arbitration_evidence: ArbitrationEvidenceBindingV2 = ARBITRATION_EVIDENCE_BINDING_V2,
+    request_id: str | None = None,
+) -> CompanyCardV2BuildOutcomeV3:
+    """Build the enabled V3 lineage with one contained arbitration attempt."""
+    if type(arbitration_operation_enabled) is not bool:
+        raise CompanyCardV2BuilderError("arbitration operation decision must be boolean")
+    base = await build_company_card_v2_snapshot_v2_outcome(
+        provider=provider,
+        report_id=report_id,
+        subject_inn=subject_inn,
+        target_inn=target_inn,
+        writer_profile=writer_profile,
+        report_version=report_version,
+        presentation_contract=presentation_contract,
+        rollout_config_generation=rollout_config_generation,
+        now=now,
+        request_id=request_id,
+    )
+
+    # Preflight is intentionally ordered and short-circuited.  No provider
+    # method is even resolved until all three gates admit the attempt.
+    if not arbitration_operation_enabled:
+        arbitration_basis = empty_arbitration_basis_v2("operation_gate_closed")
+    elif not arbitration_v2_evidence_allowed(arbitration_evidence):
+        arbitration_basis = empty_arbitration_basis_v2("evidence_gate_closed")
+    elif not _valid_arbitration_key(arbitration_key_id, arbitration_key_secret):
+        arbitration_basis = empty_arbitration_basis_v2("privacy_key_unavailable")
+    else:
+        assert arbitration_key_id is not None and arbitration_key_secret is not None
+        try:
+            arbitration_result = await provider.fetch_arbitration_cases(
+                target_inn,
+                company_role="ALL",
+                offset=0,
+                limit=1000,
+                request_id=f"company-report:{str(report_id).lower()}",
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            arbitration_basis = empty_arbitration_basis_v2(
+                "provider_error",
+                pages_requested=1,
+                mask_key_id=arbitration_key_id,
+            )
+        else:
+            try:
+                arbitration_basis = normalize_arbitration_result_v2(
+                    arbitration_result,
+                    target_inn=target_inn,
+                    report_id=report_id,
+                    mask_key_id=arbitration_key_id,
+                    mask_secret=arbitration_key_secret,
+                )
+            except asyncio.CancelledError:
+                raise
+            except (TypeError, ValueError, OverflowError, UnicodeError):
+                arbitration_basis = empty_arbitration_basis_v2(
+                    "provider_binding_invalid",
+                    pages_requested=1,
+                    mask_key_id=arbitration_key_id,
+                )
+
+    arbitration_facts = build_arbitration_chart_facts(arbitration_basis)
+    snapshot_values = base.snapshot.model_dump(mode="python")
+    snapshot_values.update(
+        snapshot_schema_version=V3_SNAPSHOT_SCHEMA_VERSION,
+        arbitration_basis=arbitration_basis,
+        arbitration_chart_facts=arbitration_facts,
+        arbitration_chart_facts_hash=arbitration_chart_facts_hash(arbitration_facts),
+    )
+    snapshot = CompanyCardV2SnapshotV3.model_validate(snapshot_values)
+    return CompanyCardV2BuildOutcomeV3(
+        snapshot=snapshot,
+        lifecycle_status=(
+            "complete"
+            if base.lifecycle_status == "complete" and arbitration_basis.collection_complete
+            else "partial"
+        ),
+    )
+
+
+async def build_company_card_v2_snapshot(
+    *,
+    provider: CompanyCardV2WriterProviderV3,
+    report_id: UUID,
+    subject_inn: str,
+    target_inn: str,
+    writer_profile: str,
+    report_version: str,
+    presentation_contract: str,
+    rollout_config_generation: int,
+    now: datetime,
+    arbitration_enabled: bool,
+    arbitration_operation_enabled: bool = False,
+    arbitration_key_id: str | None = None,
+    arbitration_key_secret: bytes | None = None,
+    arbitration_evidence: ArbitrationEvidenceBindingV2 = ARBITRATION_EVIDENCE_BINDING_V2,
+    request_id: str | None = None,
+) -> CompanyCardV2SnapshotV2 | CompanyCardV2SnapshotV3:
+    return (
+        await build_company_card_v2_snapshot_outcome(
+            provider=provider,
+            report_id=report_id,
+            subject_inn=subject_inn,
+            target_inn=target_inn,
+            writer_profile=writer_profile,
+            report_version=report_version,
+            presentation_contract=presentation_contract,
+            rollout_config_generation=rollout_config_generation,
+            now=now,
+            arbitration_enabled=arbitration_enabled,
+            arbitration_operation_enabled=arbitration_operation_enabled,
+            arbitration_key_id=arbitration_key_id,
+            arbitration_key_secret=arbitration_key_secret,
+            arbitration_evidence=arbitration_evidence,
+            request_id=request_id,
+        )
+    ).snapshot
+
+
+async def build_company_card_v2_snapshot_outcome(
+    *,
+    provider: CompanyCardV2WriterProviderV3,
+    report_id: UUID,
+    subject_inn: str,
+    target_inn: str,
+    writer_profile: str,
+    report_version: str,
+    presentation_contract: str,
+    rollout_config_generation: int,
+    now: datetime,
+    arbitration_enabled: bool,
+    arbitration_operation_enabled: bool = False,
+    arbitration_key_id: str | None = None,
+    arbitration_key_secret: bytes | None = None,
+    arbitration_evidence: ArbitrationEvidenceBindingV2 = ARBITRATION_EVIDENCE_BINDING_V2,
+    request_id: str | None = None,
+) -> CompanyCardV2BuildOutcome | CompanyCardV2BuildOutcomeV3:
+    """Dispatch only from the persisted arbitration decision."""
+    if type(arbitration_enabled) is not bool:
+        raise CompanyCardV2BuilderError("persisted arbitration decision must be boolean")
+    if not arbitration_enabled:
+        if arbitration_key_id is not None or arbitration_key_secret is not None:
+            raise CompanyCardV2BuilderError("disabled arbitration decision must use a null key tuple")
+        return await build_company_card_v2_snapshot_v2_outcome(
+            provider=provider,
+            report_id=report_id,
+            subject_inn=subject_inn,
+            target_inn=target_inn,
+            writer_profile=writer_profile,
+            report_version=report_version,
+            presentation_contract=presentation_contract,
+            rollout_config_generation=rollout_config_generation,
+            now=now,
+            request_id=request_id,
+        )
+    return await build_company_card_v2_snapshot_v3_outcome(
+        provider=provider,
+        report_id=report_id,
+        subject_inn=subject_inn,
+        target_inn=target_inn,
+        writer_profile=writer_profile,
+        report_version=report_version,
+        presentation_contract=presentation_contract,
+        rollout_config_generation=rollout_config_generation,
+        now=now,
+        arbitration_operation_enabled=arbitration_operation_enabled,
+        arbitration_key_id=arbitration_key_id,
+        arbitration_key_secret=arbitration_key_secret,
+        arbitration_evidence=arbitration_evidence,
+        request_id=request_id,
+    )
+
+
+def _valid_arbitration_key(key_id: object, secret: object) -> bool:
+    import re
+
+    return (
+        type(key_id) is str
+        and re.fullmatch(r"[a-z][a-z0-9_]{0,31}", key_id) is not None
+        and type(secret) is bytes
+        and 32 <= len(secret) <= 64
     )
 
 
@@ -565,13 +833,20 @@ def _lookup_pointer(payload: object, pointer: str) -> object:
 __all__ = [
     "CompanyCardV2BuildOutcome",
     "CompanyCardV2BuilderError",
+    "CompanyCardV2BuildOutcomeV3",
     "CompanyCardV2WriterProvider",
+    "CompanyCardV2WriterProviderV3",
     "CounterpartyProvider",
     "H2_PRESENTATION_CONTRACT",
     "H2_WRITER_PROFILE",
     "PrimaryActivityWriterResult",
     "V2_SNAPSHOT_SCHEMA_VERSION",
+    "V3_SNAPSHOT_SCHEMA_VERSION",
+    "build_company_card_v2_snapshot",
+    "build_company_card_v2_snapshot_outcome",
     "build_company_card_v2_snapshot_v2",
     "build_company_card_v2_snapshot_v2_outcome",
+    "build_company_card_v2_snapshot_v3",
+    "build_company_card_v2_snapshot_v3_outcome",
     "fetch_primary_activity",
 ]
