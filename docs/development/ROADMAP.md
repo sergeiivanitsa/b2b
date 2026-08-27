@@ -56,7 +56,7 @@
 | 21 | `company-card-v2-ai-narrative` | Завершена |
 | 22 | `company-card-v2-page-shell` | Завершена |
 | 23 | `company-card-v2-finance-charts` | Завершена |
-| 24 | `company-card-v2-arbitration-charts` | Запланирована |
+| 24 | `company-card-v2-arbitration-charts` | Смерджена; PostgreSQL acceptance pending |
 | 25 | `company-card-v2-qa-rollout` | Запланирована |
 
 ## 3. Инженерные правила roadmap
@@ -1493,11 +1493,12 @@ Slug: company-card-v2-finance-charts
 ID: 24
 Slug: company-card-v2-arbitration-charts
 
-Статус: код утверждённого scope реализован 2026-08-27 и получил финальный
+Статус: merged в `e7478a2fba9aaca17829c3d99e89e8d83d4b3188`
+2026-08-27T09:23:32+10:00. Код утверждённого scope получил финальный
 независимый code-review verdict `APPROVED`; доступные unit, frontend, build,
-gateway, release и migration-contract проверки проходят. Итерация остаётся
-`in_progress`: disposable PostgreSQL acceptance локально заблокирован
-недоступным Docker Desktop daemon, никакая БД не затрагивалась.
+gateway, release и migration-contract проверки проходят. Post-merge
+disposable PostgreSQL acceptance остаётся незакрытым: Docker Desktop daemon
+недоступен, никакая БД не затрагивалась.
 Scope намеренно сужен до single-page completeness, observed years, RUB-only A4
 и all-masked A5. Production provider operation, publication и feature
 activation не разрешены.
@@ -1578,11 +1579,15 @@ population либо честно обозначенной returned slice без 
 ID: 25
 Slug: company-card-v2-qa-rollout
 
-Статус: planning input; старт после merge полного пути итераций 19–24.
+Статус: planning input; полный путь итераций 19–24 merged. Реализация стартует
+после закрытия post-merge disposable PostgreSQL acceptance итерации 24 и
+утверждения отдельных specification и implementation plan.
 
 ### Зависимости
 
-- Все merged contracts/runtime/UI итераций 19–24 и закрытые evidence gates.
+- Все merged contracts/runtime/UI итераций 19–24 и закрытые evidence gates;
+  post-merge disposable PostgreSQL acceptance итерации 24 должен быть закрыт
+  до реализации.
 - Feature flags остаются выключенными до отдельного rollout decision.
 
 ### Цель
