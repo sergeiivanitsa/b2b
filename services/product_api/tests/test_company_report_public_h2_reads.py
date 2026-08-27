@@ -38,11 +38,14 @@ from product_api.company_reports.persistence.models import (
     CompanyCardNarrativeArtifact,
     CompanyCardNarrativeJob,
     CompanyCardNarrativeOutbox,
+    CompanyReportDataset,
     CompanyReportH2LifecycleHead,
+    CompanyReportJob,
     CompanyReportPresentation,
     CompanyReportPresentationAssignment,
     CompanyReportPresentationPin,
     CompanyReportPresentationStagedPointer,
+    CompanyReportProviderRequest,
     CompanyReportRecord,
     CompanyReportSubject,
 )
@@ -53,6 +56,8 @@ from product_api.company_reports.persistence.v3 import (
     calculate_company_card_v2_snapshot_hash,
     company_card_v2_from_snapshot,
 )
+from product_api.providers.datanewton import DataNewtonClient
+from product_api.routers import company_reports as company_reports_router
 
 
 pytestmark = pytest.mark.asyncio
@@ -359,6 +364,31 @@ async def _read_state(engine, report_id: UUID):
         return deepcopy(record.normalized_snapshot), record.snapshot_hash, counts
 
 
+async def _company_report_table_counts(engine) -> dict[str, int]:
+    models = (
+        CompanyReportSubject,
+        CompanyReportRecord,
+        CompanyReportJob,
+        CompanyReportDataset,
+        CompanyReportProviderRequest,
+        CompanyReportPresentation,
+        CompanyReportH2LifecycleHead,
+        CompanyReportPresentationPin,
+        CompanyReportPresentationStagedPointer,
+        CompanyReportPresentationAssignment,
+        CompanyCardNarrativeOutbox,
+        CompanyCardNarrativeJob,
+        CompanyCardNarrativeArtifact,
+    )
+    async with AsyncSession(bind=engine) as session:
+        return {
+            model.__tablename__: int(
+                await session.scalar(select(func.count()).select_from(model)) or 0
+            )
+            for model in models
+        }
+
+
 async def test_public_h2_disabled_get_and_head_are_no_store(async_client) -> None:
     get_response = await async_client.get("/company-reports/7701234567/public-h2")
     head_response = await async_client.head("/company-reports/7701234567/public-h2")
@@ -366,6 +396,67 @@ async def test_public_h2_disabled_get_and_head_are_no_store(async_client) -> Non
     assert get_response.json()["detail"]["code"] == "company_public_h2_disabled"
     assert head_response.content == b""
     assert get_response.headers["cache-control"] == "no-store"
+
+
+async def test_public_h2_enabled_no_subject_uses_frozen_not_found_code_without_writes(
+    async_client,
+    engine,
+    monkeypatch,
+) -> None:
+    async def override_session():
+        async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+            yield session
+
+    async def provider_call_forbidden(*_args, **_kwargs):
+        raise AssertionError("public H2 no-subject read must not call a provider")
+
+    for method_name in (
+        "fetch_batch_cards",
+        "fetch_counterparty",
+        "fetch_finance",
+        "fetch_tax_info",
+        "fetch_arbitration_cases",
+        "fetch_fssp",
+        "fetch_bankruptcy",
+    ):
+        monkeypatch.setattr(
+            DataNewtonClient, method_name, provider_call_forbidden
+        )
+
+    before = await _company_report_table_counts(engine)
+    statements: list[str] = []
+
+    def capture_statements(
+        _conn, _cursor, statement, _parameters, _context, _executemany
+    ) -> None:
+        statements.append(statement)
+
+    monkeypatch.setattr(
+        company_reports_router, "h2_cohort_selected", lambda **_kwargs: True
+    )
+    monkeypatch.setattr(company_reports_router, "get_session", override_session)
+    event.listen(engine.sync_engine, "before_cursor_execute", capture_statements)
+    try:
+        response = await async_client.get(
+            "/company-reports/7701234567/public-h2"
+        )
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture_statements)
+
+    after = await _company_report_table_counts(engine)
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": {
+            "code": "company_report_not_found",
+            "message": "company card v2 was not found",
+        }
+    }
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-robots-tag"] == "noindex,follow"
+    assert before == after
+    assert statements
+    assert all(statement.lstrip().upper().startswith("SELECT") for statement in statements)
 
 
 async def test_legacy_saved_fallback_read_is_repeatable_and_executes_only_selects(engine) -> None:

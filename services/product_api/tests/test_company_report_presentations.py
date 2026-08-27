@@ -2,7 +2,8 @@ import asyncio
 import httpx
 from datetime import datetime, timezone
 from hashlib import sha256
-from uuid import uuid4
+from types import SimpleNamespace
+from uuid import UUID, uuid4
 from decimal import Decimal
 
 import pytest
@@ -11,9 +12,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from product_api.main import app
+from product_api.routers import company_report_presentations as presentations_router
 from product_api.company_reports.persistence.models import (
     CompanyCardNarrativeArtifact,
     CompanyCardNarrativeJob,
+    CompanyReportH2LifecycleHead,
+    CompanyReportJob,
     CompanyReportPresentation,
     CompanyReportPresentationAssignment,
     CompanyReportPresentationAssignmentJournal,
@@ -22,6 +26,7 @@ from product_api.company_reports.persistence.models import (
     CompanyReportRecord,
     CompanyReportSubject,
 )
+from product_api.company_reports.persistence.jobs import enqueue_company_report_job
 from product_api.company_reports.persistence.presentations import (
     PresentationAssignmentConflict,
     append_presentation_pin,
@@ -32,13 +37,44 @@ from product_api.company_reports.persistence.presentations import (
 )
 from product_api.company_reports.persistence.v3 import calculate_company_card_v2_snapshot_hash, company_card_v2_to_snapshot
 from product_api.company_reports.company_card_v2.finance import build_chart_facts
-from product_api.company_reports.company_card_v2.models import ArbitrationBasisV1, CompanyCardCounterpartyCoreV1, CompanyCardV2Snapshot, FinanceBasisV1
+from product_api.company_reports.company_card_v2.models import ArbitrationBasisV1, CompanyCardCounterpartyCoreV1, CompanyCardV2SnapshotV2, FinanceBasisV1, NarrativeEvidenceV1
 from product_api.company_reports.persistence.presentations import H2_PUBLICATION_POLICY_VERSION, H2_PUBLICATION_POLICY_V2
 
 
-def _valid_v3(report_id, inn: str) -> tuple[dict, str, CompanyCardV2Snapshot]:
+def _presentation_settings(
+    *,
+    rollout_generation: int = 1,
+    presentations_enabled: bool = True,
+    writer_enabled: bool = True,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        company_card_v2_presentations_enabled=presentations_enabled,
+        company_card_v2_writer_enabled=writer_enabled,
+        company_card_v2_rollout_generation=rollout_generation,
+        company_card_v2_allowlist_inns=["7701234567", "7801234567"],
+        company_card_v2_percentage_basis_points=0,
+        company_card_v2_arbitration_collection_enabled=False,
+        company_card_v2_arbitration_mask_active_key_id=None,
+    )
+
+
+def _bind_presentation_route_session(monkeypatch, engine) -> None:
+    async def _get_test_session():
+        async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+            yield session
+
+    monkeypatch.setattr(presentations_router, "get_session", _get_test_session)
+
+
+def _assert_lifecycle_headers(response) -> None:
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-robots-tag"] == "noindex,follow"
+
+
+def _valid_v3(report_id, inn: str) -> tuple[dict, str, CompanyCardV2SnapshotV2]:
     basis = FinanceBasisV1()
-    snapshot = CompanyCardV2Snapshot(report_id=str(report_id), subject_inn=inn, target_inn=inn, rollout_config_generation=1, generated_at=datetime(2026, 8, 24, tzinfo=timezone.utc), counterparty=CompanyCardCounterpartyCoreV1(inn=inn, full_name="Тест"), finance_basis=basis, arbitration_basis=ArbitrationBasisV1(), chart_facts=build_chart_facts(basis), evidence_version="evidence_v1", privacy_version="privacy_v1")
+    snapshot = CompanyCardV2SnapshotV2(report_id=str(report_id), subject_inn=inn, target_inn=inn, rollout_config_generation=1, generated_at=datetime(2026, 8, 24, tzinfo=timezone.utc), counterparty=CompanyCardCounterpartyCoreV1(inn=inn, full_name="Тест"), finance_basis=basis, arbitration_basis=ArbitrationBasisV1(), chart_facts=build_chart_facts(basis), evidence_version="evidence_v1", privacy_version="privacy_v1", narrative_evidence=NarrativeEvidenceV1(limitation_code="primary_activity_not_admitted"))
     raw = company_card_v2_to_snapshot(snapshot)
     return raw, calculate_company_card_v2_snapshot_hash(snapshot), snapshot
 
@@ -209,6 +245,325 @@ async def test_presentation_create_is_default_off_without_db_side_effect(async_c
     response = await async_client.post("/company-report-presentations", json={"identifier": "7701234567"})
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "company_public_h2_disabled"
+
+
+async def test_rejected_presentation_selectors_create_no_postgresql_rows(
+    async_client,
+    engine,
+    monkeypatch,
+) -> None:
+    _bind_presentation_route_session(monkeypatch, engine)
+    monkeypatch.setattr(
+        presentations_router,
+        "get_settings",
+        lambda: _presentation_settings(),
+    )
+
+    attempts = (
+        ("?unknown=", {}, "presentation_query_forbidden"),
+        (
+            "?report_version=3&report_version=2",
+            {},
+            "presentation_query_forbidden",
+        ),
+        ("", {"X-Report-Version": ""}, "presentation_selector_forbidden"),
+        (
+            "",
+            {"X-Writer-Profile": "company_card_v2_writer_v3"},
+            "presentation_selector_forbidden",
+        ),
+    )
+    for suffix, headers, expected_code in attempts:
+        response = await async_client.post(
+            f"/company-report-presentations{suffix}",
+            json={"identifier": "7701234567"},
+            headers=headers,
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == expected_code
+        _assert_lifecycle_headers(response)
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        for model in (
+            CompanyReportSubject,
+            CompanyReportRecord,
+            CompanyReportJob,
+            CompanyReportPresentation,
+            CompanyReportH2LifecycleHead,
+        ):
+            assert await session.scalar(
+                select(func.count()).select_from(model)
+            ) == 0
+
+
+async def test_presentation_create_reuses_exact_binding_and_status_ignores_flag_flip(
+    async_client,
+    engine,
+    monkeypatch,
+) -> None:
+    _bind_presentation_route_session(monkeypatch, engine)
+    monkeypatch.setattr(
+        presentations_router,
+        "get_settings",
+        lambda: _presentation_settings(),
+    )
+
+    first = await async_client.post(
+        "/company-report-presentations",
+        json={"identifier": "770 123 45 67"},
+    )
+    second = await async_client.post(
+        "/company-report-presentations",
+        json={"identifier": "7701234567"},
+    )
+
+    assert first.status_code == second.status_code == 202
+    expected_keys = {
+        "presentation_id",
+        "presentation_contract",
+        "report_id",
+        "lifecycle_status",
+        "public_read_path",
+        "canonical_document_path",
+        "reused",
+    }
+    assert set(first.json()) == set(second.json()) == expected_keys
+    assert first.json() == {
+        "presentation_id": second.json()["presentation_id"],
+        "presentation_contract": "company_public_h2_v1",
+        "report_id": second.json()["report_id"],
+        "lifecycle_status": "pending",
+        "public_read_path": "/company-reports/7701234567/public-h2",
+        "canonical_document_path": None,
+        "reused": False,
+    }
+    assert second.json()["reused"] is True
+    _assert_lifecycle_headers(first)
+    _assert_lifecycle_headers(second)
+
+    presentation_id = UUID(first.json()["presentation_id"])
+    report_id = UUID(first.json()["report_id"])
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        assert await session.scalar(
+            select(func.count()).select_from(CompanyReportSubject)
+        ) == 1
+        assert await session.scalar(
+            select(func.count()).select_from(CompanyReportRecord)
+        ) == 1
+        assert await session.scalar(
+            select(func.count()).select_from(CompanyReportPresentation)
+        ) == 1
+        assert await session.scalar(
+            select(func.count()).select_from(CompanyReportJob)
+        ) == 1
+        head = await session.scalar(select(CompanyReportH2LifecycleHead))
+        assert head is not None
+        assert head.presentation_id == presentation_id
+        assert head.report_id == report_id
+        assert head.head_generation == 1
+
+    def _status_must_not_read_settings():
+        raise AssertionError("presentation status must not re-resolve rollout settings")
+
+    monkeypatch.setattr(
+        presentations_router,
+        "get_settings",
+        _status_must_not_read_settings,
+    )
+    status_response = await async_client.get(
+        f"/company-report-presentations/{presentation_id}/status"
+    )
+
+    assert status_response.status_code == 200
+    assert status_response.json() == {
+        **first.json(),
+        "reused": True,
+    }
+    _assert_lifecycle_headers(status_response)
+
+
+async def test_presentation_status_returns_exact_lifecycle_and_safe_missing(
+    async_client,
+    engine,
+    monkeypatch,
+) -> None:
+    _bind_presentation_route_session(monkeypatch, engine)
+    monkeypatch.setattr(
+        presentations_router,
+        "get_settings",
+        lambda: _presentation_settings(),
+    )
+    created = await async_client.post(
+        "/company-report-presentations",
+        json={"identifier": "7701234567"},
+    )
+    assert created.status_code == 202
+    presentation_id = UUID(created.json()["presentation_id"])
+    report_id = UUID(created.json()["report_id"])
+
+    def _status_must_not_read_settings():
+        raise AssertionError("presentation status must not re-resolve rollout settings")
+
+    monkeypatch.setattr(
+        presentations_router,
+        "get_settings",
+        _status_must_not_read_settings,
+    )
+    for lifecycle_status in ("pending", "complete", "partial", "failed"):
+        async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+            report = await session.get(CompanyReportRecord, report_id)
+            assert report is not None
+            report.lifecycle_status = lifecycle_status
+            await session.commit()
+        response = await async_client.get(
+            f"/company-report-presentations/{presentation_id}/status"
+        )
+        assert response.status_code == 200
+        assert response.json()["lifecycle_status"] == lifecycle_status
+        assert response.json()["report_id"] == str(report_id)
+        assert response.json()["reused"] is True
+        assert "status" not in response.json()
+
+    missing = await async_client.get(
+        f"/company-report-presentations/{uuid4()}/status"
+    )
+    assert missing.status_code == 404
+    assert missing.json() == {
+        "detail": {
+            "code": "presentation_not_found",
+            "message": "presentation was not found",
+        }
+    }
+    _assert_lifecycle_headers(missing)
+
+
+async def test_old_presentation_status_stays_bound_after_new_h2_head(
+    async_client,
+    engine,
+    monkeypatch,
+) -> None:
+    _bind_presentation_route_session(monkeypatch, engine)
+    monkeypatch.setattr(
+        presentations_router,
+        "get_settings",
+        lambda: _presentation_settings(rollout_generation=1),
+    )
+    first = await async_client.post(
+        "/company-report-presentations",
+        json={"identifier": "7701234567"},
+    )
+    assert first.status_code == 202
+    first_presentation_id = UUID(first.json()["presentation_id"])
+    first_report_id = UUID(first.json()["report_id"])
+
+    now = datetime(2026, 8, 27, 12, tzinfo=timezone.utc)
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        report = await session.get(CompanyReportRecord, first_report_id)
+        job = await session.scalar(
+            select(CompanyReportJob).where(
+                CompanyReportJob.report_id == first_report_id
+            )
+        )
+        assert report is not None and job is not None
+        report.lifecycle_status = "failed"
+        report.finished_at = now
+        job.state = "failed"
+        job.finished_at = now
+        job.safe_failure_code = "report_execution_failed"
+        await session.commit()
+
+    monkeypatch.setattr(
+        presentations_router,
+        "get_settings",
+        lambda: _presentation_settings(rollout_generation=2),
+    )
+    second = await async_client.post(
+        "/company-report-presentations",
+        json={"identifier": "7701234567"},
+    )
+    assert second.status_code == 202
+    assert second.json()["presentation_id"] != str(first_presentation_id)
+    assert second.json()["report_id"] != str(first_report_id)
+    second_report_id = UUID(second.json()["report_id"])
+
+    def _status_must_not_read_settings():
+        raise AssertionError("presentation status must not re-resolve rollout settings")
+
+    monkeypatch.setattr(
+        presentations_router,
+        "get_settings",
+        _status_must_not_read_settings,
+    )
+    old_status = await async_client.get(
+        f"/company-report-presentations/{first_presentation_id}/status"
+    )
+    new_status = await async_client.get(
+        f"/company-report-presentations/{second.json()['presentation_id']}/status"
+    )
+    assert old_status.status_code == new_status.status_code == 200
+    assert old_status.json()["report_id"] == str(first_report_id)
+    assert old_status.json()["lifecycle_status"] == "failed"
+    assert new_status.json()["report_id"] == second.json()["report_id"]
+    assert new_status.json()["lifecycle_status"] == "pending"
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        head = await session.scalar(select(CompanyReportH2LifecycleHead))
+        assert head is not None
+        assert head.presentation_id == UUID(second.json()["presentation_id"])
+        assert head.report_id == second_report_id
+        assert head.head_generation == 2
+
+        old_presentation = await session.get(
+            CompanyReportPresentation,
+            first_presentation_id,
+        )
+        assert old_presentation is not None
+        old_presentation.rollout_generation = 999
+        await session.commit()
+
+    corrupt_old_status = await async_client.get(
+        f"/company-report-presentations/{first_presentation_id}/status"
+    )
+    assert corrupt_old_status.status_code == 500
+    assert corrupt_old_status.json() == {
+        "detail": {
+            "code": "presentation_invalid",
+            "message": "presentation binding is invalid",
+        }
+    }
+    assert str(second_report_id) not in corrupt_old_status.text
+    _assert_lifecycle_headers(corrupt_old_status)
+
+
+async def test_incompatible_h1_job_leaves_no_h2_presentation_or_head(
+    async_client,
+    engine,
+    monkeypatch,
+) -> None:
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        await enqueue_company_report_job(session, "7801234567")
+        await session.commit()
+
+    _bind_presentation_route_session(monkeypatch, engine)
+    monkeypatch.setattr(
+        presentations_router,
+        "get_settings",
+        lambda: _presentation_settings(),
+    )
+    response = await async_client.post(
+        "/company-report-presentations",
+        json={"identifier": "7801234567"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "report_writer_profile_conflict"
+    _assert_lifecycle_headers(response)
+
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        assert await session.scalar(
+            select(func.count()).select_from(CompanyReportPresentation)
+        ) == 0
+        assert await session.scalar(
+            select(func.count()).select_from(CompanyReportH2LifecycleHead)
+        ) == 0
 
 
 async def test_concurrent_unresolved_v2_pins_serialize_subject_generations(

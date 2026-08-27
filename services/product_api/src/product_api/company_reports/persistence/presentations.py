@@ -4,11 +4,12 @@ No router imports mutation functions from this module.
 """
 from __future__ import annotations
 
-from datetime import datetime
 from copy import deepcopy
+from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
@@ -108,6 +109,97 @@ def _has_exact_artifact_binding(artifact: CompanyCardNarrativeArtifact) -> bool:
 
 class PresentationAssignmentConflict(RuntimeError):
     code = "presentation_assignment_conflict"
+
+
+class PresentationLifecycleNotFound(RuntimeError):
+    code = "presentation_not_found"
+
+
+class PresentationLifecycleInvalid(RuntimeError):
+    code = "presentation_invalid"
+
+
+@dataclass(frozen=True)
+class ResolvedPresentationLifecycle:
+    presentation_id: UUID
+    presentation_contract: str
+    report_id: UUID
+    lifecycle_status: str
+    normalized_identifier: str
+
+
+async def resolve_presentation_lifecycle(
+    session: AsyncSession,
+    presentation_id: UUID,
+) -> ResolvedPresentationLifecycle:
+    """Resolve one opaque presentation's exact immutable lifecycle tuple."""
+    statement = (
+        select(
+            CompanyReportPresentation,
+            CompanyReportRecord,
+            CompanyReportSubject,
+        )
+        .outerjoin(
+            CompanyReportRecord,
+            and_(
+                CompanyReportRecord.id == CompanyReportPresentation.report_id,
+                CompanyReportRecord.subject_id
+                == CompanyReportPresentation.subject_id,
+            ),
+        )
+        .outerjoin(
+            CompanyReportSubject,
+            and_(
+                CompanyReportSubject.id == CompanyReportPresentation.subject_id,
+                CompanyReportSubject.id == CompanyReportRecord.subject_id,
+            ),
+        )
+        .where(CompanyReportPresentation.id == presentation_id)
+        .execution_options(autoflush=False)
+    )
+    row = (await session.execute(statement)).one_or_none()
+    if row is None:
+        raise PresentationLifecycleNotFound("presentation does not exist")
+
+    presentation, report, subject = row
+    if report is None or subject is None:
+        raise PresentationLifecycleInvalid("presentation binding is incomplete")
+
+    normalized_identifier = subject.normalized_identifier
+    valid_identifier = (
+        isinstance(normalized_identifier, str)
+        and normalized_identifier.isascii()
+        and normalized_identifier.isdigit()
+        and len(normalized_identifier) in {10, 12}
+    )
+    valid_generation = (
+        type(presentation.rollout_generation) is int
+        and type(report.rollout_generation) is int
+        and presentation.rollout_generation == report.rollout_generation
+        and presentation.rollout_generation > 0
+    )
+    if (
+        presentation.id != presentation_id
+        or presentation.subject_id != report.subject_id
+        or presentation.subject_id != subject.id
+        or presentation.report_id != report.id
+        or presentation.presentation_contract != report.presentation_contract
+        or presentation.presentation_contract != H2_PRESENTATION_CONTRACT
+        or not valid_generation
+        or report.writer_profile != H2_WRITER_PROFILE
+        or report.report_version != "3"
+        or report.lifecycle_status not in {"pending", "complete", "partial", "failed"}
+        or not valid_identifier
+    ):
+        raise PresentationLifecycleInvalid("presentation binding is invalid")
+
+    return ResolvedPresentationLifecycle(
+        presentation_id=presentation.id,
+        presentation_contract=presentation.presentation_contract,
+        report_id=report.id,
+        lifecycle_status=report.lifecycle_status,
+        normalized_identifier=normalized_identifier,
+    )
 
 
 async def create_or_reuse_h2_presentation(
@@ -589,9 +681,13 @@ __all__ = [
     "H2_PUBLICATION_POLICY_VERSION",
     "H2_PUBLICATION_POLICY_VERSIONS",
     "PresentationAssignmentConflict",
+    "PresentationLifecycleInvalid",
+    "PresentationLifecycleNotFound",
+    "ResolvedPresentationLifecycle",
     "append_presentation_pin",
     "append_resolved_h2_pin",
     "assign_pin_cas",
     "create_or_reuse_h2_presentation",
+    "resolve_presentation_lifecycle",
     "stage_h2_pin",
 ]

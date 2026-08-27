@@ -95,7 +95,13 @@ try {
         "services/product_api/tests/test_company_report_jobs.py"
     ) } else { @("services/product_api/tests") }
     foreach ($target in $targets) { if (-not (Test-Path -LiteralPath (Join-Path $repoRoot $target))) { throw "Missing required test target: $target" } }
-    Push-Location $repoRoot; try { & python -m pytest $targets -q -ra -p no:cacheprovider "--junitxml=$junitPath"; Assert-Exit $LASTEXITCODE "$Mode PostgreSQL tests" } finally { Pop-Location }
+    $pytestTargets = @($targets)
+    if ($Mode -eq "Full") {
+        $iteration24MigrationModule = "services/product_api/tests/test_company_report_iteration24_migration.py"
+        if (-not (Test-Path -LiteralPath (Join-Path $repoRoot $iteration24MigrationModule))) { throw "Missing iteration-24 migration test module: $iteration24MigrationModule" }
+        $pytestTargets += "--ignore=$iteration24MigrationModule"
+    }
+    Push-Location $repoRoot; try { & python -m pytest $pytestTargets -q -ra -p no:cacheprovider "--junitxml=$junitPath"; Assert-Exit $LASTEXITCODE "$Mode PostgreSQL tests" } finally { Pop-Location }
     [xml]$xml = Get-Content -Raw -LiteralPath $junitPath
     $cases = @($xml.SelectNodes("//testcase")); $bad = @($xml.SelectNodes("//failure|//error|//skipped"))
     if ($cases.Count -eq 0 -or $bad.Count -ne 0) { throw "JUnit evidence is not clean" }
