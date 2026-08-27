@@ -21,6 +21,22 @@ class CompanyReportCreateRequest(StrictPublicModel):
     inn: str
 
 
+class CompanyReportPresentationCreateRequest(StrictPublicModel):
+    identifier: str
+
+
+class CompanyReportPresentationLifecycle(StrictPublicModel):
+    """Exact presentation binding plus method-relative reuse metadata."""
+
+    presentation_id: UUID
+    presentation_contract: Literal["company_public_h2_v1"]
+    report_id: UUID
+    lifecycle_status: Literal["pending", "complete", "partial", "failed"]
+    public_read_path: str
+    canonical_document_path: str | None
+    reused: bool
+
+
 class CompanyReportGetQuery(StrictPublicModel):
     include_ai_explanation: bool = False
 
@@ -368,6 +384,8 @@ __all__ = [
     "CompanyReportAcceptedResponse",
     "CompanyReportCreateRequest",
     "CompanyReportGetQuery",
+    "CompanyReportPresentationCreateRequest",
+    "CompanyReportPresentationLifecycle",
     "CompanyReportPublicDataset",
     "CompanyReportPublicSnapshot",
     "CompanyReportPublicSourceTime",

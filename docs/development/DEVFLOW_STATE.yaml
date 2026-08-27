@@ -217,7 +217,7 @@ iterations:
     branch: feat/iteration-20-company-card-v2-backend-foundation-continuation
     commit: 80dc524c77a98e611aaed8446069a091dfe0f537
     merged_at: "2026-08-24T22:52:46+10:00"
-    block_reason: null
+    block_reason: "Post-merge contract debt: presentation create/status/read lifecycle differs from frozen company_public_h2_v1; independently reviewed continuation implementation is in progress after explicit owner approval."
   - id: 21
     slug: company-card-v2-ai-narrative
     title: "Публичное AI-описание Company Card v2"
@@ -257,4 +257,4 @@ iterations:
     branch: pending
     commit: pending
     merged_at: null
-    block_reason: "Ожидает закрытия post-merge disposable PostgreSQL acceptance итерации 24 и утверждения specification/implementation plan"
+    block_reason: "Ожидает merge/reconciliation presentation lifecycle continuation итерации 20, закрытия post-merge disposable PostgreSQL acceptance итерации 24 и отдельного утверждения specification/implementation plan итерации 25"

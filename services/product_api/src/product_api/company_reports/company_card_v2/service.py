@@ -88,7 +88,7 @@ class PublicH2Error(RuntimeError):
 
 
 class PublicH2NotFound(PublicH2Error):
-    code = "company_public_h2_not_found"
+    code = "company_report_not_found"
 
 
 class PublicH2Invalid(PublicH2Error):

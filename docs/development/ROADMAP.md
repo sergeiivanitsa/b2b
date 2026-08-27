@@ -52,7 +52,7 @@
 | 17 | `company-report-h1-backend` | Завершена |
 | 18 | `company-report-h1-frontend` | Завершена |
 | 19 | `company-card-v2-contract-evidence` | Завершена |
-| 20 | `company-card-v2-backend-foundation` | Завершена |
+| 20 | `company-card-v2-backend-foundation` | Завершена; approved lifecycle continuation в реализации |
 | 21 | `company-card-v2-ai-narrative` | Завершена |
 | 22 | `company-card-v2-page-shell` | Завершена |
 | 23 | `company-card-v2-finance-charts` | Завершена |
@@ -1323,6 +1323,28 @@ immutable history и совместимость H1/v1/v2, публикует т�
   scoring или verdict.
 - Feature gate не изменяет production-default H1 до отдельного rollout.
 
+### Post-merge continuation: presentation create/status/read lifecycle
+
+Static audit exact `origin/main` на 2026-08-27 подтвердил, что merged
+foundation не выдаёт frozen seven-field `PresentationLifecycle`, молча
+принимает query/header selectors, документирует POST как `200 {}` и повторно
+применяет current rollout flag к status polling. Дополнительно public-H2
+no-subject literal расходится с frozen matrix.
+
+Это bounded continuation того же ID 20:
+
+- key `presentation-create-lifecycle-contract-v1`;
+- branch `codex/iteration-20-presentation-create-lifecycle-continuation`;
+- отдельные specification, implementation plan и baseline evidence;
+- без migration, settings/default, provider/writer, frontend, deploy или
+  production activation;
+- code starts only after independent plan review and explicit owner approval.
+
+Docker Desktop daemon сейчас недоступен. Планирование не заблокировано, но
+Targeted и Full disposable PostgreSQL acceptance обязательны до readiness.
+До human merge/reconciliation этой continuation iteration 25 остаётся
+заблокированной.
+
 ---
 
 ## Итерация 21 — Публичное AI-описание Company Card v2
@@ -1579,14 +1601,18 @@ population либо честно обозначенной returned slice без 
 ID: 25
 Slug: company-card-v2-qa-rollout
 
-Статус: planning input; полный путь итераций 19–24 merged. Реализация стартует
-после закрытия post-merge disposable PostgreSQL acceptance итерации 24 и
-утверждения отдельных specification и implementation plan.
+Статус: planning input; основной путь итераций 19–24 merged, но post-merge
+presentation lifecycle continuation итерации 20 ещё не закрыта. Реализация
+стартует только после её human merge/reconciliation, закрытия disposable
+PostgreSQL acceptance итерации 24 и утверждения отдельных specification и
+implementation plan iteration 25.
 
 ### Зависимости
 
-- Все merged contracts/runtime/UI итераций 19–24 и закрытые evidence gates;
-  post-merge disposable PostgreSQL acceptance итерации 24 должен быть закрыт
+- Все merged contracts/runtime/UI итераций 19–24 и закрытые evidence gates.
+- Presentation create/status/read lifecycle continuation итерации 20 должна
+  быть human-merged и reconciled до реализации.
+- Post-merge disposable PostgreSQL acceptance итерации 24 должен быть закрыт
   до реализации.
 - Feature flags остаются выключенными до отдельного rollout decision.
 

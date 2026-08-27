@@ -58,6 +58,9 @@ from product_api.company_reports.persistence.narratives import (
     release_pre_dispatch_reservation,
     synchronize_narrative_runtime_control,
 )
+from product_api.company_reports.persistence.presentations import (
+    create_or_reuse_unresolved_h2_pin,
+)
 from product_api.company_reports.persistence.v3 import (
     calculate_company_card_v2_snapshot_hash,
     company_card_v2_from_snapshot,
@@ -162,6 +165,7 @@ async def _create_v2_report(
     )
     session.add(report)
     await session.flush()
+    await create_or_reuse_unresolved_h2_pin(session, report=report)
     await insert_narrative_outbox(
         session,
         report_id=report.id,
@@ -837,6 +841,23 @@ async def test_corrupt_snapshot_never_dispatches_and_closes_without_public_bindi
         assert job.state == "fallback_finalized"
         assert job.artifact_id is None
         assert job.validation_codes == ["invalid_report_snapshot"]
+        pin = await session.scalar(
+            select(CompanyReportPresentationPin).where(
+                CompanyReportPresentationPin.report_id == report_id,
+            )
+        )
+        assert pin is not None
+        assert pin.narrative_binding_status == "unresolved"
+        assert pin.narrative_binding_kind is None
+        assert pin.narrative_binding_key is None
         assert await session.scalar(
-            select(func.count(CompanyReportPresentationPin.generation))
+            select(func.count(CompanyReportPresentationPin.generation)).where(
+                CompanyReportPresentationPin.report_id == report_id,
+            )
+        ) == 1
+        assert await session.scalar(
+            select(func.count(CompanyReportPresentationStagedPointer.id))
+        ) == 0
+        assert await session.scalar(
+            select(func.count(CompanyReportPresentationAssignment.id))
         ) == 0
