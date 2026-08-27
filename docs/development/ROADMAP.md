@@ -52,7 +52,7 @@
 | 17 | `company-report-h1-backend` | Завершена |
 | 18 | `company-report-h1-frontend` | Завершена |
 | 19 | `company-card-v2-contract-evidence` | Завершена |
-| 20 | `company-card-v2-backend-foundation` | Завершена; approved lifecycle continuation в реализации |
+| 20 | `company-card-v2-backend-foundation` | Завершена |
 | 21 | `company-card-v2-ai-narrative` | Завершена |
 | 22 | `company-card-v2-page-shell` | Завершена |
 | 23 | `company-card-v2-finance-charts` | Завершена |
@@ -1338,12 +1338,17 @@ no-subject literal расходится с frozen matrix.
 - отдельные specification, implementation plan и baseline evidence;
 - без migration, settings/default, provider/writer, frontend, deploy или
   production activation;
-- code starts only after independent plan review and explicit owner approval.
+- code started only after independent plan review and explicit owner approval.
 
-Docker Desktop daemon сейчас недоступен. Планирование не заблокировано, но
-Targeted и Full disposable PostgreSQL acceptance обязательны до readiness.
-До human merge/reconciliation этой continuation iteration 25 остаётся
-заблокированной.
+Continuation squash-merged через PR `#150` в
+`604bf6deeea453187841bdf454f8dfc0c390d72d`
+2026-08-27T21:28:19+10:00; merged tree идентично source commit
+`ebc421b6c919d81ba7732494e5c74e152becd1e7`. Product API unit завершился
+`1524 passed`, iteration-20 disposable PostgreSQL Targeted — `117 passed`,
+Full — `290 passed`; JUnit clean без failures, errors и skips. Финальный
+независимый code-review verdict: `APPROVED`. Production activation остаётся
+`NOT AUTHORIZED`. Эта acceptance не закрывает отдельный dedicated
+PostgreSQL gate итерации 24.
 
 ---
 
@@ -1519,8 +1524,10 @@ Slug: company-card-v2-arbitration-charts
 2026-08-27T09:23:32+10:00. Код утверждённого scope получил финальный
 независимый code-review verdict `APPROVED`; доступные unit, frontend, build,
 gateway, release и migration-contract проверки проходят. Post-merge
-disposable PostgreSQL acceptance остаётся незакрытым: Docker Desktop daemon
-недоступен, никакая БД не затрагивалась.
+disposable PostgreSQL acceptance остаётся незакрытым: dedicated runner
+итерации 24 ещё не завершил clean acceptance, а iteration-20 acceptance
+намеренно исключает принадлежащий ему migration module и не заменяет этот
+gate.
 Scope намеренно сужен до single-page completeness, observed years, RUB-only A4
 и all-masked A5. Production provider operation, publication и feature
 activation не разрешены.
@@ -1601,17 +1608,14 @@ population либо честно обозначенной returned slice без 
 ID: 25
 Slug: company-card-v2-qa-rollout
 
-Статус: planning input; основной путь итераций 19–24 merged, но post-merge
-presentation lifecycle continuation итерации 20 ещё не закрыта. Реализация
-стартует только после её human merge/reconciliation, закрытия disposable
-PostgreSQL acceptance итерации 24 и утверждения отдельных specification и
-implementation plan iteration 25.
+Статус: planning input; основной путь итераций 19–24 и post-merge presentation
+lifecycle continuation итерации 20 merged/reconciled. Реализация стартует
+только после закрытия disposable PostgreSQL acceptance итерации 24 и
+утверждения отдельных specification и implementation plan iteration 25.
 
 ### Зависимости
 
 - Все merged contracts/runtime/UI итераций 19–24 и закрытые evidence gates.
-- Presentation create/status/read lifecycle continuation итерации 20 должна
-  быть human-merged и reconciled до реализации.
 - Post-merge disposable PostgreSQL acceptance итерации 24 должен быть закрыт
   до реализации.
 - Feature flags остаются выключенными до отдельного rollout decision.
