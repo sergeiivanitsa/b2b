@@ -236,6 +236,69 @@ def test_release_dockerfiles_mount_smoke_vars_read_only_without_persisting_them(
                 assert re.match(r"^COPY\s+(?:--\S+\s+)*\.\s", instruction) is None
 
 
+def test_release_dockerfiles_require_numeric_epoch_without_runtime_env_leak() -> None:
+    for path in (
+        ROOT / "services/product_api/Dockerfile",
+        ROOT / "services/gateway_api/Dockerfile",
+    ):
+        text = path.read_text(encoding="utf-8")
+        release = text.split("FROM base AS release", 1)[1].split(
+            "FROM base AS local", 1
+        )[0]
+        release_instructions = _dockerfile_instructions(release)
+
+        epoch_args = [
+            instruction
+            for instruction in release_instructions
+            if instruction == "ARG SOURCE_DATE_EPOCH"
+        ]
+        assert epoch_args == ["ARG SOURCE_DATE_EPOCH"]
+        assert release.index("ARG SOURCE_DATE_EPOCH") < release.index("RUN ")
+        assert release.index("ARG SOURCE_DATE_EPOCH") < release.index("pip install")
+
+        case_start = 'case "$SOURCE_DATE_EPOCH" in'
+        rejected_values = "''|*[!0-9]*)"
+        rejection_message = "SOURCE_DATE_EPOCH must be a non-negative integer"
+        assert case_start in release
+        assert rejected_values in release
+        assert rejection_message in release
+        assert "exit 1" in release
+        assert release.index(case_start) < release.index("pip install")
+        assert release.index(rejected_values) < release.index("pip install")
+
+        env_instructions = [
+            instruction
+            for instruction in _dockerfile_instructions(text)
+            if instruction.split(maxsplit=1)[0].upper() == "ENV"
+        ]
+        assert all("SOURCE_DATE_EPOCH" not in instruction for instruction in env_instructions)
+
+
+def test_qa_builds_cached_and_no_cache_oci_with_the_same_epoch() -> None:
+    qa = QA.read_text(encoding="utf-8")
+    build_lines = [
+        line.strip()
+        for line in qa.splitlines()
+        if line.strip().startswith("docker buildx build ")
+    ]
+    epoch_arg = '--build-arg "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"'
+
+    assert len(build_lines) == 2
+    for line in build_lines:
+        assert line.count(epoch_arg) == 1
+        assert '--output "type=oci,' in line
+        assert "rewrite-timestamp=true" in line
+        assert "--target release" in line
+        assert "--network=none" in line
+
+    cached = next(line for line in build_lines if "--no-cache" not in line)
+    reproducible = next(line for line in build_lines if "--no-cache" in line)
+    assert 'dest=$first,rewrite-timestamp=true' in cached
+    assert 'dest=$second,rewrite-timestamp=true' in reproducible
+    assert '--tag "$image:$RELEASE_SHA"' in cached
+    assert '--tag "$image:repro-$RELEASE_SHA"' in reproducible
+
+
 def test_qa_uses_one_ephemeral_env_file_for_every_offline_image_import() -> None:
     qa = QA.read_text(encoding="utf-8")
     env_option = "--env-file .github/ci/release-import-smoke.vars"

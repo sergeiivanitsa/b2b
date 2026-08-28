@@ -10,6 +10,7 @@ WORKDIR /app
 # QA materializes this verified wheelhouse and non-editable local wheel before
 # selecting the release target with Docker networking disabled.
 FROM base AS release
+ARG SOURCE_DATE_EPOCH
 COPY .github/ci/python-bootstrap.lock /locks/python-bootstrap.lock
 COPY .github/ci/python-product-runtime.lock /locks/python-runtime.lock
 COPY .release/product/wheelhouse/ /wheelhouse/
@@ -19,7 +20,10 @@ COPY shared /app/shared
 COPY services/product_api/alembic.ini /app/alembic.ini
 COPY services/product_api/alembic /app/alembic
 RUN --mount=type=bind,source=.github/ci/release-import-smoke.vars,target=/run/release-import-smoke.vars,readonly \
-    cd /wheelhouse \
+    case "$SOURCE_DATE_EPOCH" in \
+        ''|*[!0-9]*) echo "SOURCE_DATE_EPOCH must be a non-negative integer" >&2; exit 1 ;; \
+    esac \
+    && cd /wheelhouse \
     && sha256sum -c wheelhouse.sha256 \
     && sha256sum -c project-wheel.sha256 \
     && python -m pip install --no-index --find-links=/wheelhouse --no-deps --only-binary=:all: --require-hashes -r /locks/python-bootstrap.lock \

@@ -8,6 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 FROM base AS release
+ARG SOURCE_DATE_EPOCH
 COPY .github/ci/python-bootstrap.lock /locks/python-bootstrap.lock
 COPY .github/ci/python-gateway-runtime.lock /locks/python-runtime.lock
 COPY .release/gateway/wheelhouse/ /wheelhouse/
@@ -15,7 +16,10 @@ COPY .release/gateway/gateway_api-0.1.0-py3-none-any.whl /wheelhouse/gateway_api
 COPY .release/gateway/project-wheel.sha256 /wheelhouse/project-wheel.sha256
 COPY shared /app/shared
 RUN --mount=type=bind,source=.github/ci/release-import-smoke.vars,target=/run/release-import-smoke.vars,readonly \
-    cd /wheelhouse \
+    case "$SOURCE_DATE_EPOCH" in \
+        ''|*[!0-9]*) echo "SOURCE_DATE_EPOCH must be a non-negative integer" >&2; exit 1 ;; \
+    esac \
+    && cd /wheelhouse \
     && sha256sum -c wheelhouse.sha256 \
     && sha256sum -c project-wheel.sha256 \
     && python -m pip install --no-index --find-links=/wheelhouse --no-deps --only-binary=:all: --require-hashes -r /locks/python-bootstrap.lock \
