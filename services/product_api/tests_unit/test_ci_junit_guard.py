@@ -215,6 +215,47 @@ def test_iteration25_runner_owns_forward_head_and_two_junit_phases() -> None:
     assert '"test:e2e:update-snapshots"' in runner
     assert '"test:e2e:ci"' in runner
     assert "& npm run test:e2e" not in runner
+    assert (
+        '$browserRuntimeMountPoint = [IO.Path]::GetFullPath((Join-Path $webRoot "node_modules"))'
+        in runner
+    )
+    assert "$ownsBrowserRuntimeMountPoint = $false" in runner
+    assert (
+        "if (-not (Test-Path -LiteralPath $browserRuntimeMountPoint))" in runner
+    )
+    assert "$ownsBrowserRuntimeMountPoint = $true" in runner
+    assert (
+        "BrowserE2E runtime mountpoint must be the exact plain node_modules directory"
+        in runner
+    )
+    assert (
+        "BrowserE2E runner-owned runtime mountpoint must remain empty" in runner
+    )
+    assert (
+        "BrowserE2E runtime mountpoint failed its exact empty ownership check"
+        in runner
+    )
+    assert runner.count("$browserRuntimeMountPointItem.LinkType") == 2
+    assert runner.count(
+        "@(" + "Get-ChildItem -LiteralPath $browserRuntimeMountPoint -Force" + ").Count -ne 0"
+    ) == 2
+    assert '"--volume", "${repoRoot}:/workspace:ro"' in runner
+    assert (
+        '"--volume", "${resolvedRuntimeRoot}:/workspace/services/web_ui/node_modules:ro"'
+        in runner
+    )
+    assert (
+        '"--volume", "${browserOutput}:/workspace/services/web_ui/.tmp/iteration25-playwright:rw"'
+        in runner
+    )
+    finally_start = runner.index("finally {")
+    container_cleanup = runner.index("foreach ($ownedContainer in @(", finally_start)
+    mountpoint_cleanup = runner.index(
+        "if ($ownsBrowserRuntimeMountPoint)", container_cleanup
+    )
+    assert container_cleanup < mountpoint_cleanup
+    assert "npm ci" not in runner
+    assert "npm install" not in runner
     assert 'command.upgrade(config, "head")' not in migration_test
     assert migration_test.count("command.upgrade(config, REVISION)") == 3
 

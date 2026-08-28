@@ -150,6 +150,25 @@ def test_postgres_and_browser_identities_are_literal_and_runner_parity_is_exact(
     assert "COMPANY_CARD_V2_E2E_MANIFEST" not in qa
     assert (ROOT / ".github/ci/playwright-font-inventory.sha256").read_text(encoding="ascii").strip() == "705c330e71882ba9b680add251004054dcdc680b5c646e814b5b5ea2b6b341b3"
 
+    browser_job = qa.split("  browser-e2e-visual:", 1)[1].split(
+        "  release-contract:", 1
+    )[0]
+    prepare = "- name: Prepare SHA-bound browser failure evidence"
+    run_browser = "- name: Run runner-owned browser acceptance lifetime"
+    upload = "- name: Upload SHA-bound browser failure evidence"
+    assert browser_job.index(prepare) < browser_job.index(run_browser)
+    assert browser_job.index(run_browser) < browser_job.index(upload)
+    assert 'evidence_root="services/web_ui/.tmp/iteration25-playwright"' in browser_job
+    assert 'printf \'release_sha=%s\\n\' "$RELEASE_SHA" > "$evidence_root/runner-context.txt"' in browser_job
+    assert "if: always()" in browser_job.split(run_browser, 1)[0]
+    upload_step = browser_job.split(upload, 1)[1]
+    assert "if: failure()" in upload_step
+    assert "path: services/web_ui/.tmp/iteration25-playwright/" in upload_step
+    assert "include-hidden-files: true" in upload_step
+    assert "if-no-files-found: error" in upload_step
+    assert "services/web_ui/test-results/" not in browser_job
+    assert "services/web_ui/playwright-report/" not in browser_job
+
 
 def test_release_dockerfiles_share_exact_base_and_offline_audited_target() -> None:
     for path, service in (
@@ -274,7 +293,7 @@ def test_release_dockerfiles_require_numeric_epoch_without_runtime_env_leak() ->
         assert all("SOURCE_DATE_EPOCH" not in instruction for instruction in env_instructions)
 
 
-def test_qa_builds_cached_and_no_cache_oci_with_the_same_epoch() -> None:
+def test_qa_builds_and_loads_cached_and_no_cache_docker_archives_with_the_same_epoch() -> None:
     qa = QA.read_text(encoding="utf-8")
     build_lines = [
         line.strip()
@@ -286,10 +305,11 @@ def test_qa_builds_cached_and_no_cache_oci_with_the_same_epoch() -> None:
     assert len(build_lines) == 2
     for line in build_lines:
         assert line.count(epoch_arg) == 1
-        assert '--output "type=oci,' in line
+        assert '--output "type=docker,oci-mediatypes=true,' in line
         assert "rewrite-timestamp=true" in line
         assert "--target release" in line
         assert "--network=none" in line
+        assert "--load" not in line
 
     cached = next(line for line in build_lines if "--no-cache" not in line)
     reproducible = next(line for line in build_lines if "--no-cache" in line)
@@ -297,6 +317,61 @@ def test_qa_builds_cached_and_no_cache_oci_with_the_same_epoch() -> None:
     assert 'dest=$second,rewrite-timestamp=true' in reproducible
     assert '--tag "$image:$RELEASE_SHA"' in cached
     assert '--tag "$image:repro-$RELEASE_SHA"' in reproducible
+
+    build_job = qa.split("  release-build:", 1)[1].split(
+        "  browser-e2e-visual:", 1
+    )[0]
+    load_lines = [
+        line.strip()
+        for line in build_job.splitlines()
+        if line.strip().startswith("docker load ")
+    ]
+    assert load_lines == [
+        'docker load --input "$first"',
+        'docker load --input "$second"',
+    ]
+    assert build_job.index(reproducible) < build_job.index(load_lines[0])
+    assert build_job.index(load_lines[0]) < build_job.index(load_lines[1])
+    assert build_job.index(load_lines[1]) < build_job.index(
+        'docker run --rm --network=none --env-file '
+    )
+    assert 'bundle.extractfile("manifest.json")' in build_job
+    assert 'bundle.extractfile("index.json")' in build_job
+    assert "OCI manifest/config identity is not reproducible" in build_job
+
+
+def test_release_contract_loads_exact_archives_without_rebuild() -> None:
+    qa = QA.read_text(encoding="utf-8")
+    contract = qa.split("  release-contract:", 1)[1].split(
+        "  qa-required:", 1
+    )[0]
+    load_lines = [
+        line.strip()
+        for line in contract.splitlines()
+        if line.strip().startswith("docker load ")
+    ]
+
+    assert load_lines == [
+        'docker load --input ".release/verified/product-api-$RELEASE_SHA.oci.tar"',
+        'docker load --input ".release/verified/gateway-api-$RELEASE_SHA.oci.tar"',
+    ]
+    assert "docker build" not in contract
+    assert contract.index(load_lines[0]) < contract.index(load_lines[1])
+    assert contract.index(load_lines[1]) < contract.index(
+        'docker run --rm --network=none --env-file '
+    )
+    assert "mapfile -t expected_images" in contract
+    assert 'get("config_digest")' in contract
+    assert 're.fullmatch(r"sha256:[0-9a-f]{64}", digest)' in contract
+    assert 'test "${#expected_images[@]}" -eq 2' in contract
+    assert (
+        "docker image inspect --format '{{.Id}}' \"b2b-product-api:$RELEASE_SHA\""
+        in contract
+    )
+    assert (
+        "docker image inspect --format '{{.Id}}' \"b2b-gateway-api:$RELEASE_SHA\""
+        in contract
+    )
 
 
 def test_qa_uses_one_ephemeral_env_file_for_every_offline_image_import() -> None:

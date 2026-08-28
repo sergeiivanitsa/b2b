@@ -211,8 +211,10 @@ jobs:
             fi
             first=".release/artifacts/${service}-api-$RELEASE_SHA.oci.tar"
             second=".release/artifacts/${service}-api-$RELEASE_SHA.repro.oci.tar"
-            docker buildx build --platform linux/amd64 --target release --network=none --provenance=false --sbom=false --build-arg "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" --tag "$image:$RELEASE_SHA" --load --output "type=oci,dest=$first,rewrite-timestamp=true" --file "$dockerfile" .
-            docker buildx build --no-cache --platform linux/amd64 --target release --network=none --provenance=false --sbom=false --build-arg "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" --tag "$image:repro-$RELEASE_SHA" --load --output "type=oci,dest=$second,rewrite-timestamp=true" --file "$dockerfile" .
+            docker buildx build --platform linux/amd64 --target release --network=none --provenance=false --sbom=false --build-arg "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" --tag "$image:$RELEASE_SHA" --output "type=docker,oci-mediatypes=true,dest=$first,rewrite-timestamp=true" --file "$dockerfile" .
+            docker buildx build --no-cache --platform linux/amd64 --target release --network=none --provenance=false --sbom=false --build-arg "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" --tag "$image:repro-$RELEASE_SHA" --output "type=docker,oci-mediatypes=true,dest=$second,rewrite-timestamp=true" --file "$dockerfile" .
+            docker load --input "$first"
+            docker load --input "$second"
             docker run --rm --network=none --env-file .github/ci/release-import-smoke.vars --entrypoint python "$image:$RELEASE_SHA" -c "$smoke_imports"
             for built_image in "$image:$RELEASE_SHA" "$image:repro-$RELEASE_SHA"; do
               image_env="$(docker image inspect "$built_image" --format '{{range .Config.Env}}{{println .}}{{end}}')"
@@ -245,13 +247,21 @@ jobs:
               for suffix in ("", ".repro"):
                   name = release / f"{service}-api-{release_sha}{suffix}.oci.tar"
                   with tarfile.open(name, "r") as bundle:
+                      docker_manifests = json.load(bundle.extractfile("manifest.json"))
+                      if not isinstance(docker_manifests, list) or len(docker_manifests) != 1:
+                          raise SystemExit("invalid Docker image manifest")
                       index = json.load(bundle.extractfile("index.json"))
-                  manifests = index.get("manifests", [])
-                  if len(manifests) != 1 or not isinstance(manifests[0].get("digest"), str):
-                      raise SystemExit("invalid OCI index")
-                  values.append(manifests[0]["digest"])
+                      manifests = index.get("manifests", [])
+                      if len(manifests) != 1 or not isinstance(manifests[0].get("digest"), str):
+                          raise SystemExit("invalid OCI index")
+                      manifest_digest = manifests[0]["digest"]
+                      manifest_blob = json.load(bundle.extractfile(f"blobs/sha256/{manifest_digest.removeprefix('sha256:')}"))
+                      config_digest = manifest_blob.get("config", {}).get("digest")
+                      if not isinstance(config_digest, str):
+                          raise SystemExit("invalid OCI config digest")
+                  values.append((manifest_digest, config_digest))
               if values[0] != values[1]:
-                  raise SystemExit(f"{service} OCI digest is not reproducible")
+                  raise SystemExit(f"{service} OCI manifest/config identity is not reproducible")
           PY
           rm .release/artifacts/*.repro.oci.tar
       - name: Assemble canonical SHA-bound release packages
@@ -407,6 +417,16 @@ jobs:
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
           docker pull --platform linux/amd64 "$POSTGRES_IMAGE"
           docker pull --platform linux/amd64 "$PLAYWRIGHT_IMAGE"
+      - name: Prepare SHA-bound browser failure evidence
+        if: always()
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          evidence_root="services/web_ui/.tmp/iteration25-playwright"
+          mkdir -p "$evidence_root"
+          printf 'release_sha=%s\n' "$RELEASE_SHA" > "$evidence_root/runner-context.txt"
       - name: Run runner-owned browser acceptance lifetime
         shell: bash
         env:
@@ -424,9 +444,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: browser-failure-${{ needs.resolve-release.outputs.release_sha }}
-          path: |
-            services/web_ui/test-results/
-            services/web_ui/playwright-report/
+          path: services/web_ui/.tmp/iteration25-playwright/
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
 
@@ -464,16 +483,28 @@ jobs:
           web_archive="$PWD/.release/verified/web-ui-$RELEASE_SHA.tgz"
           web_archive_sha="$(sha256sum "$web_archive")"
           python deploy/web_ui/install_web_ui_release.sh verify "$web_archive" "$RELEASE_SHA" "${web_archive_sha%% *}"
-          python - <<'PY'
-          import json, os
+          mapfile -t expected_images < <(python - <<'PY'
+          import json, os, re
           from pathlib import Path
           release_sha = os.environ["RELEASE_SHA"]
           manifest = json.loads((Path(".release/verified") / f"release-manifest-{release_sha}.json").read_text(encoding="utf-8"))
           if manifest.get("release_sha") != release_sha:
               raise SystemExit("release manifest SHA mismatch")
+          for name in (
+              f"product-api-{release_sha}.oci.tar",
+              f"gateway-api-{release_sha}.oci.tar",
+          ):
+              digest = manifest.get("images", {}).get(name, {}).get("config_digest")
+              if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+                  raise SystemExit("release image config digest is invalid")
+              print(digest)
           PY
+          )
+          test "${#expected_images[@]}" -eq 2
           docker load --input ".release/verified/product-api-$RELEASE_SHA.oci.tar"
           docker load --input ".release/verified/gateway-api-$RELEASE_SHA.oci.tar"
+          test "$(docker image inspect --format '{{.Id}}' "b2b-product-api:$RELEASE_SHA")" = "${expected_images[0]}"
+          test "$(docker image inspect --format '{{.Id}}' "b2b-gateway-api:$RELEASE_SHA")" = "${expected_images[1]}"
           docker run --rm --network=none --env-file .github/ci/release-import-smoke.vars --entrypoint python "b2b-product-api:$RELEASE_SHA" -c "import product_api.main; import product_api.company_reports.worker; import product_api.company_reports.company_card_v2.narrative.worker"
           docker run --rm --network=none --env-file .github/ci/release-import-smoke.vars --entrypoint python "b2b-gateway-api:$RELEASE_SHA" -c "import gateway_api.main"
           mkdir -p services/web_ui/dist-company-public-h2

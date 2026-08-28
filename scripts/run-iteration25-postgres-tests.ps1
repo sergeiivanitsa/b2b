@@ -53,6 +53,8 @@ $isWindowsHost = [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
 )
 $resolvedReleaseArtifactRoot = $null
 $resolvedFontInventory = $null
+$browserRuntimeMountPoint = [IO.Path]::GetFullPath((Join-Path $webRoot "node_modules"))
+$ownsBrowserRuntimeMountPoint = $false
 $primaryFailure = $null
 $cleanupProblems = [Collections.Generic.List[string]]::new()
 $junitDigests = @{}
@@ -903,6 +905,28 @@ try {
         ) {
             throw "BrowserE2E output must be a plain directory"
         }
+        if (-not (Test-Path -LiteralPath $browserRuntimeMountPoint)) {
+            New-Item -ItemType Directory -Path $browserRuntimeMountPoint | Out-Null
+            $ownsBrowserRuntimeMountPoint = $true
+        }
+        $browserRuntimeMountPointItem = Get-Item `
+            -LiteralPath $browserRuntimeMountPoint `
+            -Force `
+            -ErrorAction Stop
+        if (
+            [IO.Path]::GetFullPath($browserRuntimeMountPointItem.FullName) -ne $browserRuntimeMountPoint -or
+            -not $browserRuntimeMountPointItem.PSIsContainer -or
+            ($browserRuntimeMountPointItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $null -ne $browserRuntimeMountPointItem.LinkType
+        ) {
+            throw "BrowserE2E runtime mountpoint must be the exact plain node_modules directory"
+        }
+        if (
+            $ownsBrowserRuntimeMountPoint -and
+            @(Get-ChildItem -LiteralPath $browserRuntimeMountPoint -Force).Count -ne 0
+        ) {
+            throw "BrowserE2E runner-owned runtime mountpoint must remain empty"
+        }
         $browserArguments = [Collections.Generic.List[string]]::new()
         foreach ($argument in @(
             "create", "--pull=never",
@@ -973,6 +997,29 @@ finally {
                 -Id $ownedContainer.Id `
                 -ExpectedName $ownedContainer.Name `
                 -ExpectedRole $ownedContainer.Role
+        }
+        catch {
+            $cleanupProblems.Add($_.Exception.Message.Replace($pgPassword, "<redacted>"))
+        }
+    }
+    if ($ownsBrowserRuntimeMountPoint) {
+        try {
+            if (Test-Path -LiteralPath $browserRuntimeMountPoint) {
+                $browserRuntimeMountPointItem = Get-Item `
+                    -LiteralPath $browserRuntimeMountPoint `
+                    -Force `
+                    -ErrorAction Stop
+                if (
+                    [IO.Path]::GetFullPath($browserRuntimeMountPointItem.FullName) -ne $browserRuntimeMountPoint -or
+                    -not $browserRuntimeMountPointItem.PSIsContainer -or
+                    ($browserRuntimeMountPointItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                    $null -ne $browserRuntimeMountPointItem.LinkType -or
+                    @(Get-ChildItem -LiteralPath $browserRuntimeMountPoint -Force).Count -ne 0
+                ) {
+                    throw "BrowserE2E runtime mountpoint failed its exact empty ownership check"
+                }
+                Remove-Item -LiteralPath $browserRuntimeMountPoint -Force
+            }
         }
         catch {
             $cleanupProblems.Add($_.Exception.Message.Replace($pgPassword, "<redacted>"))
