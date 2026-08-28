@@ -20,9 +20,9 @@ def test_narrative_is_closed_before_openai_when_disabled(client, monkeypatch):
     body = _body(dispatch)
     raw = json.dumps(body, separators=(",", ":")).encode()
     headers = sign_headers(gateway_main.settings.gateway_shared_secret, "POST", "/v1/chat", raw)
-    headers["X-Gateway-Dispatch-ID"] = dispatch
+    headers.update({"Content-Type": "application/json", "X-Gateway-Dispatch-ID": dispatch})
     monkeypatch.setattr(gateway_main.settings, "company_card_narrative_gateway_enabled", False)
-    response = client.post("/v1/chat", data=raw, headers=headers)
+    response = client.post("/v1/chat", content=raw, headers=headers)
     assert response.status_code == 503
 
 
