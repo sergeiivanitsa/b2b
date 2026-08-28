@@ -203,15 +203,31 @@ jobs:
             if [ "$service" = product ]; then
               dockerfile=services/product_api/Dockerfile
               image=b2b-product-api
+              smoke_imports="import product_api.main; import product_api.company_reports.worker; import product_api.company_reports.company_card_v2.narrative.worker"
             else
               dockerfile=services/gateway_api/Dockerfile
               image=b2b-gateway-api
+              smoke_imports="import gateway_api.main"
             fi
             first=".release/artifacts/${service}-api-$RELEASE_SHA.oci.tar"
             second=".release/artifacts/${service}-api-$RELEASE_SHA.repro.oci.tar"
             docker buildx build --platform linux/amd64 --target release --network=none --provenance=false --sbom=false --build-arg "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" --tag "$image:$RELEASE_SHA" --load --output "type=oci,dest=$first,rewrite-timestamp=true" --file "$dockerfile" .
             docker buildx build --no-cache --platform linux/amd64 --target release --network=none --provenance=false --sbom=false --build-arg "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" --tag "$image:repro-$RELEASE_SHA" --load --output "type=oci,dest=$second,rewrite-timestamp=true" --file "$dockerfile" .
-            docker run --rm --network=none --entrypoint python "$image:$RELEASE_SHA" -c "import ${service}_api.main"
+            docker run --rm --network=none --env-file .github/ci/release-import-smoke.vars --entrypoint python "$image:$RELEASE_SHA" -c "$smoke_imports"
+            for built_image in "$image:$RELEASE_SHA" "$image:repro-$RELEASE_SHA"; do
+              image_env="$(docker image inspect "$built_image" --format '{{range .Config.Env}}{{println .}}{{end}}')"
+              smoke_key_count=0
+              while IFS='=' read -r key smoke_value; do
+                test -n "$key"
+                [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]]
+                smoke_key_count=$((smoke_key_count + 1))
+                if grep -q "^${key}=" <<< "$image_env"; then
+                  echo "release import smoke variable persisted in $built_image: $key" >&2
+                  exit 1
+                fi
+              done < .github/ci/release-import-smoke.vars
+              test "$smoke_key_count" -gt 0
+            done
             docker run --rm --network=none --entrypoint cat "$image:$RELEASE_SHA" /app/python-installed.json > ".release/$service/python-installed.json"
             docker run --rm --network=none --entrypoint cat "$image:repro-$RELEASE_SHA" /app/python-installed.json > ".release/$service/python-installed.repro.json"
             cmp ".release/$service/python-installed.json" ".release/$service/python-installed.repro.json"
@@ -458,8 +474,8 @@ jobs:
           PY
           docker load --input ".release/verified/product-api-$RELEASE_SHA.oci.tar"
           docker load --input ".release/verified/gateway-api-$RELEASE_SHA.oci.tar"
-          docker run --rm --network=none --entrypoint python "b2b-product-api:$RELEASE_SHA" -c "import product_api.main; import product_api.company_reports.worker; import product_api.company_reports.company_card_v2.narrative.worker"
-          docker run --rm --network=none --entrypoint python "b2b-gateway-api:$RELEASE_SHA" -c "import gateway_api.main"
+          docker run --rm --network=none --env-file .github/ci/release-import-smoke.vars --entrypoint python "b2b-product-api:$RELEASE_SHA" -c "import product_api.main; import product_api.company_reports.worker; import product_api.company_reports.company_card_v2.narrative.worker"
+          docker run --rm --network=none --env-file .github/ci/release-import-smoke.vars --entrypoint python "b2b-gateway-api:$RELEASE_SHA" -c "import gateway_api.main"
           mkdir -p services/web_ui/dist-company-public-h2
           tar -xzf ".release/verified/company-public-h2-$RELEASE_SHA.tgz" --strip-components=1 -C services/web_ui/dist-company-public-h2 company-public-h2/assets
           python -m pytest deploy/nginx deploy/product_api deploy/web_ui -q -ra -p no:cacheprovider

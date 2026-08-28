@@ -18,7 +18,8 @@ COPY .release/product/project-wheel.sha256 /wheelhouse/project-wheel.sha256
 COPY shared /app/shared
 COPY services/product_api/alembic.ini /app/alembic.ini
 COPY services/product_api/alembic /app/alembic
-RUN cd /wheelhouse \
+RUN --mount=type=bind,source=.github/ci/release-import-smoke.vars,target=/run/release-import-smoke.vars,readonly \
+    cd /wheelhouse \
     && sha256sum -c wheelhouse.sha256 \
     && sha256sum -c project-wheel.sha256 \
     && python -m pip install --no-index --find-links=/wheelhouse --no-deps --only-binary=:all: --require-hashes -r /locks/python-bootstrap.lock \
@@ -26,6 +27,9 @@ RUN cd /wheelhouse \
     && python -m pip install --no-index --find-links=/wheelhouse --no-deps /wheelhouse/product_api-0.1.0-py3-none-any.whl \
     && python -m pip check \
     && python -c "import importlib.metadata as m,json; rows=sorted((d.metadata['Name'].lower().replace('_','-'),d.version) for d in m.distributions()); open('/app/python-installed.json','w',encoding='utf-8',newline='\n').write(json.dumps(rows,separators=(',',':'))+'\n')" \
+    && set -a \
+    && . /run/release-import-smoke.vars \
+    && set +a \
     && python -c "import product_api.main; import product_api.company_reports.worker; import product_api.company_reports.company_card_v2.narrative.worker" \
     && rm -rf /wheelhouse /locks
 

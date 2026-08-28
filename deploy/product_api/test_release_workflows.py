@@ -1,8 +1,12 @@
 """Static fail-closed contracts for iteration-25 CI and release surfaces."""
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 QA = ROOT / ".github/workflows/qa.yml"
@@ -13,6 +17,80 @@ POSTGRES_IMAGE = "postgres:16.9-alpine@sha256:b441677c946de564fe88ae4245ba80fe84
 PLAYWRIGHT_IMAGE = "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:c091b21d9fae78c76e85cd4356431e9b018402f172a214fc7d7a5e9a7e29d8ac"
 PYTHON_BASE = "python:3.12.11-slim-bookworm@sha256:c00fc7b44d844b6da22861ec24af43968a5200eac4ec607b4725d585165d6b49"
 BUILDX_VERSION = "v0.25.0"
+RELEASE_IMPORT_SMOKE_VARS = ROOT / ".github/ci/release-import-smoke.vars"
+RELEASE_IMPORT_SMOKE_KEYS = frozenset(
+    {
+        "APP_ENV",
+        "DATABASE_URL",
+        "GATEWAY_URL",
+        "GATEWAY_SHARED_SECRET",
+        "AUTH_TOKEN_SECRET",
+        "CLAIM_EDIT_TOKEN_SECRET",
+        "CLAIMS_UPLOAD_DIR",
+        "INVITE_TOKEN_SECRET",
+        "SESSION_SECRET",
+        "EMAIL_FROM",
+    }
+)
+PRODUCT_IMPORTS = (
+    "import product_api.main; "
+    "import product_api.company_reports.worker; "
+    "import product_api.company_reports.company_card_v2.narrative.worker"
+)
+GATEWAY_IMPORTS = "import gateway_api.main"
+
+
+def _release_import_smoke_values() -> dict[str, str]:
+    raw = RELEASE_IMPORT_SMOKE_VARS.read_text(encoding="utf-8")
+    assert raw.endswith("\n")
+    values: dict[str, str] = {}
+    for line_number, row in enumerate(raw.splitlines(), start=1):
+        if not row or row.startswith("#"):
+            continue
+        match = re.fullmatch(r"([A-Z][A-Z0-9_]*)=(\S+)", row)
+        assert match is not None, f"invalid smoke env row {line_number}: {row!r}"
+        key, value = match.groups()
+        assert key not in values, f"duplicate smoke env key: {key}"
+        values[key] = value
+    return values
+
+
+def _dockerfile_instructions(text: str) -> list[str]:
+    instructions: list[str] = []
+    current = ""
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or (not current and line.startswith("#")):
+            continue
+        current = f"{current} {line}".strip()
+        if current.endswith("\\"):
+            current = current[:-1].rstrip()
+            continue
+        instructions.append(current)
+        current = ""
+    assert not current
+    return instructions
+
+
+def _release_import_subprocess_env(*, include_smoke_values: bool) -> dict[str, str]:
+    relevant = RELEASE_IMPORT_SMOKE_KEYS | {"OPENAI_API_KEY"}
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() not in relevant
+    }
+    if include_smoke_values:
+        environment.update(_release_import_smoke_values())
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["PYTHONPATH"] = os.pathsep.join(
+        str(path.resolve())
+        for path in (
+            ROOT / "services/product_api/src",
+            ROOT / "services/gateway_api/src",
+            ROOT,
+        )
+    )
+    return environment
 
 
 def _workflows() -> list[Path]:
@@ -91,6 +169,133 @@ def test_release_dockerfiles_share_exact_base_and_offline_audited_target() -> No
         assert " -e " not in release and "--upgrade" not in release
         other = "gateway_api" if service == "product" else "product_api"
         assert other not in release
+
+
+def test_release_import_smoke_vars_are_exact_synthetic_and_network_unroutable() -> None:
+    values = _release_import_smoke_values()
+
+    assert set(values) == RELEASE_IMPORT_SMOKE_KEYS
+    assert "OPENAI_API_KEY" not in values
+    assert all("release-import-smoke" in value for value in values.values())
+
+    database = urlsplit(values["DATABASE_URL"])
+    assert database.scheme == "postgresql+asyncpg"
+    assert database.hostname is not None and database.hostname.endswith(".invalid")
+    assert database.username is None
+    assert database.password is None
+    assert database.query == "" and database.fragment == ""
+
+    gateway = urlsplit(values["GATEWAY_URL"])
+    assert gateway.scheme == "https"
+    assert gateway.hostname is not None and gateway.hostname.endswith(".invalid")
+    assert gateway.username is None and gateway.password is None
+    assert gateway.query == "" and gateway.fragment == ""
+
+    email_local, separator, email_domain = values["EMAIL_FROM"].partition("@")
+    assert email_local and separator == "@" and email_domain.endswith(".invalid")
+    assert values["CLAIMS_UPLOAD_DIR"].startswith("/tmp/release-import-smoke-")
+    for key in (
+        "GATEWAY_SHARED_SECRET",
+        "AUTH_TOKEN_SECRET",
+        "CLAIM_EDIT_TOKEN_SECRET",
+        "INVITE_TOKEN_SECRET",
+        "SESSION_SECRET",
+    ):
+        assert values[key].endswith("-not-a-secret")
+
+
+def test_release_dockerfiles_mount_smoke_vars_read_only_without_persisting_them() -> None:
+    mount = (
+        "--mount=type=bind,source=.github/ci/release-import-smoke.vars,"
+        "target=/run/release-import-smoke.vars,readonly"
+    )
+    for path, expected_imports in (
+        (ROOT / "services/product_api/Dockerfile", PRODUCT_IMPORTS),
+        (ROOT / "services/gateway_api/Dockerfile", GATEWAY_IMPORTS),
+    ):
+        text = path.read_text(encoding="utf-8")
+        release = text.split("FROM base AS release", 1)[1].split(
+            "FROM base AS local", 1
+        )[0]
+        assert release.count(mount) == 1
+        assert release.index("set -a") < release.index(
+            ". /run/release-import-smoke.vars"
+        )
+        assert release.index(". /run/release-import-smoke.vars") < release.index(
+            "set +a"
+        )
+        assert release.index("set +a") < release.index(expected_imports)
+
+        for instruction in _dockerfile_instructions(text):
+            directive = instruction.split(maxsplit=1)[0].upper()
+            if directive in {"ARG", "ENV"}:
+                for key in RELEASE_IMPORT_SMOKE_KEYS:
+                    assert re.search(rf"\b{re.escape(key)}\b", instruction) is None
+            if directive == "COPY":
+                assert "release-import-smoke.vars" not in instruction
+                assert re.match(r"^COPY\s+(?:--\S+\s+)*\.\s", instruction) is None
+
+
+def test_qa_uses_one_ephemeral_env_file_for_every_offline_image_import() -> None:
+    qa = QA.read_text(encoding="utf-8")
+    env_option = "--env-file .github/ci/release-import-smoke.vars"
+    smoke_runs = [
+        line.strip()
+        for line in qa.splitlines()
+        if "docker run " in line and "--entrypoint python" in line
+    ]
+
+    assert len(smoke_runs) == 3
+    assert all("--rm --network=none" in line for line in smoke_runs)
+    assert all(env_option in line for line in smoke_runs)
+    assert qa.count(env_option) == 3
+    assert f'smoke_imports="{PRODUCT_IMPORTS}"' in qa
+    assert f'smoke_imports="{GATEWAY_IMPORTS}"' in qa
+    assert any(PRODUCT_IMPORTS in line for line in smoke_runs)
+    assert any(GATEWAY_IMPORTS in line for line in smoke_runs)
+
+    assert 'for built_image in "$image:$RELEASE_SHA" "$image:repro-$RELEASE_SHA"; do' in qa
+    assert "docker image inspect \"$built_image\" --format '{{range .Config.Env}}{{println .}}{{end}}'" in qa
+    assert "while IFS='=' read -r key smoke_value; do" in qa
+    assert 'grep -q "^${key}=" <<< "$image_env"' in qa
+    assert "done < .github/ci/release-import-smoke.vars" in qa
+
+
+def test_release_smoke_vars_import_all_product_and_gateway_entrypoints(
+    tmp_path: Path,
+) -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", f"{PRODUCT_IMPORTS}; {GATEWAY_IMPORTS}"],
+        cwd=tmp_path,
+        env=_release_import_subprocess_env(include_smoke_values=True),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_release_entrypoints_remain_fail_closed_without_smoke_vars(
+    tmp_path: Path,
+) -> None:
+    environment = _release_import_subprocess_env(include_smoke_values=False)
+    for imports, required_key in (
+        (PRODUCT_IMPORTS, "DATABASE_URL"),
+        (GATEWAY_IMPORTS, "GATEWAY_SHARED_SECRET"),
+    ):
+        result = subprocess.run(
+            [sys.executable, "-c", imports],
+            cwd=tmp_path,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        assert result.returncode != 0
+        assert required_key in result.stdout + result.stderr
 
 
 def test_product_compose_keeps_local_sha_optional_and_deploy_supplies_exact_sha() -> None:
