@@ -56,7 +56,7 @@
 | 21 | `company-card-v2-ai-narrative` | Завершена |
 | 22 | `company-card-v2-page-shell` | Завершена |
 | 23 | `company-card-v2-finance-charts` | Завершена |
-| 24 | `company-card-v2-arbitration-charts` | Смерджена; PostgreSQL acceptance pending |
+| 24 | `company-card-v2-arbitration-charts` | Завершена |
 | 25 | `company-card-v2-qa-rollout` | Запланирована |
 
 ## 3. Инженерные правила roadmap
@@ -1520,14 +1520,17 @@ Slug: company-card-v2-finance-charts
 ID: 24
 Slug: company-card-v2-arbitration-charts
 
-Статус: merged в `e7478a2fba9aaca17829c3d99e89e8d83d4b3188`
+Статус: завершена. Реализация merged в
+`e7478a2fba9aaca17829c3d99e89e8d83d4b3188`
 2026-08-27T09:23:32+10:00. Код утверждённого scope получил финальный
 независимый code-review verdict `APPROVED`; доступные unit, frontend, build,
-gateway, release и migration-contract проверки проходят. Post-merge
-disposable PostgreSQL acceptance остаётся незакрытым: dedicated runner
-итерации 24 ещё не завершил clean acceptance, а iteration-20 acceptance
-намеренно исключает принадлежащий ему migration module и не заменяет этот
-gate.
+gateway, release и migration-contract проверки проходят. Dedicated
+post-merge disposable PostgreSQL acceptance закрыт 2026-08-28 на repository
+base `557244b69c5bf54bba6ae07bfd5a39638ff14f18`: migration module завершился
+`2 passed`, а затронутый nine-file integration suite — `79 passed`, без
+failures, errors или skips. Product API unit regression завершился
+`1524 passed`; labeled disposable container удалён. Воспроизводимый отчёт:
+[`iteration-24-post-merge-postgresql-acceptance-v1.md`](evidence/iteration-19-company-card-v2/iteration-24-post-merge-postgresql-acceptance-v1.md).
 Scope намеренно сужен до single-page completeness, observed years, RUB-only A4
 и all-masked A5. Production provider operation, publication и feature
 activation не разрешены.
@@ -1609,15 +1612,15 @@ ID: 25
 Slug: company-card-v2-qa-rollout
 
 Статус: planning input; основной путь итераций 19–24 и post-merge presentation
-lifecycle continuation итерации 20 merged/reconciled. Реализация стартует
-только после закрытия disposable PostgreSQL acceptance итерации 24 и
+lifecycle continuation итерации 20 merged/reconciled, а dedicated disposable
+PostgreSQL acceptance итерации 24 закрыт. Реализация стартует только после
 утверждения отдельных specification и implementation plan iteration 25.
 
 ### Зависимости
 
 - Все merged contracts/runtime/UI итераций 19–24 и закрытые evidence gates.
-- Post-merge disposable PostgreSQL acceptance итерации 24 должен быть закрыт
-  до реализации.
+- Post-merge disposable PostgreSQL acceptance итерации 24 закрыт; результат
+  зафиксирован в отдельном evidence artifact.
 - Feature flags остаются выключенными до отдельного rollout decision.
 
 ### Цель
