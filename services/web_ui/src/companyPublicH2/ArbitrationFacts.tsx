@@ -33,7 +33,7 @@ function FactsShell({ id, blockId, title, context, children }: { id: string; blo
     <h3>{title}</h3>
     <p data-h2-arbitration-coverage={blockId}>Покрытие представления: {context.coverage.state}; {arbitrationCollectionLabel(context.coverage.population_scope)}{context.coverage.returned !== null && <>; получено {arbitrationCount(context.coverage.returned)}</>}{context.coverage.total !== null && <> из {arbitrationCount(context.coverage.total)}</>}.</p>
     {children}
-    <section aria-label="Ограничения арбитражного представления" data-h2-arbitration-limitations={blockId}>
+    <section aria-label={`Ограничения арбитражного представления ${blockId}`} data-h2-arbitration-limitations={blockId}>
       <h4>Ограничения</h4>
       {context.limitations.length === 0
         ? <p>Ограничения для этого представления не указаны.</p>

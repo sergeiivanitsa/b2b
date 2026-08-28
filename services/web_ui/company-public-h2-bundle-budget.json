@@ -1,0 +1,70 @@
+{
+  "assets": [
+    {
+      "path": "assets/company-public-h2.BpRKylUz.js",
+      "raw_bytes": 307816,
+      "gzip_bytes": 91990,
+      "sha256": "e801bfaa788ca4cc7bfda5e3dbee4eb22548c8f4e4749080c452707a05e0b179"
+    },
+    {
+      "path": "assets/company-public-h2.CJwgWpoy.css",
+      "raw_bytes": 6263,
+      "gzip_bytes": 1559,
+      "sha256": "21a423245eab0092f3d70ed816f2df40981c576c1cfc5f8f0dd88092b7458a62"
+    },
+    {
+      "path": "assets/company-public-h2.CWjjw1Pe.js",
+      "raw_bytes": 692,
+      "gzip_bytes": 412,
+      "sha256": "6538ae1d1a0747db1cf415b1a4fd64e7fc97bc43685be905b7c4be5acd02c120"
+    },
+    {
+      "path": "assets/company-public-h2.DD5Vc9W2.js",
+      "raw_bytes": 7930,
+      "gzip_bytes": 3070,
+      "sha256": "04ada0103e52a5dbb6f66cdd51734ef7e562d1afde075407c669f53a48ba83ee"
+    },
+    {
+      "path": "assets/company-public-h2.yIMa9GAq.js",
+      "raw_bytes": 5865,
+      "gzip_bytes": 2507,
+      "sha256": "2b6fed50b1a5b375c30c7d7d850a10bf8e7cede4c522e6b4d0e35d59ea730ec0"
+    }
+  ],
+  "base": {
+    "commit": "31b299ac88b5fac7d5c04082324fb122d63db7e7",
+    "manifest_sha256": "68b1f2943514dccd8fbe0eee9923088d36a11847f610ac5c3474e33e7b0898b2",
+    "eager_raw_bytes": 313122,
+    "eager_gzip_bytes": 93386
+  },
+  "closures": {
+    "eager": [
+      "assets/company-public-h2.BpRKylUz.js",
+      "assets/company-public-h2.CJwgWpoy.css"
+    ],
+    "finance": [
+      "assets/company-public-h2.CWjjw1Pe.js",
+      "assets/company-public-h2.yIMa9GAq.js"
+    ],
+    "arbitration": [
+      "assets/company-public-h2.CWjjw1Pe.js",
+      "assets/company-public-h2.DD5Vc9W2.js"
+    ],
+    "all": [
+      "assets/company-public-h2.BpRKylUz.js",
+      "assets/company-public-h2.CJwgWpoy.css",
+      "assets/company-public-h2.CWjjw1Pe.js",
+      "assets/company-public-h2.DD5Vc9W2.js",
+      "assets/company-public-h2.yIMa9GAq.js"
+    ]
+  },
+  "eager_budget": {
+    "approved_gzip_bytes": 93549,
+    "approved_raw_bytes": 314079,
+    "gzip_delta": 163,
+    "raw_delta": 957,
+    "rationale": "Iteration 25 adds the reviewed safe-area token, fixed lazy-chart reservation, deterministic unique limitation landmark labels, local overflow containment for unwrapped finance tables, and touch-persistent lazy chart disclosures; factual values, order, and production dependencies remain unchanged."
+  },
+  "manifest_sha256": "e4800328189d5ed619932898edfce0635cb183b98a036482f3e5bd3a678e19c6",
+  "schema_version": "company_public_h2_bundle_budget_v1"
+}

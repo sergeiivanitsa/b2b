@@ -2650,6 +2650,10 @@ def test_v3_ssr_emits_five_factual_articles_with_masked_details() -> None:
     for index in range(1, 6):
         assert f'data-h2-arbitration-coverage="arbitration_a{index}"' in html
         assert f'data-h2-arbitration-enhancement="arbitration-a{index}"' in html
+        assert (
+            f'aria-label="Ограничения арбитражного представления arbitration_a{index}"'
+            in html
+        )
     assert "Количество дел по наблюдаемым годам и роли компании" in html
     assert "Распределение дел по роли компании" in html
     assert "Распределение дел по подтверждённому исходу" in html

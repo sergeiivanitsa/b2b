@@ -20,6 +20,9 @@ describe('policy-v3 arbitration factual DOM', () => {
     expect(container.querySelector('[data-h2-opponent-public-id="opponent_000001"]')?.textContent).toContain('Сторона скрыта 1')
     expect(container.textContent).toContain('−12,34 ₽')
     expect(container.textContent).not.toContain('ООО Контрагент')
+    for (const blockId of ['arbitration_a1', 'arbitration_a2', 'arbitration_a3', 'arbitration_a4', 'arbitration_a5']) {
+      expect(screen.getByRole('region', { name: `Ограничения арбитражного представления ${blockId}` })).toBeTruthy()
+    }
     for (const host of container.querySelectorAll('[data-h2-arbitration-enhancement]')) {
       expect(host.getAttribute('aria-hidden')).toBe('true')
       expect(host.childElementCount).toBe(0)

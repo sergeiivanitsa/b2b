@@ -4,14 +4,18 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
+SRC = ROOT / "services" / "product_api" / "src"
+for path in (str(ROOT), str(SRC)):
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+from tests_support.network_guard import prepare_test_environment
+
+prepare_test_environment(suite="product-integration")
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-
-os.environ.pop("OPENAI_API_KEY", None)
 
 _db_url = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 if _db_url:
@@ -67,6 +71,7 @@ TABLES = [
     "company_report_publication_batches",
     "company_report_publications",
     "company_report_publication_control",
+    "company_card_v2_rollout_decisions",
     "company_report_presentation_pins",
     "company_report_presentations",
     "company_report_presentation_assignment_journal",
@@ -104,6 +109,8 @@ SELF_MANAGED_DATABASE_TESTS = {
     "test_company_card_narrative_resolved_pin_refuses_downgrade",
     "test_iteration24_active_h2_guard_is_independent_and_pre_ddl",
     "test_iteration24_terminal_defaults_checks_and_round_trip",
+    "test_company_card_v2_rollout_clean_upgrade_downgrade_reupgrade",
+    "test_company_card_v2_rollout_downgrade_refuses_new_scope_or_audit",
 }
 
 

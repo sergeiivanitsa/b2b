@@ -31,7 +31,10 @@ from product_api.company_reports.company_card_v2.narrative.service import (
     validate_gateway_artifact,
     validate_narrative_report,
 )
-from product_api.company_reports.company_card_v2.public_h2 import build_public_h2
+from product_api.company_reports.company_card_v2.public_h2 import (
+    PublicH2ProjectionBindingV1,
+    build_public_h2,
+)
 from product_api.company_reports.company_card_v2.public_h2_models import PublicH2Narrative
 from product_api.company_reports.persistence.models import CompanyReportSubject
 from product_api.company_reports.persistence.narratives import NarrativeJobLease
@@ -221,14 +224,22 @@ async def test_narrative_uses_the_one_exact_saved_publication_policy(policy: str
         render_digest=sha256(FALLBACK_DESCRIPTION.encode("utf-8")).hexdigest(),
     )
     finance_enabled = policy == "company_public_h2_publication_v2"
+    staged_binding = PublicH2ProjectionBindingV1(
+        projection_scope="staged_publication",
+        canonical_path=f"/company/{card.subject_inn}-company",
+        indexable=False,
+        published_lastmod=None,
+    )
     expected = build_public_h2(
         card,
         narrative_binding=SimpleNamespace(narrative=fallback),
+        projection_binding=staged_binding,
         finance_enabled=finance_enabled,
     ).projection_digest
     opposite = build_public_h2(
         card,
         narrative_binding=SimpleNamespace(narrative=fallback),
+        projection_binding=staged_binding,
         finance_enabled=not finance_enabled,
     ).projection_digest
     assert fallback_projection_digest(validated) == expected

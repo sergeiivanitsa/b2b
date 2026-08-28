@@ -193,27 +193,19 @@ Nginx:
 - Use `deploy/nginx/gateway_api.conf` on Gateway server.
 - Replace allowlist IPs in gateway config with RU server public IPs.
 
-Release order (manual RU runbook):
+Iteration-25 release and rollout are documented in
+`docs/development/runbooks/company-card-v2-rollout.md`. Production is manual,
+protected and bound to one exact lowercase 40-hex main-history commit. CI
+builds Product, Gateway, SPA and H2 once; deploy consumes only the matching
+checksummed artifacts and `qa-required` attestation. It does not rebuild the
+default branch.
 
-1. Check out the exact candidate commit, build its `product_api` image, and
-   extract that image's packaged
-   `public_h2_asset_manifest.json` without replacing a running Product
-   process.
-2. Build the isolated H2 frontend bundle and assemble an immutable release
-   artifact containing exactly its `assets/` and the matching manifest.
-3. Before stopping the worker, running an Alembic migration, or replacing
-   `product_api`, run
-   `deploy/nginx/install_company_public_h2_assets.sh` against that artifact,
-   the candidate-image manifest, the stable H2 store, and the loopback HTTPS
-   endpoint. The installer validates the source graph, candidate identity,
-   durable manifest history, stored hashes, and loopback responses. A failed
-   gate leaves the Product processes untouched.
-4. Only after the asset gate succeeds, stop the old worker, run
-   `alembic upgrade head`, and recreate `product_api` together with
-   `company_report_worker` from the same candidate image. Verify health and
-   both running image IDs before continuing.
-5. Deploy Gateway and the regular SPA bundle separately, then run the nginx
-   reload and smoke checks described in `deploy/nginx/README.md`.
+All production gates P1–P9 remain `UNSET/STOP`. Repository defaults keep the
+provider off, AI fallback-only/kill-switched with zero budgets, rollout
+generation and percentage at zero, allowlist empty, and public assignment/
+indexing unchanged. Do not run seed, migration, deploy, assignment or a
+positive flag change until the runbook's separate evidence and authorization
+requirements are satisfied.
 
 ## SMTP requirements (product_api)
 Set these env vars before production deploy:

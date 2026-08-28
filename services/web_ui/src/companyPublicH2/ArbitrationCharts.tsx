@@ -14,7 +14,7 @@ import { ArbitrationChartErrorBoundary } from './ArbitrationChartErrorBoundary'
 
 export type ArbitrationChartHostId = 'arbitration-a1' | 'arbitration-a2' | 'arbitration-a3' | 'arbitration-a4' | 'arbitration-a5'
 type Disclosure = Readonly<{ id: string; text: string }> | null
-type Open = (item: Disclosure) => void
+type Open = (item: Disclosure, persistent?: boolean) => void
 const WIDTH = 640
 const LEFT = 150
 const PLOT = 430
@@ -56,25 +56,30 @@ function Mark({ id, label, tooltipId, x, y, width, height = 18, pattern, open }:
   const visibleWidth = Math.max(4, width)
   const visibleHeight = Math.max(4, height)
   const hit = 44
+  const item = { id, text: label }
+  const disclose = () => open(item)
   return <g>
     <rect aria-hidden="true" data-h2-chart-pattern={pattern} x={x} y={y} width={visibleWidth} height={visibleHeight} fill={`url(#${pattern})`} stroke="currentColor" />
-    <rect data-h2-arbitration-chart-mark={id} tabIndex={0} role="button" aria-describedby={tooltipId} aria-label={label} x={x + visibleWidth / 2 - hit / 2} y={y + visibleHeight / 2 - hit / 2} width={hit} height={hit} fill="transparent" onFocus={() => open({ id, text: label })} onMouseEnter={() => open({ id, text: label })} onTouchStart={() => open({ id, text: label })} onPointerDown={() => open({ id, text: label })} />
+    <rect data-h2-arbitration-chart-mark={id} tabIndex={0} role="button" aria-describedby={tooltipId} aria-label={label} x={x + visibleWidth / 2 - hit / 2} y={y + visibleHeight / 2 - hit / 2} width={hit} height={hit} fill="transparent" onFocus={disclose} onMouseEnter={disclose} onPointerEnter={event => { if (event.pointerType !== 'touch') open(item, false) }} onTouchStart={() => open(item, true)} onPointerDown={event => open(item, event.pointerType === 'touch')} onClick={disclose} />
   </g>
 }
 
 function Layer({ hostId, children }: { hostId: ArbitrationChartHostId; children: (open: Open, tooltipId: string, patternPrefix: string) => ReactNode }) {
   const [disclosure, setDisclosure] = useState<Disclosure>(null)
+  const [persistent, setPersistent] = useState(false)
   const root = useRef<HTMLElement>(null)
   const instance = useId().replaceAll(':', '')
   const tooltipId = `${hostId}-tooltip-${instance}`
   const patternPrefix = `${hostId}-pattern-${instance}`
+  const open: Open = (item, keep) => { if (keep !== undefined) setPersistent(keep); setDisclosure(item) }
+  const close = () => { setPersistent(false); setDisclosure(null) }
   useEffect(() => {
-    const close = (event: PointerEvent) => { if (root.current !== null && !root.current.contains(event.target as Node)) setDisclosure(null) }
-    document.addEventListener('pointerdown', close)
-    return () => document.removeEventListener('pointerdown', close)
+    const closeOutside = (event: PointerEvent) => { if (root.current !== null && !root.current.contains(event.target as Node)) { setPersistent(false); setDisclosure(null) } }
+    document.addEventListener('pointerdown', closeOutside)
+    return () => document.removeEventListener('pointerdown', closeOutside)
   }, [])
-  return <section ref={root} className="company-public-h2__chart-layer" onMouseLeave={() => setDisclosure(null)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDisclosure(null) }} onKeyDown={event => { if (event.key === 'Escape') setDisclosure(null) }}>
-    {children(setDisclosure, tooltipId, patternPrefix)}
+  return <section ref={root} className="company-public-h2__chart-layer" onMouseLeave={() => { if (!persistent) close() }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null) && (!persistent || event.relatedTarget !== null)) close() }} onKeyDown={event => { if (event.key === 'Escape') close() }}>
+    {children(open, tooltipId, patternPrefix)}
     {disclosure !== null && <p className="company-public-h2__chart-tooltip" id={tooltipId} role="tooltip">{disclosure.text}</p>}
   </section>
 }

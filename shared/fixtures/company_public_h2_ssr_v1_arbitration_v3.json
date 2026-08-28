@@ -5,7 +5,7 @@
   "html_fixture": "shared/fixtures/company_public_h2_ssr_v1_arbitration_v3.html",
   "nonce": "fixture-v3-nonce",
   "robots": "noindex,follow",
-  "html_sha256": "210553097664162c0dd61b557f3cd5cc47b18cf40bed3073bad4a5f972bf93e5",
+  "html_sha256": "205a8d889fc3ac259ef4d07bb2bd0a574e9aca33e7bf1c23de5cc6321f706b7f",
   "required_ids": [
     "hero-status",
     "narrative",

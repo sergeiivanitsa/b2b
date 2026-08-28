@@ -253,8 +253,8 @@ iterations:
   - id: 25
     slug: company-card-v2-qa-rollout
     title: "QA и rollout Company Card v2"
-    status: planned
-    branch: pending
+    status: implementing
+    branch: codex/iteration-25-company-card-v2-qa-rollout-refresh
     commit: pending
     merged_at: null
-    block_reason: "Ожидает отдельного утверждения specification/implementation plan итерации 25"
+    block_reason: "Owner implementation approval получен 2026-08-28; iteration 25 выполняется в independently reviewed scope. Исторический iteration-24 runner script не переиспользуется как gate: old migration assertions остаются на explicit 0018, новый iteration-25 runner/checker доказывает 0018 -> 0019/head и affected phase с JUnit nonzero/zero-skip proof. Production activation отдельно не разрешена."

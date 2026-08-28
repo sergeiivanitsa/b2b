@@ -13,7 +13,6 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse,
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from product_api.company_reports.persistence.publications import list_indexable_publications
 from product_api.company_reports.public_h1 import render_public_h1_html
 from product_api.company_reports.public_h1_service import (
     PublicH1FailedError,
@@ -26,7 +25,10 @@ from product_api.company_reports.public_h1_service import (
     validate_active_publication,
 )
 from product_api.company_reports.public_document_service import (
-    PublicDocumentInvalid, PublicDocumentKind, resolve_public_document,
+    PublicDocumentInvalid,
+    PublicDocumentKind,
+    resolve_public_document,
+    scan_public_sitemap,
 )
 from product_api.company_reports.company_card_v2.public_h2_asset_manifest import PublicH2AssetManifest
 from product_api.company_reports.company_card_v2.public_h2_document import (
@@ -134,12 +136,19 @@ async def sitemap_index(request: Request, session: AsyncSession = Depends(get_se
     if request.query_params:
         return _not_found()
     try:
-        pages = [page for page in await list_indexable_publications(session) if _current_public_projection(page) is not None]
         size = get_settings().seo_sitemap_chunk_size
+        scan = await scan_public_sitemap(
+            session,
+            chunk_size=size,
+            chunk_number=None,
+        )
         base = get_settings().seo_public_base_url.rstrip("/")
-        chunks = [f"{base}/sitemaps/{number}.xml" for number in range(1, (len(pages) + size - 1) // size + 1)]
+        chunks = [
+            f"{base}/sitemaps/{number}.xml"
+            for number in range(1, (scan.eligible_count + size - 1) // size + 1)
+        ]
         return Response(render_sitemap_index(chunks), media_type="application/xml", headers=_headers("noindex,follow"))
-    except SQLAlchemyError:
+    except (SQLAlchemyError, RuntimeError):
         return PlainTextResponse("Unavailable", status_code=503, headers=_headers("noindex,follow"))
 
 
@@ -148,14 +157,31 @@ async def sitemap_chunk(chunk: str, request: Request, session: AsyncSession = De
     if request.query_params or not _CHUNK.fullmatch(chunk):
         return _not_found()
     try:
-        pages = [page for page in await list_indexable_publications(session) if _current_public_projection(page) is not None]
-        size, number = get_settings().seo_sitemap_chunk_size, int(chunk[:-4])
-        selected = pages[(number - 1) * size:number * size]
-        if not selected:
+        number = int(chunk[:-4])
+    except ValueError:
+        # Python bounds decimal parsing to protect the process from hostile
+        # inputs.  An otherwise numeric but overlong chunk remains a stable
+        # out-of-range public URL, not an internal error.
+        return _not_found()
+    try:
+        size = get_settings().seo_sitemap_chunk_size
+        scan = await scan_public_sitemap(
+            session,
+            chunk_size=size,
+            chunk_number=number,
+        )
+        if not scan.entries:
             return _not_found()
         base = get_settings().seo_public_base_url.rstrip("/")
-        return Response(render_sitemap(((f"{base}{page.publication.canonical_path}", page.publication.published_lastmod) for page in selected if page.publication.published_lastmod)), media_type="application/xml", headers=_headers("noindex,follow"))
-    except SQLAlchemyError:
+        return Response(
+            render_sitemap(
+                (f"{base}{entry.canonical_path}", entry.published_lastmod)
+                for entry in scan.entries
+            ),
+            media_type="application/xml",
+            headers=_headers("noindex,follow"),
+        )
+    except (SQLAlchemyError, RuntimeError):
         return PlainTextResponse("Unavailable", status_code=503, headers=_headers("noindex,follow"))
 
 

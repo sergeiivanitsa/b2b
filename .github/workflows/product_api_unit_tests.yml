@@ -1,25 +1,19 @@
-name: Product API unit tests
+name: Legacy Product QA wrapper
 
 on:
-  push:
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact lowercase main-history commit to verify
+        required: true
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
-  product_api_unit_tests:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-      - name: Upgrade pip
-        run: python -m pip install -U pip
-      - name: Install product_api
-        run: python -m pip install -e "services/product_api[test]"
-      - name: Run unit tests
-        run: python -m pytest services/product_api/tests_unit -q
+  compatibility-wrapper:
+    name: compatibility-wrapper-only
+    uses: ./.github/workflows/qa.yml
+    with:
+      release_sha: ${{ inputs.release_sha }}

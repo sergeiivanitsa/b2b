@@ -1,0 +1,81 @@
+{
+  "schema_version": "company_card_v2_iteration25_seed_registry_v1",
+  "generated_at": "2026-08-28T00:00:00Z",
+  "profiles": [
+    {
+      "profile_id": "sks_morphology_complete_v1",
+      "subject_id": "25000000-0000-4000-8000-000000000001",
+      "h1_report_id": "25100000-0000-4000-8000-000000000001",
+      "h2_report_id": "25200000-0000-4000-8000-000000000001",
+      "inn": "7700000001",
+      "display_name": "Синтетическая морфология",
+      "canonical_path": "/company/7700000001-company",
+      "wrong_slug_path": "/company/7700000001-wrong",
+      "expected_indexable": false,
+      "expected_lazy_hosts": ["finance-f1", "finance-f2", "finance-f3", "finance-f4", "arbitration-a1", "arbitration-a2", "arbitration-a3", "arbitration-a4", "arbitration-a5"],
+      "expected_visible_text": ["Синтетическая морфология", "7700000001"],
+      "forbidden_visible_text": ["СКС", "api.datanewton.ru", "sk-test"],
+      "lazy_failure_chunk": null
+    },
+    {
+      "profile_id": "sparse_missing_fallback_v1",
+      "subject_id": "25000000-0000-4000-8000-000000000002",
+      "h1_report_id": "25100000-0000-4000-8000-000000000002",
+      "h2_report_id": "25200000-0000-4000-8000-000000000002",
+      "inn": "7700000002",
+      "display_name": "Синтетическая разреженная карточка",
+      "canonical_path": "/company/7700000002-company",
+      "wrong_slug_path": "/company/7700000002-wrong",
+      "expected_indexable": false,
+      "expected_lazy_hosts": ["arbitration-a1", "arbitration-a2", "arbitration-a3", "arbitration-a4", "arbitration-a5"],
+      "expected_visible_text": ["Синтетическая разреженная карточка", "7700000002"],
+      "forbidden_visible_text": ["СКС", "api.datanewton.ru", "sk-test"],
+      "lazy_failure_chunk": null
+    },
+    {
+      "profile_id": "partial_long_limitations_v1",
+      "subject_id": "25000000-0000-4000-8000-000000000003",
+      "h1_report_id": "25100000-0000-4000-8000-000000000003",
+      "h2_report_id": "25200000-0000-4000-8000-000000000003",
+      "inn": "7700000003",
+      "display_name": "Синтетическая частичная карточка с длинным ограничением",
+      "canonical_path": "/company/7700000003-company",
+      "wrong_slug_path": "/company/7700000003-wrong",
+      "expected_indexable": false,
+      "expected_lazy_hosts": ["finance-f1", "finance-f2", "finance-f3", "finance-f4", "arbitration-a1", "arbitration-a2", "arbitration-a3", "arbitration-a4", "arbitration-a5"],
+      "expected_visible_text": ["Синтетическая частичная карточка с длинным ограничением", "7700000003"],
+      "forbidden_visible_text": ["СКС", "api.datanewton.ru", "sk-test"],
+      "lazy_failure_chunk": null
+    },
+    {
+      "profile_id": "large_n_signed_masked_v1",
+      "subject_id": "25000000-0000-4000-8000-000000000004",
+      "h1_report_id": "25100000-0000-4000-8000-000000000004",
+      "h2_report_id": "25200000-0000-4000-8000-000000000004",
+      "inn": "7700000004",
+      "display_name": "Синтетическая маскированная выборка",
+      "canonical_path": "/company/7700000004-company",
+      "wrong_slug_path": "/company/7700000004-wrong",
+      "expected_indexable": false,
+      "expected_lazy_hosts": ["finance-f1", "finance-f2", "finance-f3", "finance-f4", "arbitration-a1", "arbitration-a2", "arbitration-a3", "arbitration-a4", "arbitration-a5"],
+      "expected_visible_text": ["Синтетическая маскированная выборка", "7700000004"],
+      "forbidden_visible_text": ["СКС", "api.datanewton.ru", "sk-test"],
+      "lazy_failure_chunk": null
+    },
+    {
+      "profile_id": "lazy_failure_v1",
+      "subject_id": "25000000-0000-4000-8000-000000000005",
+      "h1_report_id": "25100000-0000-4000-8000-000000000005",
+      "h2_report_id": "25200000-0000-4000-8000-000000000005",
+      "inn": "7700000005",
+      "display_name": "Синтетический отказ ленивого графика",
+      "canonical_path": "/company/7700000005-company",
+      "wrong_slug_path": "/company/7700000005-wrong",
+      "expected_indexable": false,
+      "expected_lazy_hosts": ["finance-f1", "finance-f2", "finance-f3", "finance-f4", "arbitration-a1", "arbitration-a2", "arbitration-a3", "arbitration-a4", "arbitration-a5"],
+      "expected_visible_text": ["Синтетический отказ ленивого графика", "7700000005"],
+      "forbidden_visible_text": ["СКС", "api.datanewton.ru", "sk-test"],
+      "lazy_failure_chunk": "finance"
+    }
+  ]
+}

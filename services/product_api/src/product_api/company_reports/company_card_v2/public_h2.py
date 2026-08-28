@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP, localcontext
 from hashlib import sha256
-from typing import Protocol
+from typing import Literal, Protocol
 from zoneinfo import ZoneInfo
 
 from product_api.company_reports.aggregate import CompanyReport
@@ -113,6 +113,49 @@ class NarrativeBindingProtocol(Protocol):
 
 
 @dataclass(frozen=True)
+class PublicH2ProjectionBindingV1:
+    """Explicit, immutable publication coordinates for one H2 projection.
+
+    The value is supplied by the already selected persistence boundary.  It
+    deliberately contains no settings, request state or clock dependency.
+    ``published_lastmod`` is not part of the public DTO, but validating it
+    here prevents an active projection from being built without the exact
+    immutable publication timestamp that must be persisted beside the pin.
+    """
+
+    projection_scope: Literal[
+        "active_publication", "staged_publication", "latest_unpublished"
+    ]
+    canonical_path: str
+    indexable: bool
+    published_lastmod: datetime | None
+
+    def __post_init__(self) -> None:
+        if type(self.indexable) is not bool:
+            raise TypeError("public H2 indexability must be an exact boolean")
+        if (
+            not isinstance(self.canonical_path, str)
+            or not self.canonical_path.startswith("/company/")
+        ):
+            raise ValueError("public H2 canonical path is invalid")
+        if self.projection_scope == "active_publication":
+            if (
+                self.published_lastmod is None
+                or self.published_lastmod.tzinfo is None
+                or self.published_lastmod.utcoffset() is None
+            ):
+                raise ValueError("active public H2 lastmod is invalid")
+        elif self.projection_scope in {
+            "staged_publication",
+            "latest_unpublished",
+        }:
+            if self.indexable or self.published_lastmod is not None:
+                raise ValueError("non-active public H2 binding must be noindex")
+        else:  # pragma: no cover - the annotation is not a runtime boundary
+            raise ValueError("public H2 projection scope is invalid")
+
+
+@dataclass(frozen=True)
 class _ArbitrationProjection:
     blocks: dict[str, object | None]
     coverage: dict[str, PublicH2CoverageItem]
@@ -132,6 +175,7 @@ def build_public_h2(
     ),
     *,
     narrative_binding: NarrativeBindingProtocol,
+    projection_binding: PublicH2ProjectionBindingV1 | None = None,
     fixture_finance_views: dict[str, object] | None = None,
     finance_enabled: bool = False,
     arbitration_enabled: bool = False,
@@ -153,7 +197,16 @@ def build_public_h2(
     checked_at = _utc_z(snapshot.generated_at)
     checked_date = snapshot.generated_at.astimezone(_MOSCOW).date().isoformat()
     name = snapshot.counterparty.full_name or snapshot.counterparty.short_name or snapshot.subject_inn
-    canonical_path = f"/company/{snapshot.subject_inn}-company"
+    default_canonical_path = f"/company/{snapshot.subject_inn}-company"
+    projection_binding = projection_binding or PublicH2ProjectionBindingV1(
+        projection_scope="latest_unpublished",
+        canonical_path=default_canonical_path,
+        indexable=False,
+        published_lastmod=None,
+    )
+    if type(projection_binding) is not PublicH2ProjectionBindingV1:
+        raise TypeError("public H2 projection binding is invalid")
+    canonical_path = projection_binding.canonical_path
     # ``fixture_finance_views`` is retained only for frozen golden callers. A
     # saved v2 publication policy explicitly enables the same pure projection
     # at runtime; legacy/v1 callers never enter this branch.
@@ -327,8 +380,8 @@ def build_public_h2(
     payload = {
         "contract_version": "company_public_h2_v1", "report_id": snapshot.report_id, "report_version": "3",
         "chart_facts_version": snapshot.chart_facts.version, "chart_facts_hash": snapshot.chart_facts.hash,
-        "snapshot_capability": "card_v2", "projection_scope": "latest_unpublished", "canonical_path": canonical_path,
-        "indexable": False, "checked_at": checked_at, "checked_date": checked_date, "checked_date_display": checked_date,
+        "snapshot_capability": "card_v2", "projection_scope": projection_binding.projection_scope, "canonical_path": canonical_path,
+        "indexable": projection_binding.indexable, "checked_at": checked_at, "checked_date": checked_date, "checked_date_display": checked_date,
         "identity": PublicH2Identity(display_name=name, legal_full_name=name, short_name=snapshot.counterparty.short_name,
             inn=snapshot.counterparty.inn, ogrn=snapshot.counterparty.ogrn, kpp=snapshot.counterparty.kpp,
             registration_date=snapshot.counterparty.registration_date.isoformat() if snapshot.counterparty.registration_date else None,
@@ -371,6 +424,37 @@ def build_public_h2(
     else:
         _assert_policy_v3_projection_safe(response, snapshot)
     return response
+
+
+def rebind_public_h2_projection(
+    response: CompanyPublicH2Response,
+    *,
+    projection_binding: PublicH2ProjectionBindingV1,
+) -> CompanyPublicH2Response:
+    """Rebind one fully validated DTO without reopening saved/private inputs.
+
+    Rollout planning first validates the exact staged pin through the normal
+    saved-result boundary.  Only the public projection coordinates then
+    change.  Re-validating and re-digesting the complete DTO makes this pure
+    transformation byte-equivalent to rebuilding from the same snapshot and
+    narrative with the explicit binding.
+    """
+    if type(response) is not CompanyPublicH2Response:
+        raise TypeError("public H2 response is invalid")
+    if type(projection_binding) is not PublicH2ProjectionBindingV1:
+        raise TypeError("public H2 projection binding is invalid")
+    payload = response.model_dump(mode="json")
+    payload.pop("projection_digest", None)
+    payload["projection_scope"] = projection_binding.projection_scope
+    payload["canonical_path"] = projection_binding.canonical_path
+    payload["indexable"] = projection_binding.indexable
+    breadcrumbs = [dict(item) for item in payload["breadcrumbs"]]
+    breadcrumbs[1]["path"] = projection_binding.canonical_path
+    payload["breadcrumbs"] = breadcrumbs
+    rebound = CompanyPublicH2Response.model_validate(
+        {**payload, "projection_digest": canonical_digest(payload)}
+    )
+    return rebound
 
 
 def _provider_utc_z(value) -> str:
@@ -1509,6 +1593,8 @@ __all__ = [
     "EMPTY_CHART_FACTS_VERSION",
     "LegacySnapshotBinding",
     "NarrativeBindingProtocol",
+    "PublicH2ProjectionBindingV1",
     "build_legacy_public_h2",
     "build_public_h2",
+    "rebind_public_h2_projection",
 ]

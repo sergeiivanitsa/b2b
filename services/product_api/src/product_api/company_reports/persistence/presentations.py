@@ -9,12 +9,23 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
-    CompanyCardNarrativeArtifact, CompanyReportH2LifecycleHead, CompanyReportPresentation, CompanyReportPresentationAssignment, CompanyReportPresentationAssignmentJournal, CompanyReportSubject,
-    CompanyReportPresentationPin, CompanyReportPresentationStagedPointer, CompanyReportRecord,
+    CompanyCardNarrativeArtifact,
+    CompanyCardNarrativeJob,
+    CompanyCardV2RolloutDecision,
+    CompanyReportH2LifecycleHead,
+    CompanyReportPresentation,
+    CompanyReportPresentationAssignment,
+    CompanyReportPresentationAssignmentJournal,
+    CompanyReportPresentationPin,
+    CompanyReportPresentationStagedPointer,
+    CompanyReportPublication,
+    CompanyReportRecord,
+    CompanyReportSubject,
 )
 from .jobs import EnqueuedReportJob, H2_PRESENTATION_CONTRACT, H2_WRITER_PROFILE, WriterDecision, enqueue_company_report_job
 from .v3 import calculate_company_card_v2_snapshot_hash, company_card_v2_from_snapshot
@@ -33,6 +44,8 @@ H2_PUBLICATION_POLICY_VERSION = H2_PUBLICATION_POLICY_V1
 H2_PUBLICATION_POLICY_VERSIONS = frozenset(
     (H2_PUBLICATION_POLICY_V1, H2_PUBLICATION_POLICY_V2, H2_PUBLICATION_POLICY_V3)
 )
+H2_STAGED_PROJECTION_SCOPE = "staged_publication"
+H2_ACTIVE_PROJECTION_SCOPE = "active_publication"
 
 
 def _report_arbitration_decision(
@@ -126,6 +139,344 @@ class ResolvedPresentationLifecycle:
     report_id: UUID
     lifecycle_status: str
     normalized_identifier: str
+
+
+@dataclass(frozen=True)
+class RolloutAssignmentCommand:
+    """Exact per-subject CAS input; it never rediscovers a latest pin."""
+
+    decision_id: UUID
+    decision_digest: str
+    schema_version: str
+    release_commit: str
+    action: str
+    stage: str
+    h2_indexable: bool
+    target_count: int
+    reason_code: str
+    subject_id: UUID
+    inn: str
+    expected_assignment_generation: int
+    expected_current_contract: str | None
+    expected_current_pin_generation: int | None
+    expected_rollout_generation: int | None
+    target_contract: str
+    target_pin_generation: int
+    source_h2_pin_generation: int | None = None
+    h1_rollback_pin_generation: int | None = None
+    expected_target_projection_digest: str | None = None
+
+    def __post_init__(self) -> None:
+        valid_contracts = {
+            "company_public_h1_v1",
+            H2_PRESENTATION_CONTRACT,
+        }
+        absent = self.expected_assignment_generation == 0
+        if (
+            type(self.decision_id) is not UUID
+            or not _is_digest(self.decision_digest)
+            or self.schema_version != "company_card_v2_rollout_decision_v1"
+            or type(self.release_commit) is not str
+            or len(self.release_commit) != 40
+            or any(
+                character not in "0123456789abcdef"
+                for character in self.release_commit
+            )
+            or self.action not in {"activate", "rollback"}
+            or self.stage
+            not in {"allowlist", "percentage", "ga", "emergency_rollback"}
+            or type(self.h2_indexable) is not bool
+            or type(self.target_count) is not int
+            or not 1 <= self.target_count <= 1000
+            or self.reason_code
+            not in {
+                "activate_allowlist",
+                "activate_percentage",
+                "activate_ga",
+                "rollback_emergency_rollback",
+            }
+            or type(self.expected_assignment_generation) is not int
+            or self.expected_assignment_generation < 0
+            or type(self.subject_id) is not UUID
+            or type(self.inn) is not str
+            or len(self.inn) not in {10, 12}
+            or not self.inn.isascii()
+            or not self.inn.isdigit()
+            or self.expected_current_contract not in valid_contracts | {None}
+            or self.target_contract not in valid_contracts
+            or type(self.target_pin_generation) is not int
+            or self.target_pin_generation <= 0
+            or absent
+            != (
+                self.expected_current_contract is None
+                and self.expected_current_pin_generation is None
+            )
+            or (
+                not absent
+                and (
+                    type(self.expected_current_pin_generation) is not int
+                    or self.expected_current_pin_generation <= 0
+                )
+            )
+        ):
+            raise ValueError("rollout assignment command is invalid")
+        if self.target_contract == H2_PRESENTATION_CONTRACT:
+            if (
+                type(self.h1_rollback_pin_generation) is not int
+                or self.h1_rollback_pin_generation <= 0
+                or type(self.source_h2_pin_generation) is not int
+                or self.source_h2_pin_generation <= 0
+                or type(self.expected_rollout_generation) is not int
+                or self.expected_rollout_generation <= 0
+                or not _is_digest(self.expected_target_projection_digest)
+                or self.action != "activate"
+                or self.stage not in {"allowlist", "percentage", "ga"}
+                or self.reason_code != f"activate_{self.stage}"
+                or (self.stage == "ga" and self.h2_indexable is not True)
+            ):
+                raise ValueError("H2 rollout assignment command is invalid")
+        elif (
+            self.reason_code != "rollback_emergency_rollback"
+            or self.action != "rollback"
+            or self.stage != "emergency_rollback"
+            or self.h2_indexable is not False
+            or self.expected_rollout_generation is not None
+            or self.source_h2_pin_generation is not None
+            or self.h1_rollback_pin_generation is not None
+            or self.expected_target_projection_digest is not None
+        ):
+            raise ValueError("H1 rollback assignment command is invalid")
+
+    def __repr__(self) -> str:
+        return (
+            "<RolloutAssignmentCommand "
+            f"decision_id={self.decision_id!s} reason_code={self.reason_code!r}>"
+        )
+
+
+@dataclass(frozen=True)
+class RolloutAssignmentOutcome:
+    code: str
+    assignment_id: UUID | None
+    assignment_generation: int
+    presentation_contract: str
+    pin_generation: int
+
+
+@dataclass(frozen=True)
+class _H1AssignmentIdentity:
+    subject_id: UUID
+    presentation_contract: str
+    pin_generation: int
+
+
+@dataclass(frozen=True)
+class _H1PublicationIdentity:
+    publication: CompanyReportPublication
+    subject: CompanyReportSubject
+    report: CompanyReportRecord
+
+
+def _validate_h1_rollout_pin(
+    *,
+    subject: CompanyReportSubject,
+    pin: CompanyReportPresentationPin,
+    report: CompanyReportRecord | None,
+) -> None:
+    """Apply the shared complete H1 public predicate to an exact immutable pin."""
+    if (
+        report is None
+        or pin.subject_id != subject.id
+        or pin.presentation_contract != "company_public_h1_v1"
+        or pin.projection_scope is not None
+        or pin.report_id != report.id
+        or pin.snapshot_hash != report.snapshot_hash
+        or pin.indexable is not True
+        or pin.projection_digest is not None
+        or pin.narrative_binding_status is not None
+        or pin.narrative_binding_kind is not None
+        or pin.narrative_binding_key is not None
+        or pin.chart_facts_version is not None
+        or pin.chart_facts_hash is not None
+        or pin.evidence_registry_version is not None
+        or report.subject_id != subject.id
+        or report.writer_profile != "h1_legacy_writer_v2"
+        or report.presentation_contract != "company_public_h1_v1"
+        or report.rollout_generation != 0
+        or report.report_version not in {"1", "2"}
+    ):
+        raise PresentationAssignmentConflict("H1 rollout pin lineage is invalid")
+    # Local import avoids making the public resolver depend on this persistence
+    # module while reusing its canonical pure validation rules byte-for-byte.
+    from product_api.company_reports.public_h1_service import (
+        validate_assigned_public_h1,
+    )
+
+    try:
+        dto = validate_assigned_public_h1(
+            subject,
+            _H1AssignmentIdentity(
+                subject_id=subject.id,
+                presentation_contract="company_public_h1_v1",
+                pin_generation=pin.generation,
+            ),
+            pin,
+            report,
+        )
+    except Exception as exc:
+        raise PresentationAssignmentConflict(
+            "H1 rollout pin projection is invalid"
+        ) from exc
+    if dto.indexable is not True or dto.canonical_path != pin.canonical_path:
+        raise PresentationAssignmentConflict("H1 rollout pin projection is invalid")
+
+
+def _validate_active_h1_publication(
+    *,
+    subject: CompanyReportSubject,
+    publication: CompanyReportPublication,
+    report: CompanyReportRecord | None,
+) -> bool:
+    """Return whether the no-assignment legacy document is valid/indexable."""
+    if report is None:
+        raise PresentationAssignmentConflict("active H1 publication is invalid")
+    from product_api.company_reports.public_h1_service import (
+        validate_active_publication,
+    )
+
+    try:
+        dto = validate_active_publication(
+            _H1PublicationIdentity(
+                publication=publication,
+                subject=subject,
+                report=report,
+            )
+        )
+    except Exception as exc:
+        raise PresentationAssignmentConflict(
+            "active H1 publication is invalid"
+        ) from exc
+    return dto.indexable is True
+
+
+async def bind_rollout_decision(
+    session: AsyncSession,
+    *,
+    decision_id: UUID,
+    decision_digest: str,
+    schema_version: str,
+    release_commit: str,
+    action: str,
+    stage: str,
+    target_contract: str,
+    h2_indexable: bool,
+    target_count: int,
+) -> CompanyCardV2RolloutDecision:
+    """Insert or compare the one global non-sensitive decision binding."""
+    values = (
+        decision_digest,
+        schema_version,
+        release_commit,
+        action,
+        stage,
+        target_contract,
+        h2_indexable,
+        target_count,
+    )
+    if (
+        not _is_digest(decision_digest)
+        or schema_version != "company_card_v2_rollout_decision_v1"
+        or not isinstance(release_commit, str)
+        or len(release_commit) != 40
+        or any(character not in "0123456789abcdef" for character in release_commit)
+        or action not in {"activate", "rollback"}
+        or (
+            action == "activate"
+            and (
+                stage not in {"allowlist", "percentage", "ga"}
+                or target_contract != H2_PRESENTATION_CONTRACT
+                or (stage == "ga" and h2_indexable is not True)
+            )
+        )
+        or (
+            action == "rollback"
+            and (
+                stage != "emergency_rollback"
+                or target_contract != "company_public_h1_v1"
+                or h2_indexable is not False
+            )
+        )
+        or type(h2_indexable) is not bool
+        or type(target_count) is not int
+        or not 1 <= target_count <= 1000
+    ):
+        raise PresentationAssignmentConflict("rollout decision binding is invalid")
+    statement = (
+        select(CompanyCardV2RolloutDecision)
+        .where(
+            or_(
+                CompanyCardV2RolloutDecision.decision_id == decision_id,
+                CompanyCardV2RolloutDecision.decision_digest == decision_digest,
+            )
+        )
+        .with_for_update()
+    )
+
+    async def locked_match() -> CompanyCardV2RolloutDecision | None:
+        bindings = list((await session.scalars(statement)).all())
+        if not bindings:
+            return None
+        if (
+            len(bindings) != 1
+            or bindings[0].decision_id != decision_id
+            or bindings[0].decision_digest != decision_digest
+        ):
+            raise PresentationAssignmentConflict(
+                "rollout decision identity conflicts"
+            )
+        return bindings[0]
+
+    binding = await locked_match()
+    if binding is None:
+        candidate = CompanyCardV2RolloutDecision(
+            decision_id=decision_id,
+            decision_digest=decision_digest,
+            schema_version=schema_version,
+            release_commit=release_commit,
+            action=action,
+            stage=stage,
+            target_contract=target_contract,
+            h2_indexable=h2_indexable,
+            target_count=target_count,
+        )
+        try:
+            async with session.begin_nested():
+                session.add(candidate)
+                await session.flush()
+        except IntegrityError as exc:
+            # The savepoint preserves the caller-owned binding transaction.
+            # Re-read both unique identities after the winner commits and
+            # convert every mismatch to the same closed domain conflict.
+            binding = await locked_match()
+            if binding is None:
+                raise PresentationAssignmentConflict(
+                    "rollout decision insert conflicts"
+                ) from exc
+        else:
+            binding = candidate
+    current = (
+        binding.decision_digest,
+        binding.schema_version,
+        binding.release_commit,
+        binding.action,
+        binding.stage,
+        binding.target_contract,
+        binding.h2_indexable,
+        binding.target_count,
+    )
+    if current != values:
+        raise PresentationAssignmentConflict("rollout decision binding conflicts")
+    return binding
 
 
 async def resolve_presentation_lifecycle(
@@ -279,6 +630,12 @@ async def append_presentation_pin(
             existing.report_id == report.id
             and existing.snapshot_hash == report.snapshot_hash
             and existing.presentation_contract == contract
+            and (
+                existing.projection_scope is None
+                if contract != H2_PRESENTATION_CONTRACT
+                else existing.projection_scope
+                in {None, H2_STAGED_PROJECTION_SCOPE}
+            )
             and existing.publication_policy_version == publication_policy_version
             and existing.canonical_path == canonical_path
             and existing.published_lastmod == published_lastmod
@@ -331,6 +688,7 @@ async def append_presentation_pin(
         pin = CompanyReportPresentationPin(
             subject_id=subject_id, report_id=report.id, presentation_contract=contract,
             generation=generation, snapshot_hash=report.snapshot_hash, indexable=False,
+            projection_scope=H2_STAGED_PROJECTION_SCOPE,
             projection_digest=None, narrative_binding_status="unresolved",
             narrative_binding_kind=None, narrative_binding_key=None,
             chart_facts_version=chart_facts_version,
@@ -349,6 +707,7 @@ async def append_presentation_pin(
         pin = CompanyReportPresentationPin(
             subject_id=subject_id, report_id=report.id, presentation_contract=contract,
             generation=generation, snapshot_hash=report.snapshot_hash,
+            projection_scope=None,
             publication_policy_version=publication_policy_version,
             canonical_path=canonical_path,
             published_lastmod=published_lastmod,
@@ -414,6 +773,7 @@ async def _resolve_unresolved_h2_pin(
     for pin in exact:
         if (
             pin.publication_policy_version != expected_policy
+            or pin.projection_scope not in {None, H2_STAGED_PROJECTION_SCOPE}
             or pin.snapshot_hash != report.snapshot_hash
             or pin.chart_facts_version != snapshot.chart_facts.version
             or pin.chart_facts_hash != snapshot.chart_facts.hash
@@ -428,6 +788,7 @@ async def _resolve_unresolved_h2_pin(
         if (
             pin.snapshot_hash != report.snapshot_hash
             or pin.publication_policy_version != expected_policy
+            or pin.projection_scope not in {None, H2_STAGED_PROJECTION_SCOPE}
             or pin.narrative_binding_status != "unresolved"
             or pin.chart_facts_version != snapshot.chart_facts.version
             or pin.chart_facts_hash != snapshot.chart_facts.hash
@@ -483,7 +844,15 @@ async def require_existing_unresolved_h2_pin(
 
 
 async def stage_h2_pin(session: AsyncSession, *, subject_id: UUID, pin: CompanyReportPresentationPin, expected_generation: int) -> CompanyReportPresentationStagedPointer:
-    if pin.subject_id != subject_id or pin.presentation_contract != "company_public_h2_v1" or expected_generation != pin.generation:
+    if (
+        pin.subject_id != subject_id
+        or pin.presentation_contract != H2_PRESENTATION_CONTRACT
+        or expected_generation != pin.generation
+        or pin.projection_scope not in {None, H2_STAGED_PROJECTION_SCOPE}
+        or pin.indexable is not False
+        or pin.canonical_path is not None
+        or pin.published_lastmod is not None
+    ):
         raise PresentationAssignmentConflict("staged pointer identity is invalid")
     pointer = await session.scalar(select(CompanyReportPresentationStagedPointer).where(CompanyReportPresentationStagedPointer.subject_id == subject_id).with_for_update())
     if pointer is None:
@@ -560,6 +929,7 @@ async def append_resolved_h2_pin(
     if (
         predecessor.subject_id != report.subject_id
         or predecessor.snapshot_hash != report.snapshot_hash
+        or predecessor.projection_scope not in {None, H2_STAGED_PROJECTION_SCOPE}
         or predecessor.indexable is not False
         or predecessor.projection_digest is not None
         or predecessor.narrative_binding_kind is not None
@@ -574,6 +944,7 @@ async def append_resolved_h2_pin(
             continue
         exact = (
             existing.snapshot_hash == report.snapshot_hash
+            and existing.projection_scope in {None, H2_STAGED_PROJECTION_SCOPE}
             and existing.indexable is False
             and existing.canonical_path is None
             and existing.published_lastmod is None
@@ -606,6 +977,7 @@ async def append_resolved_h2_pin(
         chart_facts_hash=snapshot.chart_facts.hash,
         evidence_registry_version=snapshot.evidence_version,
         publication_policy_version=policy,
+        projection_scope=H2_STAGED_PROJECTION_SCOPE,
         canonical_path=None,
         indexable=False,
         published_lastmod=None,
@@ -625,6 +997,732 @@ async def append_resolved_h2_pin(
     return pin, pointer
 
 
+async def _plan_active_h2_pin_locked(
+    session: AsyncSession,
+    *,
+    subject: CompanyReportSubject,
+    pins: list[CompanyReportPresentationPin],
+    report: CompanyReportRecord,
+    source_pin: CompanyReportPresentationPin,
+    expected_generation: int,
+    projection_digest: str,
+    canonical_path: str,
+    indexable: bool,
+    published_lastmod: datetime,
+) -> CompanyReportPresentationPin:
+    """Validate and plan one active H2 row in an already locked target context.
+
+    The caller owns the subject-first lock and the complete ordered pin lock.
+    A byte-identical active row may be reused; a new row remains transient until
+    the caller has validated the complete CAS and is ready to append it beside
+    the assignment/journal mutation.
+    """
+    if (
+        source_pin.presentation_contract != H2_PRESENTATION_CONTRACT
+        or source_pin.projection_scope not in {None, H2_STAGED_PROJECTION_SCOPE}
+        or source_pin.indexable is not False
+        or source_pin.canonical_path is not None
+        or source_pin.published_lastmod is not None
+        or source_pin.narrative_binding_status != "resolved"
+        or source_pin.narrative_binding_kind not in {"artifact", "fallback"}
+        or not _is_digest(source_pin.narrative_binding_key)
+        or not _is_digest(source_pin.projection_digest)
+        or source_pin.publication_policy_version != H2_PUBLICATION_POLICY_V3
+        or type(expected_generation) is not int
+        or expected_generation <= 0
+        or not _is_digest(projection_digest)
+        or projection_digest == source_pin.projection_digest
+        or type(canonical_path) is not str
+        or not canonical_path.startswith("/company/")
+        or "?" in canonical_path
+        or "#" in canonical_path
+        or len(canonical_path) > 2048
+        or type(indexable) is not bool
+        or not isinstance(published_lastmod, datetime)
+    ):
+        raise PresentationAssignmentConflict("active H2 pin input is invalid")
+
+    if (
+        source_pin.subject_id != subject.id
+        or source_pin.report_id != report.id
+        or canonical_path == f"/company/{subject.normalized_identifier}"
+        or not canonical_path.startswith(
+            f"/company/{subject.normalized_identifier}-"
+        )
+    ):
+        raise PresentationAssignmentConflict("active H2 pin subject is invalid")
+
+    locked_source = next(
+        (
+            pin
+            for pin in pins
+            if pin.presentation_contract == H2_PRESENTATION_CONTRACT
+            and pin.generation == source_pin.generation
+        ),
+        None,
+    )
+    if locked_source is None or any(
+        getattr(locked_source, field) != getattr(source_pin, field)
+        for field in (
+            "report_id",
+            "snapshot_hash",
+            "projection_scope",
+            "projection_digest",
+            "narrative_binding_status",
+            "narrative_binding_kind",
+            "narrative_binding_key",
+            "chart_facts_version",
+            "chart_facts_hash",
+            "evidence_registry_version",
+            "publication_policy_version",
+        )
+    ):
+        raise PresentationAssignmentConflict("active H2 source pin conflicts")
+
+    locked_report = await session.get(
+        CompanyReportRecord,
+        report.id,
+        with_for_update=True,
+    )
+    if locked_report is None:
+        raise PresentationAssignmentConflict("active H2 report is missing")
+    try:
+        snapshot = company_card_v2_from_snapshot(
+            deepcopy(locked_report.normalized_snapshot)
+        )
+    except Exception as exc:
+        raise PresentationAssignmentConflict("active H2 snapshot is invalid") from exc
+    _validate_h2_snapshot_policy(
+        locked_report,
+        snapshot,
+        H2_PUBLICATION_POLICY_V3,
+    )
+    if (
+        locked_report.subject_id != subject.id
+        or locked_report.report_version != "3"
+        or locked_report.writer_profile != H2_WRITER_PROFILE
+        or locked_report.presentation_contract != H2_PRESENTATION_CONTRACT
+        or locked_report.lifecycle_status not in {"complete", "partial"}
+        or (indexable and locked_report.lifecycle_status != "complete")
+        or locked_report.generated_at is None
+        or locked_report.generated_at != published_lastmod
+        or locked_report.snapshot_hash != locked_source.snapshot_hash
+        or snapshot.report_id != str(locked_report.id)
+        or snapshot.subject_inn != subject.normalized_identifier
+        or snapshot.target_inn != subject.normalized_identifier
+        or snapshot.rollout_config_generation != locked_report.rollout_generation
+        or calculate_company_card_v2_snapshot_hash(snapshot)
+        != locked_report.snapshot_hash
+    ):
+        raise PresentationAssignmentConflict("active H2 report lineage is invalid")
+
+    if locked_source.narrative_binding_kind is None or locked_source.narrative_binding_key is None:
+        raise PresentationAssignmentConflict("active H2 narrative binding is invalid")
+    artifact = await session.scalar(
+        select(CompanyCardNarrativeArtifact)
+        .where(
+            CompanyCardNarrativeArtifact.binding_kind
+            == locked_source.narrative_binding_kind,
+            CompanyCardNarrativeArtifact.binding_key
+            == locked_source.narrative_binding_key,
+        )
+        .with_for_update()
+    )
+    if (
+        artifact is None
+        or artifact.report_id != locked_report.id
+        or artifact.snapshot_hash != locked_report.snapshot_hash
+        or not _has_exact_artifact_binding(artifact)
+    ):
+        raise PresentationAssignmentConflict("active H2 artifact lineage is invalid")
+
+    presentation = await session.scalar(
+        select(CompanyReportPresentation)
+        .where(
+            CompanyReportPresentation.subject_id == subject.id,
+            CompanyReportPresentation.report_id == locked_report.id,
+            CompanyReportPresentation.presentation_contract
+            == H2_PRESENTATION_CONTRACT,
+        )
+        .with_for_update()
+    )
+    narrative_job = await session.scalar(
+        select(CompanyCardNarrativeJob)
+        .where(
+            CompanyCardNarrativeJob.artifact_id == artifact.id,
+            CompanyCardNarrativeJob.generation_key == artifact.generation_key,
+        )
+        .with_for_update()
+    )
+    if presentation is None or narrative_job is None:
+        raise PresentationAssignmentConflict("active H2 saved result is invalid")
+
+    # The pure rebind must reproduce the command's exact active digest before
+    # the caller may append this transient row beside assignment CAS.
+    from product_api.company_reports.company_card_v2.service import (
+        ExactPublicH2Dependencies,
+        build_active_public_h2_for_pin,
+    )
+
+    try:
+        active_projection = await build_active_public_h2_for_pin(
+            session,
+            record=locked_report,
+            source_pin=locked_source,
+            expected_subject_id=subject.id,
+            expected_inn=subject.normalized_identifier,
+            canonical_path=canonical_path,
+            indexable=indexable,
+            published_lastmod=published_lastmod,
+            dependencies=ExactPublicH2Dependencies(
+                presentation=presentation,
+                narrative_job=narrative_job,
+                narrative_artifact=artifact,
+            ),
+        )
+    except Exception as exc:
+        raise PresentationAssignmentConflict(
+            "active H2 saved result is invalid"
+        ) from exc
+    if (
+        active_projection.projection_digest != projection_digest
+        or active_projection.canonical_path != canonical_path
+        or active_projection.indexable is not indexable
+    ):
+        raise PresentationAssignmentConflict(
+            "active H2 projection binding is invalid"
+        )
+
+    expected_values = (
+        locked_report.id,
+        locked_report.snapshot_hash,
+        H2_ACTIVE_PROJECTION_SCOPE,
+        locked_source.chart_facts_version,
+        locked_source.chart_facts_hash,
+        locked_source.evidence_registry_version,
+        locked_source.publication_policy_version,
+        canonical_path,
+        indexable,
+        published_lastmod,
+        projection_digest,
+        "resolved",
+        locked_source.narrative_binding_kind,
+        locked_source.narrative_binding_key,
+    )
+    exact_existing = []
+    existing_at_generation = None
+    for candidate in pins:
+        if candidate.presentation_contract != H2_PRESENTATION_CONTRACT:
+            continue
+        if candidate.generation == expected_generation:
+            existing_at_generation = candidate
+        candidate_values = (
+            candidate.report_id,
+            candidate.snapshot_hash,
+            candidate.projection_scope,
+            candidate.chart_facts_version,
+            candidate.chart_facts_hash,
+            candidate.evidence_registry_version,
+            candidate.publication_policy_version,
+            candidate.canonical_path,
+            candidate.indexable,
+            candidate.published_lastmod,
+            candidate.projection_digest,
+            candidate.narrative_binding_status,
+            candidate.narrative_binding_kind,
+            candidate.narrative_binding_key,
+        )
+        if candidate_values == expected_values:
+            exact_existing.append(candidate)
+    if len(exact_existing) > 1:
+        raise PresentationAssignmentConflict("active H2 pin identity is duplicated")
+    if exact_existing:
+        existing = exact_existing[0]
+        if existing.generation != expected_generation:
+            raise PresentationAssignmentConflict("active H2 pin generation conflicts")
+        return existing
+    if existing_at_generation is not None:
+        raise PresentationAssignmentConflict("active H2 pin generation conflicts")
+
+    next_generation = max(
+        (
+            pin.generation
+            for pin in pins
+            if pin.presentation_contract == H2_PRESENTATION_CONTRACT
+        ),
+        default=0,
+    ) + 1
+    if expected_generation != next_generation:
+        raise PresentationAssignmentConflict("active H2 pin generation conflicts")
+    pin = CompanyReportPresentationPin(
+        subject_id=subject.id,
+        report_id=locked_report.id,
+        presentation_contract=H2_PRESENTATION_CONTRACT,
+        generation=expected_generation,
+        snapshot_hash=locked_report.snapshot_hash,
+        chart_facts_version=locked_source.chart_facts_version,
+        chart_facts_hash=locked_source.chart_facts_hash,
+        evidence_registry_version=locked_source.evidence_registry_version,
+        publication_policy_version=locked_source.publication_policy_version,
+        projection_scope=H2_ACTIVE_PROJECTION_SCOPE,
+        canonical_path=canonical_path,
+        indexable=indexable,
+        published_lastmod=published_lastmod,
+        projection_digest=projection_digest,
+        narrative_binding_status="resolved",
+        narrative_binding_kind=locked_source.narrative_binding_kind,
+        narrative_binding_key=locked_source.narrative_binding_key,
+    )
+    return pin
+
+
+async def assign_rollout_pin_cas(
+    session: AsyncSession,
+    *,
+    command: RolloutAssignmentCommand,
+) -> RolloutAssignmentOutcome:
+    """Switch one exact assignment with subject-first CAS and durable audit."""
+    subject = await session.get(
+        CompanyReportSubject,
+        command.subject_id,
+        with_for_update=True,
+    )
+    if subject is None or subject.normalized_identifier != command.inn:
+        raise PresentationAssignmentConflict("assignment subject is missing")
+
+    assignment = await session.scalar(
+        select(CompanyReportPresentationAssignment)
+        .where(
+            CompanyReportPresentationAssignment.subject_id == command.subject_id
+        )
+        .with_for_update()
+    )
+    journal = await session.scalar(
+        select(CompanyReportPresentationAssignmentJournal)
+        .where(
+            CompanyReportPresentationAssignmentJournal.subject_id
+            == command.subject_id,
+            CompanyReportPresentationAssignmentJournal.decision_digest
+            == command.decision_digest,
+        )
+        .with_for_update()
+    )
+    bindings = list(
+        (
+            await session.scalars(
+                select(CompanyCardV2RolloutDecision).where(
+                    or_(
+                        CompanyCardV2RolloutDecision.decision_id
+                        == command.decision_id,
+                        CompanyCardV2RolloutDecision.decision_digest
+                        == command.decision_digest,
+                    )
+                )
+            )
+        ).all()
+    )
+    expected_binding = (
+        command.decision_digest,
+        command.schema_version,
+        command.release_commit,
+        command.action,
+        command.stage,
+        command.target_contract,
+        command.h2_indexable,
+        command.target_count,
+    )
+    if (
+        len(bindings) != 1
+        or bindings[0].decision_id != command.decision_id
+        or (
+            bindings[0].decision_digest,
+            bindings[0].schema_version,
+            bindings[0].release_commit,
+            bindings[0].action,
+            bindings[0].stage,
+            bindings[0].target_contract,
+            bindings[0].h2_indexable,
+            bindings[0].target_count,
+        )
+        != expected_binding
+    ):
+        raise PresentationAssignmentConflict("rollout decision binding conflicts")
+    if journal is not None:
+        if (
+            assignment is None
+            or journal.assignment_id != assignment.id
+            or journal.decision_id != command.decision_id
+            or journal.reason_code != command.reason_code
+            or journal.presentation_contract != command.target_contract
+            or journal.pin_generation != command.target_pin_generation
+        ):
+            raise PresentationAssignmentConflict("rollout journal identity conflicts")
+        if (
+            assignment.generation == journal.generation
+            and assignment.presentation_contract == journal.presentation_contract
+            and assignment.pin_generation == journal.pin_generation
+        ):
+            return RolloutAssignmentOutcome(
+                code="applied_current",
+                assignment_id=assignment.id,
+                assignment_generation=assignment.generation,
+                presentation_contract=assignment.presentation_contract,
+                pin_generation=assignment.pin_generation,
+            )
+        raise PresentationAssignmentConflict("decision_superseded")
+
+    if assignment is None:
+        current_generation = 0
+        current_contract = None
+        current_pin_generation = None
+    else:
+        current_generation = assignment.generation
+        current_contract = assignment.presentation_contract
+        current_pin_generation = assignment.pin_generation
+    if (
+        current_generation != command.expected_assignment_generation
+        or current_contract != command.expected_current_contract
+        or current_pin_generation != command.expected_current_pin_generation
+    ):
+        raise PresentationAssignmentConflict("assignment generation conflicts")
+
+    legacy_publication = None
+    if assignment is None:
+        legacy_publication = await session.scalar(
+            select(CompanyReportPublication)
+            .where(CompanyReportPublication.subject_id == command.subject_id)
+            .with_for_update()
+        )
+
+    pins = list(
+        (
+            await session.scalars(
+                select(CompanyReportPresentationPin)
+                .where(CompanyReportPresentationPin.subject_id == command.subject_id)
+                .order_by(
+                    CompanyReportPresentationPin.presentation_contract,
+                    CompanyReportPresentationPin.generation,
+                )
+                .with_for_update()
+            )
+        ).all()
+    )
+    current_pin = None
+    if assignment is not None:
+        current_pin = next(
+            (
+                pin
+                for pin in pins
+                if pin.presentation_contract == assignment.presentation_contract
+                and pin.generation == assignment.pin_generation
+            ),
+            None,
+        )
+        if current_pin is None:
+            raise PresentationAssignmentConflict("current assignment pin is missing")
+
+    rollback_pin = None
+    source_h2_pin = None
+    if command.target_contract == H2_PRESENTATION_CONTRACT:
+        source_h2_pin = next(
+            (
+                pin
+                for pin in pins
+                if pin.presentation_contract == H2_PRESENTATION_CONTRACT
+                and pin.generation == command.source_h2_pin_generation
+            ),
+            None,
+        )
+        rollback_pin = next(
+            (
+                pin
+                for pin in pins
+                if pin.presentation_contract == "company_public_h1_v1"
+                and pin.generation == command.h1_rollback_pin_generation
+            ),
+            None,
+        )
+        if source_h2_pin is None or rollback_pin is None:
+            raise PresentationAssignmentConflict("H2 assignment lineage is invalid")
+        source_report = await session.get(
+            CompanyReportRecord,
+            source_h2_pin.report_id,
+            with_for_update=True,
+        )
+        if source_report is None:
+            raise PresentationAssignmentConflict("assignment target report is invalid")
+        target_pin = await _plan_active_h2_pin_locked(
+            session,
+            subject=subject,
+            pins=pins,
+            report=source_report,
+            source_pin=source_h2_pin,
+            expected_generation=command.target_pin_generation,
+            projection_digest=command.expected_target_projection_digest,
+            canonical_path=f"/company/{command.inn}-company",
+            indexable=command.h2_indexable,
+            published_lastmod=source_report.generated_at,
+        )
+    else:
+        target_pin = next(
+            (
+                pin
+                for pin in pins
+                if pin.presentation_contract == command.target_contract
+                and pin.generation == command.target_pin_generation
+            ),
+            None,
+        )
+        if target_pin is None:
+            raise PresentationAssignmentConflict("assignment target pin is missing")
+
+    report_ids = {target_pin.report_id}
+    if source_h2_pin is not None:
+        report_ids.add(source_h2_pin.report_id)
+    if rollback_pin is not None:
+        report_ids.add(rollback_pin.report_id)
+    if current_pin is not None and current_pin.presentation_contract == "company_public_h1_v1":
+        report_ids.add(current_pin.report_id)
+    if legacy_publication is not None and legacy_publication.status == "active":
+        report_ids.add(legacy_publication.report_id)
+    reports: dict[UUID, CompanyReportRecord | None] = {}
+    for report_id in sorted(report_ids, key=str):
+        reports[report_id] = await session.get(
+            CompanyReportRecord,
+            report_id,
+            with_for_update=True,
+        )
+
+    target_report = reports.get(target_pin.report_id)
+    if (
+        target_report is None
+        or target_report.subject_id != command.subject_id
+        or target_report.snapshot_hash != target_pin.snapshot_hash
+        or target_report.lifecycle_status not in {"complete", "partial"}
+    ):
+        raise PresentationAssignmentConflict("assignment target report is invalid")
+
+    current_h1_indexable = False
+    if current_pin is not None and current_pin.presentation_contract == "company_public_h1_v1":
+        _validate_h1_rollout_pin(
+            subject=subject,
+            pin=current_pin,
+            report=reports.get(current_pin.report_id),
+        )
+        current_h1_indexable = True
+    elif legacy_publication is not None and legacy_publication.status == "active":
+        current_h1_indexable = _validate_active_h1_publication(
+            subject=subject,
+            publication=legacy_publication,
+            report=reports.get(legacy_publication.report_id),
+        )
+
+    if command.target_contract == H2_PRESENTATION_CONTRACT:
+        if (
+            target_pin.projection_scope != H2_ACTIVE_PROJECTION_SCOPE
+            or target_pin.indexable is not command.h2_indexable
+            or target_pin.narrative_binding_status != "resolved"
+            or target_pin.canonical_path is None
+            or target_pin.published_lastmod is None
+            or target_pin.projection_digest
+            != command.expected_target_projection_digest
+            or rollback_pin is None
+            or source_h2_pin is None
+            or rollback_pin.indexable is not True
+            or rollback_pin.projection_scope is not None
+            or source_h2_pin.projection_scope
+            not in {None, H2_STAGED_PROJECTION_SCOPE}
+            or source_h2_pin.indexable is not False
+            or source_h2_pin.canonical_path is not None
+            or source_h2_pin.published_lastmod is not None
+            or source_h2_pin.narrative_binding_status != "resolved"
+            or source_h2_pin.report_id != target_pin.report_id
+            or source_h2_pin.snapshot_hash != target_pin.snapshot_hash
+            or source_h2_pin.chart_facts_version != target_pin.chart_facts_version
+            or source_h2_pin.chart_facts_hash != target_pin.chart_facts_hash
+            or source_h2_pin.evidence_registry_version
+            != target_pin.evidence_registry_version
+            or source_h2_pin.publication_policy_version
+            != target_pin.publication_policy_version
+            or source_h2_pin.narrative_binding_kind
+            != target_pin.narrative_binding_kind
+            or source_h2_pin.narrative_binding_key
+            != target_pin.narrative_binding_key
+            or (current_h1_indexable and target_pin.indexable is False)
+        ):
+            raise PresentationAssignmentConflict("H2 assignment lineage is invalid")
+        _validate_h1_rollout_pin(
+            subject=subject,
+            pin=rollback_pin,
+            report=reports.get(rollback_pin.report_id),
+        )
+        try:
+            snapshot = company_card_v2_from_snapshot(
+                deepcopy(target_report.normalized_snapshot)
+            )
+        except Exception as exc:
+            raise PresentationAssignmentConflict(
+                "H2 assignment snapshot is invalid"
+            ) from exc
+        _validate_h2_snapshot_policy(
+            target_report,
+            snapshot,
+            H2_PUBLICATION_POLICY_V3,
+        )
+        if (
+            target_report.report_version != "3"
+            or target_report.writer_profile != H2_WRITER_PROFILE
+            or target_report.presentation_contract != H2_PRESENTATION_CONTRACT
+            or target_report.rollout_generation
+            != command.expected_rollout_generation
+            or (target_pin.indexable and target_report.lifecycle_status != "complete")
+            or target_report.generated_at != target_pin.published_lastmod
+            or snapshot.report_id != str(target_report.id)
+            or snapshot.subject_inn != subject.normalized_identifier
+            or snapshot.target_inn != subject.normalized_identifier
+            or snapshot.rollout_config_generation != target_report.rollout_generation
+            or calculate_company_card_v2_snapshot_hash(snapshot)
+            != target_report.snapshot_hash
+        ):
+            raise PresentationAssignmentConflict("H2 assignment report is invalid")
+        artifact = await session.scalar(
+            select(CompanyCardNarrativeArtifact)
+            .where(
+                CompanyCardNarrativeArtifact.binding_kind
+                == target_pin.narrative_binding_kind,
+                CompanyCardNarrativeArtifact.binding_key
+                == target_pin.narrative_binding_key,
+            )
+            .with_for_update()
+        )
+        if (
+            artifact is None
+            or artifact.report_id != target_report.id
+            or artifact.snapshot_hash != target_report.snapshot_hash
+            or not _has_exact_artifact_binding(artifact)
+        ):
+            raise PresentationAssignmentConflict("H2 assignment artifact is invalid")
+        presentation = await session.scalar(
+            select(CompanyReportPresentation)
+            .where(
+                CompanyReportPresentation.subject_id == subject.id,
+                CompanyReportPresentation.report_id == target_report.id,
+                CompanyReportPresentation.presentation_contract
+                == H2_PRESENTATION_CONTRACT,
+            )
+            .with_for_update()
+        )
+        narrative_job = await session.scalar(
+            select(CompanyCardNarrativeJob)
+            .where(
+                CompanyCardNarrativeJob.artifact_id == artifact.id,
+                CompanyCardNarrativeJob.generation_key == artifact.generation_key,
+            )
+            .with_for_update()
+        )
+        if presentation is None or narrative_job is None:
+            raise PresentationAssignmentConflict("H2 assignment saved result is invalid")
+        from product_api.company_reports.company_card_v2.service import (
+            ExactPublicH2Dependencies,
+            _resolve_exact_v3,
+        )
+
+        try:
+            await _resolve_exact_v3(
+                session,
+                target_report,
+                pin=source_h2_pin,
+                expected_subject_id=subject.id,
+                expected_inn=subject.normalized_identifier,
+                dependencies=ExactPublicH2Dependencies(
+                    presentation=presentation,
+                    narrative_job=narrative_job,
+                    narrative_artifact=artifact,
+                ),
+            )
+            active_projection = await _resolve_exact_v3(
+                session,
+                target_report,
+                pin=target_pin,
+                expected_subject_id=subject.id,
+                expected_inn=subject.normalized_identifier,
+                dependencies=ExactPublicH2Dependencies(
+                    presentation=presentation,
+                    narrative_job=narrative_job,
+                    narrative_artifact=artifact,
+                ),
+            )
+        except Exception as exc:
+            raise PresentationAssignmentConflict(
+                "H2 assignment saved result is invalid"
+            ) from exc
+        if active_projection.projection_digest != target_pin.projection_digest:
+            raise PresentationAssignmentConflict(
+                "H2 assignment projection is invalid"
+            )
+    else:
+        if command.expected_current_contract != H2_PRESENTATION_CONTRACT:
+            raise PresentationAssignmentConflict("H1 rollback lineage is invalid")
+        _validate_h1_rollout_pin(
+            subject=subject,
+            pin=target_pin,
+            report=target_report,
+        )
+
+    if (
+        assignment is not None
+        and assignment.presentation_contract == target_pin.presentation_contract
+        and assignment.pin_generation == target_pin.generation
+    ):
+        return RolloutAssignmentOutcome(
+            code="already_target",
+            assignment_id=assignment.id,
+            assignment_generation=assignment.generation,
+            presentation_contract=assignment.presentation_contract,
+            pin_generation=assignment.pin_generation,
+        )
+
+    if target_pin not in pins:
+        session.add(target_pin)
+        await session.flush()
+
+    next_generation = current_generation + 1
+    if assignment is None:
+        assignment = CompanyReportPresentationAssignment(
+            subject_id=command.subject_id,
+            presentation_contract=target_pin.presentation_contract,
+            pin_generation=target_pin.generation,
+            generation=next_generation,
+        )
+        session.add(assignment)
+        await session.flush()
+    else:
+        assignment.presentation_contract = target_pin.presentation_contract
+        assignment.pin_generation = target_pin.generation
+        assignment.generation = next_generation
+
+    session.add(
+        CompanyReportPresentationAssignmentJournal(
+            assignment_id=assignment.id,
+            subject_id=command.subject_id,
+            presentation_contract=target_pin.presentation_contract,
+            pin_generation=target_pin.generation,
+            generation=next_generation,
+            decision_id=command.decision_id,
+            decision_digest=command.decision_digest,
+            reason_code=command.reason_code,
+        )
+    )
+    await session.flush()
+    return RolloutAssignmentOutcome(
+        code="applied",
+        assignment_id=assignment.id,
+        assignment_generation=assignment.generation,
+        presentation_contract=assignment.presentation_contract,
+        pin_generation=assignment.pin_generation,
+    )
+
+
 async def assign_pin_cas(session: AsyncSession, *, subject_id: UUID, pin: CompanyReportPresentationPin, expected_generation: int) -> CompanyReportPresentationAssignment:
     if pin.subject_id != subject_id or expected_generation != pin.generation:
         raise PresentationAssignmentConflict("assignment pin identity is invalid")
@@ -634,6 +1732,9 @@ async def assign_pin_cas(session: AsyncSession, *, subject_id: UUID, pin: Compan
         raise PresentationAssignmentConflict("unresolved H2 pin is not assignable")
     if pin.presentation_contract != "company_public_h1_v1":
         raise PresentationAssignmentConflict("assignment contract is invalid")
+    subject = await session.get(CompanyReportSubject, subject_id, with_for_update=True)
+    if subject is None:
+        raise PresentationAssignmentConflict("assignment subject is missing")
     assignment = await session.scalar(select(CompanyReportPresentationAssignment).where(CompanyReportPresentationAssignment.subject_id == subject_id).with_for_update())
     if assignment is None:
         if expected_generation != 1:
@@ -675,18 +1776,24 @@ async def assign_pin_cas(session: AsyncSession, *, subject_id: UUID, pin: Compan
 
 
 __all__ = [
+    "H2_ACTIVE_PROJECTION_SCOPE",
     "H2_PUBLICATION_POLICY_V1",
     "H2_PUBLICATION_POLICY_V2",
     "H2_PUBLICATION_POLICY_V3",
     "H2_PUBLICATION_POLICY_VERSION",
     "H2_PUBLICATION_POLICY_VERSIONS",
+    "H2_STAGED_PROJECTION_SCOPE",
     "PresentationAssignmentConflict",
     "PresentationLifecycleInvalid",
     "PresentationLifecycleNotFound",
     "ResolvedPresentationLifecycle",
+    "RolloutAssignmentCommand",
+    "RolloutAssignmentOutcome",
     "append_presentation_pin",
     "append_resolved_h2_pin",
     "assign_pin_cas",
+    "assign_rollout_pin_cas",
+    "bind_rollout_decision",
     "create_or_reuse_h2_presentation",
     "resolve_presentation_lifecycle",
     "stage_h2_pin",

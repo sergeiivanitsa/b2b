@@ -1,0 +1,572 @@
+name: qa-required
+
+on:
+  pull_request:
+  workflow_call:
+    inputs:
+      release_sha:
+        description: Exact lowercase commit SHA to verify
+        required: true
+        type: string
+    outputs:
+      verified_release_sha:
+        description: Exact release SHA accepted by every QA job
+        value: ${{ jobs.qa-required.outputs.verified_release_sha }}
+      release_artifact_name:
+        description: Build-once release artifact name
+        value: ${{ jobs.qa-required.outputs.release_artifact_name }}
+      attestation_artifact_name:
+        description: Canonical QA attestation artifact name
+        value: ${{ jobs.qa-required.outputs.attestation_artifact_name }}
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12.11"
+  NODE_VERSION: "22.17.1"
+  POSTGRES_IMAGE: postgres:16.9-alpine@sha256:b441677c946de564fe88ae4245ba80fe84a69485b22bf560e9c7c3710cd5e21d
+  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:c091b21d9fae78c76e85cd4356431e9b018402f172a214fc7d7a5e9a7e29d8ac
+  BUILDKIT_IMAGE: moby/buildkit:v0.23.2@sha256:e39f6119f134b4811af19fd5c20f495a6a264a85c1b6920daf569b23009dd42c
+
+jobs:
+  resolve-release:
+    name: resolve-release
+    runs-on: ubuntu-24.04
+    outputs:
+      release_sha: ${{ steps.release.outputs.release_sha }}
+    steps:
+      - name: Resolve the one release identity
+        id: release
+        shell: bash
+        env:
+          REQUESTED_RELEASE_SHA: ${{ inputs.release_sha || github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$REQUESTED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          echo "release_sha=$REQUESTED_RELEASE_SHA" >> "$GITHUB_OUTPUT"
+
+  python-unit-contract:
+    name: python-unit-contract
+    needs: resolve-release
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.resolve-release.outputs.release_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up locked Python
+        uses: ./.github/actions/setup-python-ci
+        with:
+          release-sha: ${{ needs.resolve-release.outputs.release_sha }}
+      - name: Run Product and Gateway contracts with enforced JUnit
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          result_root=".tmp/qa-python-$RELEASE_SHA"
+          mkdir -p "$result_root"
+          product_started="$(python -c 'import time; print(time.time_ns())')"
+          python -m pytest services/product_api/tests_unit -q -ra -p no:cacheprovider --junitxml="$result_root/product-unit.xml"
+          python scripts/check-iteration25-test-results.py --phase product-unit --junit "$result_root/product-unit.xml" --not-before-ns "$product_started"
+          gateway_started="$(python -c 'import time; print(time.time_ns())')"
+          python -m pytest services/gateway_api/tests -q -ra -p no:cacheprovider --junitxml="$result_root/gateway.xml"
+          python scripts/check-iteration25-test-results.py --phase gateway --junit "$result_root/gateway.xml" --not-before-ns "$gateway_started"
+
+  postgres-full:
+    name: postgres-full
+    needs: resolve-release
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.resolve-release.outputs.release_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up locked Python
+        uses: ./.github/actions/setup-python-ci
+        with:
+          release-sha: ${{ needs.resolve-release.outputs.release_sha }}
+      - name: Materialize exact local PostgreSQL image
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          docker pull --platform linux/amd64 "$POSTGRES_IMAGE"
+      - name: Run disposable full PostgreSQL acceptance
+        shell: bash
+        run: pwsh -NoProfile -File scripts/run-iteration25-postgres-tests.ps1 -Mode PostgresFull
+
+  web-static:
+    name: web-static
+    needs: resolve-release
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.resolve-release.outputs.release_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up exact Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.17.1
+          check-latest: false
+      - name: Run static Web gates
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          npm ci --no-audit --prefix services/web_ui
+          npm run lint --prefix services/web_ui
+          npm run test --prefix services/web_ui
+
+  release-build:
+    name: release-build
+    needs: [resolve-release, python-unit-contract, web-static]
+    runs-on: ubuntu-24.04
+    outputs:
+      release_artifact_name: qa-release-${{ needs.resolve-release.outputs.release_sha }}
+    steps:
+      - name: Check out exact release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.resolve-release.outputs.release_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up locked Python
+        uses: ./.github/actions/setup-python-ci
+        with:
+          release-sha: ${{ needs.resolve-release.outputs.release_sha }}
+      - name: Set up exact Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.17.1
+          check-latest: false
+      - name: Set up digest-pinned BuildKit
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        with:
+          version: v0.25.0
+          driver: docker-container
+          driver-opts: image=moby/buildkit:v0.23.2@sha256:e39f6119f134b4811af19fd5c20f495a6a264a85c1b6920daf569b23009dd42c
+      - name: Build exact wheelhouses and Web assets once
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
+          find services/product_api services/gateway_api shared -type f -exec touch -d "@$SOURCE_DATE_EPOCH" {} +
+          mkdir -p .release/product/wheelhouse .release/gateway/wheelhouse .release/artifacts
+          python -m pip download --no-deps --only-binary=:all: --require-hashes -r .github/ci/python-bootstrap.lock -r .github/ci/python-product-runtime.lock -d .release/product/wheelhouse
+          python -m pip download --no-deps --only-binary=:all: --require-hashes -r .github/ci/python-bootstrap.lock -r .github/ci/python-gateway-runtime.lock -d .release/gateway/wheelhouse
+          python -m pip wheel --no-deps --no-build-isolation --wheel-dir .release/product services/product_api
+          python -m pip wheel --no-deps --no-build-isolation --wheel-dir .release/gateway services/gateway_api
+          python - <<'PY'
+          from hashlib import sha256
+          from pathlib import Path
+          for service, wheel in (("product", "product_api-0.1.0-py3-none-any.whl"), ("gateway", "gateway_api-0.1.0-py3-none-any.whl")):
+              root = Path(".release") / service
+              local = root / wheel
+              if not local.is_file():
+                  raise SystemExit(f"missing exact local wheel: {local}")
+              (root / "project-wheel.sha256").write_text(f"{sha256(local.read_bytes()).hexdigest()}  {wheel}\n", encoding="ascii", newline="\n")
+              rows = []
+              for item in sorted((root / "wheelhouse").iterdir(), key=lambda value: value.name):
+                  if not item.is_file() or item.suffix != ".whl" or item.is_symlink():
+                      raise SystemExit("wheelhouse contains a non-wheel")
+                  rows.append(f"{sha256(item.read_bytes()).hexdigest()}  {item.name}\n")
+              (root / "wheelhouse" / "wheelhouse.sha256").write_text("".join(rows), encoding="ascii", newline="\n")
+          PY
+          npm ci --no-audit --prefix services/web_ui
+          npm run build --prefix services/web_ui
+          npm run check:company-public-h2-bundle --prefix services/web_ui
+      - name: Build reproducible offline release images
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
+          for service in product gateway; do
+            if [ "$service" = product ]; then
+              dockerfile=services/product_api/Dockerfile
+              image=b2b-product-api
+            else
+              dockerfile=services/gateway_api/Dockerfile
+              image=b2b-gateway-api
+            fi
+            first=".release/artifacts/${service}-api-$RELEASE_SHA.oci.tar"
+            second=".release/artifacts/${service}-api-$RELEASE_SHA.repro.oci.tar"
+            docker buildx build --platform linux/amd64 --target release --network=none --provenance=false --sbom=false --build-arg "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" --tag "$image:$RELEASE_SHA" --load --output "type=oci,dest=$first,rewrite-timestamp=true" --file "$dockerfile" .
+            docker buildx build --no-cache --platform linux/amd64 --target release --network=none --provenance=false --sbom=false --build-arg "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" --tag "$image:repro-$RELEASE_SHA" --load --output "type=oci,dest=$second,rewrite-timestamp=true" --file "$dockerfile" .
+            docker run --rm --network=none --entrypoint python "$image:$RELEASE_SHA" -c "import ${service}_api.main"
+            docker run --rm --network=none --entrypoint cat "$image:$RELEASE_SHA" /app/python-installed.json > ".release/$service/python-installed.json"
+            docker run --rm --network=none --entrypoint cat "$image:repro-$RELEASE_SHA" /app/python-installed.json > ".release/$service/python-installed.repro.json"
+            cmp ".release/$service/python-installed.json" ".release/$service/python-installed.repro.json"
+            python scripts/check-python-ci-lock.py --service "$service" --installed-manifest ".release/$service/python-installed.json"
+            python scripts/check-python-ci-lock.py --service "$service" --installed-manifest ".release/$service/python-installed.repro.json"
+            docker image rm "$image:repro-$RELEASE_SHA"
+          done
+          python - <<'PY'
+          import json, os, tarfile
+          from pathlib import Path
+          release = Path(".release/artifacts")
+          release_sha = os.environ["RELEASE_SHA"]
+          for service in ("product", "gateway"):
+              values = []
+              for suffix in ("", ".repro"):
+                  name = release / f"{service}-api-{release_sha}{suffix}.oci.tar"
+                  with tarfile.open(name, "r") as bundle:
+                      index = json.load(bundle.extractfile("index.json"))
+                  manifests = index.get("manifests", [])
+                  if len(manifests) != 1 or not isinstance(manifests[0].get("digest"), str):
+                      raise SystemExit("invalid OCI index")
+                  values.append(manifests[0]["digest"])
+              if values[0] != values[1]:
+                  raise SystemExit(f"{service} OCI digest is not reproducible")
+          PY
+          rm .release/artifacts/*.repro.oci.tar
+      - name: Assemble canonical SHA-bound release packages
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
+          python - <<'PY'
+          import json, os, shutil
+          from hashlib import sha256
+          from pathlib import Path
+
+          release_sha = os.environ["RELEASE_SHA"]
+          root = Path(".release/package")
+          web_source = Path("services/web_ui/dist")
+          web = root / "web"
+          site = web / "site"
+          h2 = root / "company-public-h2"
+          site.mkdir(parents=True)
+          h2.mkdir(parents=True)
+          shutil.copytree(web_source, site, dirs_exist_ok=True)
+          rows = []
+          for path in sorted(site.rglob("*"), key=lambda value: value.as_posix()):
+              if path.is_symlink():
+                  raise SystemExit("Web release contains a symlink")
+              if path.is_file():
+                  data = path.read_bytes()
+                  rows.append({"path": "site/" + path.relative_to(site).as_posix(), "sha256": sha256(data).hexdigest(), "size": len(data)})
+          manifest = {"schema_version": "web_ui_release_v1", "release_sha": release_sha, "files": rows}
+          (web / "web-ui-release.json").write_text(json.dumps(manifest, separators=(",", ":")) + "\n", encoding="utf-8", newline="\n")
+
+          product_manifest = Path("services/product_api/src/product_api/company_reports/company_card_v2/public_h2_asset_manifest.json")
+          h2_manifest = json.loads(product_manifest.read_text(encoding="utf-8"))
+          shutil.copy2(product_manifest, h2 / "public_h2_asset_manifest.json")
+          (h2 / "assets").mkdir()
+          for item in h2_manifest["assets"]:
+              relative = item["path"].removeprefix("/assets/")
+              source = Path("services/web_ui/dist-company-public-h2/assets") / relative
+              data = source.read_bytes()
+              if sha256(data).hexdigest() != item["sha256_hex"]:
+                  raise SystemExit("H2 Product manifest hash mismatch")
+              shutil.copy2(source, h2 / "assets" / relative)
+          PY
+          web_archive=".release/artifacts/web-ui-$RELEASE_SHA.tgz"
+          h2_archive=".release/artifacts/company-public-h2-$RELEASE_SHA.tgz"
+          playwright_runtime=".release/artifacts/web-ui-playwright-runtime-$RELEASE_SHA.tgz"
+          tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner --format=posix --pax-option=delete=atime,delete=ctime -czf "$web_archive" -C .release/package/web web-ui-release.json site
+          tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner --format=posix --pax-option=delete=atime,delete=ctime -czf "$h2_archive" -C .release/package company-public-h2
+          tar --sort=name --hard-dereference --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner --format=posix --pax-option=delete=atime,delete=ctime -czf "$playwright_runtime" -C services/web_ui node_modules
+          python - <<'PY'
+          import json, os, tarfile
+          from hashlib import sha256
+          from pathlib import Path
+
+          release_sha = os.environ["RELEASE_SHA"]
+          artifacts = Path(".release/artifacts")
+          pins = {
+              "buildkit_image": "moby/buildkit:v0.23.2@sha256:e39f6119f134b4811af19fd5c20f495a6a264a85c1b6920daf569b23009dd42c",
+              "postgres_image": "postgres:16.9-alpine@sha256:b441677c946de564fe88ae4245ba80fe84a69485b22bf560e9c7c3710cd5e21d",
+              "python_base": "python:3.12.11-slim-bookworm@sha256:c00fc7b44d844b6da22861ec24af43968a5200eac4ec607b4725d585165d6b49",
+              "playwright_image": "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:c091b21d9fae78c76e85cd4356431e9b018402f172a214fc7d7a5e9a7e29d8ac",
+              "playwright_image_index_digest": "sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e",
+          }
+          records = []
+          image_identities = {}
+          for path in sorted(artifacts.iterdir(), key=lambda value: value.name):
+              if not path.is_file() or path.name.startswith("release-manifest-") or path.name.startswith("checksums-"):
+                  continue
+              data = path.read_bytes()
+              records.append({"name": path.name, "sha256": sha256(data).hexdigest(), "size": len(data)})
+              if path.name.endswith(".oci.tar"):
+                  with tarfile.open(path, "r") as bundle:
+                      index = json.load(bundle.extractfile("index.json"))
+                      descriptor = index["manifests"][0]
+                      manifest_digest = descriptor["digest"]
+                      manifest_blob = json.load(bundle.extractfile(f"blobs/sha256/{manifest_digest.removeprefix('sha256:')}"))
+                  image_identities[path.name] = {"oci_digest": manifest_digest, "config_digest": manifest_blob["config"]["digest"]}
+          lock_hashes = {path.name: sha256(path.read_bytes()).hexdigest() for path in sorted(Path(".github/ci").glob("python-*.lock"))}
+          build_inputs = {}
+          for service in ("product", "gateway"):
+              base = Path(".release") / service
+              build_inputs[service] = {
+                  "installed_manifest_sha256": sha256((base / "python-installed.json").read_bytes()).hexdigest(),
+                  "local_wheel_sha256": (base / "project-wheel.sha256").read_text(encoding="ascii").split()[0],
+                  "wheelhouse_inventory_sha256": sha256((base / "wheelhouse/wheelhouse.sha256").read_bytes()).hexdigest(),
+              }
+          frontend = {
+              "chromium_revision": 1234,
+              "chromium_version": "151.0.7922.34",
+              "font_inventory_sha256": Path(".github/ci/playwright-font-inventory.sha256").read_text(encoding="ascii").strip(),
+              "node_version": "22.17.1",
+              "npm_lock_sha256": sha256(Path("services/web_ui/package-lock.json").read_bytes()).hexdigest(),
+              "playwright_package_version": "1.62.1",
+              "playwright_container_node_version": "24.18.1",
+              "product_h2_manifest_sha256": sha256(Path("services/product_api/src/product_api/company_reports/company_card_v2/public_h2_asset_manifest.json").read_bytes()).hexdigest(),
+          }
+          manifest = {
+              "schema_version": "company_card_v2_release_manifest_v1",
+              "release_sha": release_sha,
+              "artifacts": records,
+              "build_inputs": build_inputs,
+              "frontend": frontend,
+              "images": image_identities,
+              "locks": lock_hashes,
+              "pins": pins,
+          }
+          manifest_path = artifacts / f"release-manifest-{release_sha}.json"
+          manifest_path.write_text(json.dumps(manifest, separators=(",", ":"), sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+          checksum_rows = []
+          for path in sorted(artifacts.iterdir(), key=lambda value: value.name):
+              if path.is_file() and not path.name.startswith("checksums-"):
+                  checksum_rows.append(f"{sha256(path.read_bytes()).hexdigest()}  {path.name}\n")
+          (artifacts / f"checksums-{release_sha}.txt").write_text("".join(checksum_rows), encoding="ascii", newline="\n")
+          PY
+          cd .release/artifacts
+          sha256sum --check "checksums-$RELEASE_SHA.txt"
+      - name: Upload sole build-once release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: qa-release-${{ needs.resolve-release.outputs.release_sha }}
+          path: .release/artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  browser-e2e-visual:
+    name: browser-e2e-visual
+    needs: [resolve-release, release-build]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.resolve-release.outputs.release_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up locked Python
+        uses: ./.github/actions/setup-python-ci
+        with:
+          release-sha: ${{ needs.resolve-release.outputs.release_sha }}
+      - name: Download exact build-once release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: qa-release-${{ needs.resolve-release.outputs.release_sha }}
+          path: .tmp/browser-release-${{ needs.resolve-release.outputs.release_sha }}
+      - name: Materialize exact PostgreSQL and Playwright images
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          docker pull --platform linux/amd64 "$POSTGRES_IMAGE"
+          docker pull --platform linux/amd64 "$PLAYWRIGHT_IMAGE"
+      - name: Run runner-owned browser acceptance lifetime
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          pwsh -NoProfile -File scripts/run-iteration25-postgres-tests.ps1 \
+            -Mode BrowserE2E \
+            -ReleaseArtifactRoot "$PWD/.tmp/browser-release-$RELEASE_SHA" \
+            -PlaywrightImage "$PLAYWRIGHT_IMAGE" \
+            -FontInventory "$PWD/.github/ci/playwright-font-inventory.sha256" \
+            -ReleaseSha "$RELEASE_SHA"
+      - name: Upload SHA-bound browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: browser-failure-${{ needs.resolve-release.outputs.release_sha }}
+          path: |
+            services/web_ui/test-results/
+            services/web_ui/playwright-report/
+          if-no-files-found: error
+          retention-days: 7
+
+  release-contract:
+    name: release-contract
+    needs: [resolve-release, release-build]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.resolve-release.outputs.release_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up locked Python
+        uses: ./.github/actions/setup-python-ci
+        with:
+          release-sha: ${{ needs.resolve-release.outputs.release_sha }}
+      - name: Download exact build-once release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: qa-release-${{ needs.resolve-release.outputs.release_sha }}
+          path: .release/verified
+      - name: Verify artifacts and exercise release contracts without rebuild
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          cd .release/verified
+          sha256sum --check "checksums-$RELEASE_SHA.txt"
+          cd ../..
+          python deploy/product_api/release_manifest.py "$PWD/.release/verified" "$RELEASE_SHA"
+          web_archive="$PWD/.release/verified/web-ui-$RELEASE_SHA.tgz"
+          web_archive_sha="$(sha256sum "$web_archive")"
+          python deploy/web_ui/install_web_ui_release.sh verify "$web_archive" "$RELEASE_SHA" "${web_archive_sha%% *}"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          release_sha = os.environ["RELEASE_SHA"]
+          manifest = json.loads((Path(".release/verified") / f"release-manifest-{release_sha}.json").read_text(encoding="utf-8"))
+          if manifest.get("release_sha") != release_sha:
+              raise SystemExit("release manifest SHA mismatch")
+          PY
+          docker load --input ".release/verified/product-api-$RELEASE_SHA.oci.tar"
+          docker load --input ".release/verified/gateway-api-$RELEASE_SHA.oci.tar"
+          docker run --rm --network=none --entrypoint python "b2b-product-api:$RELEASE_SHA" -c "import product_api.main; import product_api.company_reports.worker; import product_api.company_reports.company_card_v2.narrative.worker"
+          docker run --rm --network=none --entrypoint python "b2b-gateway-api:$RELEASE_SHA" -c "import gateway_api.main"
+          mkdir -p services/web_ui/dist-company-public-h2
+          tar -xzf ".release/verified/company-public-h2-$RELEASE_SHA.tgz" --strip-components=1 -C services/web_ui/dist-company-public-h2 company-public-h2/assets
+          python -m pytest deploy/nginx deploy/product_api deploy/web_ui -q -ra -p no:cacheprovider
+          pwsh -File deploy/nginx/test_product_api_conf.ps1
+
+  qa-required:
+    name: qa-required
+    needs:
+      - resolve-release
+      - python-unit-contract
+      - postgres-full
+      - web-static
+      - release-build
+      - browser-e2e-visual
+      - release-contract
+    if: always()
+    runs-on: ubuntu-24.04
+    outputs:
+      verified_release_sha: ${{ steps.attest.outputs.verified_release_sha }}
+      release_artifact_name: ${{ steps.attest.outputs.release_artifact_name }}
+      attestation_artifact_name: ${{ steps.attest.outputs.attestation_artifact_name }}
+    steps:
+      - name: Reject failure, cancellation or skip
+        shell: bash
+        env:
+          UNIT_RESULT: ${{ needs.python-unit-contract.result }}
+          POSTGRES_RESULT: ${{ needs.postgres-full.result }}
+          WEB_RESULT: ${{ needs.web-static.result }}
+          BUILD_RESULT: ${{ needs.release-build.result }}
+          BROWSER_RESULT: ${{ needs.browser-e2e-visual.result }}
+          CONTRACT_RESULT: ${{ needs.release-contract.result }}
+        run: |
+          set -euo pipefail
+          test "$UNIT_RESULT" = success
+          test "$POSTGRES_RESULT" = success
+          test "$WEB_RESULT" = success
+          test "$BUILD_RESULT" = success
+          test "$BROWSER_RESULT" = success
+          test "$CONTRACT_RESULT" = success
+      - name: Check out exact release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.resolve-release.outputs.release_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up locked Python
+        uses: ./.github/actions/setup-python-ci
+        with:
+          release-sha: ${{ needs.resolve-release.outputs.release_sha }}
+      - name: Download exact build-once release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: qa-release-${{ needs.resolve-release.outputs.release_sha }}
+          path: .release/attested
+      - name: Emit canonical exact-SHA attestation
+        id: attest
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+          UNIT_RESULT: ${{ needs.python-unit-contract.result }}
+          POSTGRES_RESULT: ${{ needs.postgres-full.result }}
+          WEB_RESULT: ${{ needs.web-static.result }}
+          BUILD_RESULT: ${{ needs.release-build.result }}
+          BROWSER_RESULT: ${{ needs.browser-e2e-visual.result }}
+          CONTRACT_RESULT: ${{ needs.release-contract.result }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          cd .release/attested
+          sha256sum --check "checksums-$RELEASE_SHA.txt"
+          cd ../..
+          python deploy/product_api/release_manifest.py "$PWD/.release/attested" "$RELEASE_SHA"
+          mkdir -p .release/attestation
+          python - <<'PY'
+          import json, os
+          from hashlib import sha256
+          from pathlib import Path
+          release_sha = os.environ["RELEASE_SHA"]
+          release_path = Path(".release/attested") / f"release-manifest-{release_sha}.json"
+          release = json.loads(release_path.read_text(encoding="utf-8"))
+          if release.get("release_sha") != release_sha:
+              raise SystemExit("release manifest SHA mismatch")
+          jobs = {name: os.environ[name] for name in ("UNIT_RESULT", "POSTGRES_RESULT", "WEB_RESULT", "BUILD_RESULT", "BROWSER_RESULT", "CONTRACT_RESULT")}
+          if set(jobs.values()) != {"success"}:
+              raise SystemExit("not every QA job succeeded")
+          attestation = {
+              "schema_version": "company_card_v2_qa_attestation_v1",
+              "verified_release_sha": release_sha,
+              "release_artifact_name": f"qa-release-{release_sha}",
+              "release_manifest_name": release_path.name,
+              "release_manifest_sha256": sha256(release_path.read_bytes()).hexdigest(),
+              "job_conclusions": jobs,
+              "workflow_run_attempt": int(os.environ["WORKFLOW_RUN_ATTEMPT"]),
+              "workflow_run_id": int(os.environ["WORKFLOW_RUN_ID"]),
+          }
+          output = Path(".release/attestation") / f"qa-attestation-{release_sha}.json"
+          output.write_text(json.dumps(attestation, separators=(",", ":"), sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+          PY
+          echo "verified_release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "release_artifact_name=qa-release-$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "attestation_artifact_name=qa-attestation-$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+      - name: Upload canonical QA attestation
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: qa-attestation-${{ needs.resolve-release.outputs.release_sha }}
+          path: .release/attestation/qa-attestation-${{ needs.resolve-release.outputs.release_sha }}.json
+          if-no-files-found: error
+          retention-days: 14

@@ -1,6 +1,7 @@
 """Canonical assignment selection has no active/latest fallback once assigned."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -12,7 +13,16 @@ from product_api.company_reports import public_document_service as service
 def _row(contract: str | None, *, complete: bool = True) -> PublicDocumentAssignmentRow:
     subject = SimpleNamespace(id="subject", normalized_identifier="7701234567")
     assignment = None if contract is None else SimpleNamespace(subject_id="subject", presentation_contract=contract, pin_generation=7)
-    pin = None if not complete else SimpleNamespace(subject_id="subject", presentation_contract=contract, generation=7, report_id="report")
+    pin = None if not complete else SimpleNamespace(
+        subject_id="subject",
+        presentation_contract=contract,
+        generation=7,
+        report_id="report",
+        projection_scope=("active_publication" if contract == "company_public_h2_v1" else None),
+        canonical_path=("/company/7701234567-company" if contract == "company_public_h2_v1" else None),
+        indexable=(False if contract == "company_public_h2_v1" else True),
+        published_lastmod=(datetime(2026, 8, 28, tzinfo=timezone.utc) if contract == "company_public_h2_v1" else None),
+    )
     report = None if not complete else SimpleNamespace(id="report", subject_id="subject")
     return PublicDocumentAssignmentRow(subject, assignment, pin, report)
 

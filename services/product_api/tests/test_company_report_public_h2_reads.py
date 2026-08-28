@@ -199,11 +199,24 @@ async def _store_legacy_report(
         return record.id, snapshot_hash
 
 
-async def _store_resolved_v3_fallback(engine) -> tuple[UUID, str]:
-    raw = json.loads(
-        (_CARD_FIXTURES / "snapshot_v3_complete.json").read_text(encoding="utf-8")
+async def _store_resolved_v3_fallback(
+    engine,
+    *,
+    publication_policy_version: str = "company_public_h2_publication_v1",
+) -> tuple[UUID, str]:
+    arbitration_enabled = (
+        publication_policy_version == "company_public_h2_publication_v3"
     )
-    raw["snapshot_schema_version"] = "company_card_v2_snapshot_v2"
+    fixture_name = (
+        "snapshot_v3_arbitration_v3.json"
+        if arbitration_enabled
+        else "snapshot_v3_complete.json"
+    )
+    raw = json.loads(
+        (_CARD_FIXTURES / fixture_name).read_text(encoding="utf-8")
+    )
+    if not arbitration_enabled:
+        raw["snapshot_schema_version"] = "company_card_v2_snapshot_v2"
     raw["narrative_evidence"] = {
         "schema_version": "company_card_v2_narrative_evidence_v1",
         "primary_activity_parser_version": "company_card_v2_primary_activity_parser_v1",
@@ -244,6 +257,12 @@ async def _store_resolved_v3_fallback(engine) -> tuple[UUID, str]:
             writer_profile="company_card_v2_writer_v3",
             presentation_contract="company_public_h2_v1",
             rollout_generation=snapshot.rollout_config_generation,
+            arbitration_collection_enabled=arbitration_enabled,
+            arbitration_mask_key_id=(
+                snapshot.arbitration_basis.mask_key_id
+                if arbitration_enabled
+                else None
+            ),
             lifecycle_status="complete",
             started_at=now,
             generated_at=now,
@@ -316,6 +335,12 @@ async def _store_resolved_v3_fallback(engine) -> tuple[UUID, str]:
         projection = build_public_h2(
             snapshot,
             narrative_binding=SimpleNamespace(narrative=fallback_narrative),
+            finance_enabled=publication_policy_version
+            in {
+                "company_public_h2_publication_v2",
+                "company_public_h2_publication_v3",
+            },
+            arbitration_enabled=arbitration_enabled,
         )
         pin = CompanyReportPresentationPin(
             subject_id=subject.id,
@@ -326,7 +351,7 @@ async def _store_resolved_v3_fallback(engine) -> tuple[UUID, str]:
             chart_facts_version=snapshot.chart_facts.version,
             chart_facts_hash=snapshot.chart_facts.hash,
             evidence_registry_version=snapshot.evidence_version,
-            publication_policy_version="company_public_h2_publication_v1",
+            publication_policy_version=publication_policy_version,
             canonical_path=None,
             indexable=False,
             published_lastmod=None,

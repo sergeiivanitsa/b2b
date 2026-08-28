@@ -102,7 +102,7 @@ def _finance_limitations(dto: CompanyPublicH2Response, block_id: str, *, advisor
     else:
         limitations = "<p>Ограничения для этого представления не указаны.</p>"
     return (
-        f'<section aria-label="Ограничения финансового представления" '
+        f'<section aria-label="Ограничения финансового представления {escape(block_id)}" '
         f'data-h2-finance-limitations="{escape(block_id)}"><h4>Ограничения</h4>'
         f"{limitations}</section>"
     )
@@ -351,7 +351,7 @@ def _arbitration_article(
         f'Покрытие представления: {h(coverage.state)}; '
         f'{h(_arbitration_collection_label(coverage.population_scope))}'
         f'{returned}{total}.</p>{body}<section '
-        f'aria-label="Ограничения арбитражного представления" '
+        f'aria-label="Ограничения арбитражного представления {h(block_id)}" '
         f'data-h2-arbitration-limitations="{block_id}"><h4>Ограничения</h4>'
         f'{limitations}</section><div '
         f'class="company-public-h2__arbitration-enhancement" '

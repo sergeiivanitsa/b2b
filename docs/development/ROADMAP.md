@@ -1611,16 +1611,42 @@ population либо честно обозначенной returned slice без 
 ID: 25
 Slug: company-card-v2-qa-rollout
 
-Статус: planning input; основной путь итераций 19–24 и post-merge presentation
-lifecycle continuation итерации 20 merged/reconciled, а dedicated disposable
-PostgreSQL acceptance итерации 24 закрыт. Реализация стартует только после
-утверждения отдельных specification и implementation plan iteration 25.
+Статус: refreshed base-bound specification, proposed owner-decision register,
+implementation plan и baseline evidence подготовлены в ветке
+`codex/iteration-25-company-card-v2-qa-rollout-refresh` на exact base
+`31b299ac88b5fac7d5c04082324fb122d63db7e7`. Bounded delta PR `#150–#152` и
+Stage 0 подтверждают merged behavior iteration 20/24; Product unit
+`1524`, Gateway `31`, Web `496`, release `34`, disposable PostgreSQL
+iteration-24 `2 + 79` и iteration-20 `117 + 290` проходят. Реализация не
+начата. Первый refreshed review вернул `CHANGES_REQUIRED`; единственный
+planning correction pass закрывает subject-bound journal, full-validation
+sitemap, staged/active fences, downgrade race и evidence reproducibility.
+Correction review обнаружил stale iteration-24 `head == 0018` assumption;
+forward-head amendment получил architecture/evidence `VERDICT: APPROVED` без
+оставшихся findings. Owner implementation approval получен 2026-08-28;
+реализация начата в reviewed scope.
+Исторический iteration-24 runner не меняется и не
+переиспользуется как gate; новый iteration-25 acceptance runner/checker
+сохраняет все 0018 assertions, меняет в старом migration test только два stale
+`head` alias на explicit `0018`, затем доказывает `0018 -> 0019/head` и
+повторяет affected phase с JUnit nonzero/zero-skip proof. Production activation
+не авторизована.
 
 ### Зависимости
 
 - Все merged contracts/runtime/UI итераций 19–24 и закрытые evidence gates.
 - Post-merge disposable PostgreSQL acceptance итерации 24 закрыт; результат
   зафиксирован в отдельном evidence artifact.
+- Текущий iteration-24 runner подтверждал эти конкретные `2 + 79 passed`, но
+  проверяет только exit code и остаётся исторически неизменным. Новый
+  iteration-25 runner/checker обязан сохранить exact-0018 migration assertions,
+  выполнить forward `0018 -> 0019/head` handoff и дать machine-readable
+  nonzero/zero-skip JUnit proof до использования prerequisite phases как gate.
+- Iteration-20 presentation lifecycle continuation merged/reconciled и
+  повторно проходит exact contract/PostgreSQL baseline.
+- Исправленные refreshed specification/plan прошли independent review и
+  требуют отдельного owner implementation approval до изменения
+  production/runtime behavior.
 - Feature flags остаются выключенными до отдельного rollout decision.
 
 ### Цель
@@ -1636,8 +1662,8 @@ PostgreSQL acceptance итерации 24 закрыт. Реализация с�
   touch, 200% zoom, reduced motion, safe-area, long/missing/partial/large-N.
 - SSR/API/SPA semantic parity, canonical/wrong-slug/noindex/robots и
   crawler-safe behavior.
-- Bundle/CLS/performance, lazy-chart failure, AI fallback/budget/kill switch,
-  privacy/telemetry и Claims target verification.
+- Bundle/post-font zero-shift/performance diagnostics, lazy-chart failure, AI
+  fallback/budget/kill switch, privacy/telemetry и Claims target verification.
 - Acceptance fixtures: СКС и минимум три обезличенных edge profiles без
   production raw в git.
 - Feature flag/runbook/observability/rollback rehearsal и staged activation

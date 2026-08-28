@@ -302,6 +302,7 @@ async def test_real_finalizer_integrity_matrix_never_reaches_evaluator_or_upsert
             if model is CompanyReportSubject:
                 return case.subjects.get(key)
             return None
+        async def scalar(self, _statement): return None
         async def execute(self, _statement): return SimpleNamespace(rowcount=1)
         def begin_nested(self): return Nested()
         def add(self, _value): pass
@@ -327,3 +328,61 @@ async def test_real_finalizer_integrity_matrix_never_reaches_evaluator_or_upsert
         assert case.batch.state == "completed" and case.batch.next_ordinal == 1
     assert calls == {"evaluator": 0, "upsert": 0}
     assert protection == "postgresql" or protection.startswith("unit_only:")
+
+
+@pytest.mark.asyncio
+async def test_real_finalizer_rejects_existing_presentation_assignment_before_policy(
+    monkeypatch,
+):
+    case = _real_finalizer_case()
+
+    class Nested:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return False
+
+    class Session:
+        def __init__(self):
+            self.finalize_statement = None
+
+        async def get(self, model, key, **_kwargs):
+            if model is CompanyReportPublicationBatch:
+                return case.batch if key == case.batch.id else None
+            if model is CompanyReportPublicationBatchItem:
+                return case.item if key == case.item.id else None
+            if model is CompanyReportRecord:
+                return case.report if key == case.report.id else None
+            if model is CompanyReportSubject:
+                return case.subjects.get(key)
+            return None
+
+        async def scalar(self, _statement):
+            return SimpleNamespace(id=uuid4())
+
+        async def execute(self, statement):
+            self.finalize_statement = statement
+            return SimpleNamespace(rowcount=1)
+
+        def begin_nested(self): return Nested()
+        def add(self, _value): pass
+        async def flush(self): pass
+
+    calls = {"evaluator": 0, "upsert": 0}
+
+    def forbidden(*_args, **_kwargs):
+        calls["evaluator"] += 1
+        raise AssertionError("evaluator must be unreachable")
+
+    async def forbidden_async(*_args, **_kwargs):
+        calls["upsert"] += 1
+        raise AssertionError("upsert must be unreachable")
+
+    monkeypatch.setattr(publications, "evaluate_publication", forbidden)
+    monkeypatch.setattr(publications, "_upsert_publication", forbidden_async)
+    session = Session()
+
+    result = await publications.finalize_batch_claim(session, claim=case.claim)
+
+    assert result is case.batch
+    assert calls == {"evaluator": 0, "upsert": 0}
+    assert session.finalize_statement.compile().params["state"] == "failed"
+    assert session.finalize_statement.compile().params["reason_code"] == "state_conflict"

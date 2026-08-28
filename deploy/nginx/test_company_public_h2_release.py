@@ -388,24 +388,24 @@ def test_actual_cli_path_installs_exact_product_identity(tmp_path: Path) -> None
         server.shutdown()
 
 
-def test_workflow_full_gate_order_and_shell_single_delegate() -> None:
+def test_workflow_consumes_qa_artifacts_and_installs_h2_before_runtime_mutation() -> None:
     workflow = (ROOT / ".github/workflows/deploy_prod.yml").read_text(encoding="utf-8")
     sentinels = [
-        "npm run build --prefix services/web_ui",
-        "public_h2_asset_manifest.json \"$release_stage/public_h2_asset_manifest.json\"",
-        "company-public-h2-assets.tgz",
-        "docker compose -f docker-compose.product.yml --env-file .env.product build product_api",
-        'candidate_container="$(docker create',
-        'docker cp "$candidate_container:',
-        "install_company_public_h2_assets.sh",
-        "alembic -c alembic.ini upgrade head",
-        "up -d --force-recreate --no-deps product_api company_report_worker",
+        "Download sole build-once release",
+        "Reverify one SHA through attestation, manifests and artifacts",
+        "Read-only RU/US preflight",
+        "Install and loopback-verify H2 assets",
+        "Drain both exact old workers",
+        "python -m alembic -c /app/alembic.ini upgrade head",
+        "Recreate and verify exact Gateway",
+        "Atomically switch Web",
     ]
     positions = [workflow.index(value) for value in sentinels]
     assert positions == sorted(positions)
-    assert "127.0.0.1:443 https://pork.su \"$candidate_manifest\"" in workflow
-    assert 'cp "$candidate_manifest" "$release_dir/public_h2_asset_manifest.json"' not in workflow
-    assert "company-public-h2-product-manifest.sha256" not in workflow
+    assert "qa-attestation-{release_sha}.json" in workflow
+    assert "127.0.0.1:443 https://pork.su" in workflow
+    assert "npm run build" not in workflow
+    assert "docker build" not in workflow
     assert "rm -rf /var/lib/pork/company-public-h2" not in workflow
 
     shell = (ROOT / "deploy/nginx/install_company_public_h2_assets.sh").read_text(encoding="utf-8")
@@ -415,18 +415,12 @@ def test_workflow_full_gate_order_and_shell_single_delegate() -> None:
     assert "mv -n" not in shell and "rm -rf" not in shell
 
 
-def test_root_manual_runbook_keeps_h2_asset_gate_before_product_mutation() -> None:
+def test_root_manual_runbook_delegates_to_default_off_exact_sha_runbook() -> None:
     readme = re.sub(r"\s+", " ", (ROOT / "README.md").read_text(encoding="utf-8"))
-    sentinels = [
-        "extract that image's packaged `public_h2_asset_manifest.json`",
-        "Build the isolated H2 frontend bundle",
-        "install_company_public_h2_assets.sh",
-        "A failed gate leaves the Product processes untouched.",
-        "stop the old worker, run",
-        "`alembic upgrade head`, and recreate `product_api`",
-    ]
-    positions = [readme.index(value) for value in sentinels]
-    assert positions == sorted(positions)
+    assert "docs/development/runbooks/company-card-v2-rollout.md" in readme
+    assert "P1–P9" in readme
+    assert "UNSET/STOP" in readme
+    assert "exact lowercase 40-hex" in readme
 
 
 def test_actual_product_manifest_and_artifacts_install(tmp_path: Path) -> None:

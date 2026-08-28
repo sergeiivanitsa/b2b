@@ -71,6 +71,10 @@ def test_shared_ssr_golden_is_byte_exact_and_uses_stable_shell_ids() -> None:
         coverage = next(item for item in dto.coverage if item.block_id == block_id)
         article = _finance_article_html(html, number)
         assert f'data-h2-finance-coverage="{block_id}"' in article
+        assert (
+            f'aria-label="Ограничения финансового представления {block_id}"'
+            in article
+        )
         for code in coverage.limitation_codes:
             assert f'data-h2-finance-limitation="{code}"' in article
     assert "Срок и вероятность погашения дебиторской задолженности не оцениваются." in _finance_article_html(html, 1)

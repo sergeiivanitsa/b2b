@@ -1,0 +1,21 @@
+{
+  "schema_version": "company_card_v2_iteration25_acceptance_profiles_v1",
+  "profile_ids": [
+    "sks_morphology_complete_v1",
+    "sparse_missing_fallback_v1",
+    "partial_long_limitations_v1",
+    "large_n_signed_masked_v1",
+    "lazy_failure_v1"
+  ],
+  "routes": {
+    "robots_path": "/robots.txt",
+    "sitemap_index_path": "/sitemaps/index.xml"
+  },
+  "privacy": {
+    "synthetic_only": true,
+    "forbidden_public_tokens": [
+      "api.datanewton.ru",
+      "sk-test"
+    ]
+  }
+}

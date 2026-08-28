@@ -5,10 +5,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(SRC) not in sys.path:
-    sys.path.append(str(SRC))
-if str(REPO_ROOT) not in sys.path:
-    sys.path.append(str(REPO_ROOT))
+for path in (str(REPO_ROOT), str(SRC)):
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+from tests_support.network_guard import prepare_test_environment
+
+prepare_test_environment(suite="gateway")
 
 import pytest
 from fastapi.testclient import TestClient
