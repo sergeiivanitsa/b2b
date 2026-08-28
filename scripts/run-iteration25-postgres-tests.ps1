@@ -653,7 +653,7 @@ try {
     }
     $ready = $false
     for ($attempt = 0; $attempt -lt 120; $attempt++) {
-        & docker exec $containerId pg_isready --username $pgUser --dbname postgres *> $null
+        & docker exec $containerId pg_isready --host 127.0.0.1 --port 5432 --username $pgUser --dbname postgres *> $null
         if ($LASTEXITCODE -eq 0) {
             $ready = $true
             break

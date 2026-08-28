@@ -260,6 +260,56 @@ def test_iteration25_runner_owns_forward_head_and_two_junit_phases() -> None:
     assert migration_test.count("command.upgrade(config, REVISION)") == 3
 
 
+def test_iteration25_postgres_bootstrap_waits_for_final_tcp_server() -> None:
+    root = Path(__file__).resolve().parents[3]
+    runner = (root / "scripts" / "run-iteration25-postgres-tests.ps1").read_text(
+        encoding="utf-8"
+    )
+    start_marker = "    $ready = $false"
+    end_marker = '    $guardUrl = "postgresql+asyncpg://'
+    assert runner.count(start_marker) == 1
+    assert runner.count(end_marker) == 1
+    bootstrap_start = runner.index(start_marker)
+    bootstrap_end = runner.index(end_marker, bootstrap_start)
+    bootstrap = runner[bootstrap_start:bootstrap_end]
+
+    tcp_readiness = (
+        "& docker exec $containerId pg_isready --host 127.0.0.1 --port 5432 "
+        "--username $pgUser --dbname postgres *> $null"
+    )
+    socket_only_readiness = (
+        "& docker exec $containerId pg_isready --username $pgUser "
+        "--dbname postgres *> $null"
+    )
+    createdb = (
+        "& docker exec $containerId createdb --username $pgUser "
+        "--owner $pgUser $database"
+    )
+    readiness_lines = tuple(
+        line.strip() for line in bootstrap.splitlines() if "pg_isready" in line
+    )
+    createdb_lines = tuple(
+        line.strip() for line in bootstrap.splitlines() if " createdb " in line
+    )
+
+    assert readiness_lines == (tcp_readiness,)
+    assert socket_only_readiness not in bootstrap
+    assert createdb_lines == (createdb,)
+    assert "$isWindowsHost" not in bootstrap
+
+    sentinels = (
+        tcp_readiness,
+        "if ($LASTEXITCODE -eq 0)",
+        "$ready = $true",
+        "break",
+        "if (-not $ready)",
+        "foreach ($database in @($guardDatabase, $roundtripDatabase, $suiteDatabase))",
+        createdb,
+    )
+    positions = [bootstrap.index(sentinel) for sentinel in sentinels]
+    assert positions == sorted(positions)
+
+
 def test_acceptance_registry_builds_exact_browser_manifest() -> None:
     seeder = _load_acceptance_seeder()
     profiles = seeder.load_profile_registry()
