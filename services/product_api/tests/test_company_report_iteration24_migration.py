@@ -282,7 +282,7 @@ async def _insert_job(
             "lease_expires_at, finished_at) VALUES "
             "(:id, :report_id, :subject_id, :state, :profile, :contract, "
             ":generation, 1, :worker_token, 1, now(), now(), now(), "
-            "CASE WHEN :state = 'succeeded' THEN now() ELSE NULL END)"
+            "CASE WHEN CAST(:state AS VARCHAR(16)) = 'succeeded' THEN now() ELSE NULL END)"
         ),
         {
             "id": job_id,
@@ -581,14 +581,14 @@ async def _assert_decision_schema_and_defaults(
                     text(
                         "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint "
                         "WHERE conname IN "
-                        "('company_reports_arbitration_decision', "
-                        "'company_report_jobs_arbitration_decision')"
+                        "('ck_company_reports_company_reports_arbitration_decision', "
+                        "'ck_company_report_jobs_company_report_jobs_arbitration_decision')"
                     )
                 )
             )
             assert set(constraints) == {
-                "company_reports_arbitration_decision",
-                "company_report_jobs_arbitration_decision",
+                "ck_company_reports_company_reports_arbitration_decision",
+                "ck_company_report_jobs_company_report_jobs_arbitration_decision",
             }
             assert all(
                 "arbitration_collection_enabled" in definition
