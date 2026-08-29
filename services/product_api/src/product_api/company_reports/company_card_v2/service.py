@@ -77,8 +77,10 @@ from .narrative.validation import normalize_text, validate_render_plan
 from .public_h2 import (
     EMPTY_CHART_FACTS_HASH,
     LegacySnapshotBinding,
+    PublicH2ProjectionBindingV1,
     build_legacy_public_h2,
     build_public_h2,
+    rebind_public_h2_projection,
 )
 from .public_h2_models import CompanyPublicH2Response, PublicH2Narrative
 
@@ -105,6 +107,15 @@ class PublicH2Pending(PublicH2NotEligible):
 
 class PublicH2Failed(PublicH2NotEligible):
     code = "report_failed"
+
+
+@dataclass(frozen=True)
+class ExactPublicH2Dependencies:
+    """Dependency tuple captured by the same sitemap overlay SELECT."""
+
+    presentation: CompanyReportPresentation | None
+    narrative_job: CompanyCardNarrativeJob | None
+    narrative_artifact: CompanyCardNarrativeArtifact | None
 
 
 def h2_cohort_selected(*, inn: str, settings: object) -> bool:
@@ -153,6 +164,15 @@ async def resolve_public_h2(session: AsyncSession, *, inn: str) -> CompanyPublic
             ))
             if pin is None:
                 raise PublicH2Invalid("company card v2 binding is invalid")
+            scope = getattr(pin, "projection_scope", None)
+            if isinstance(pointer, CompanyReportPresentationStagedPointer):
+                if scope not in {None, "staged_publication"} or not _is_staged_pin_shape(pin):
+                    raise PublicH2Invalid("company card v2 staged binding is invalid")
+            elif not (
+                scope == "active_publication"
+                or (scope is None and _is_staged_pin_shape(pin))
+            ):
+                raise PublicH2Invalid("company card v2 assignment is not active")
             record = await session.get(CompanyReportRecord, pin.report_id)
             return await _resolve_exact_v3(
                 session,
@@ -207,6 +227,7 @@ async def _resolve_exact_v3(
     pin: CompanyReportPresentationPin,
     expected_subject_id: object,
     expected_inn: str,
+    dependencies: ExactPublicH2Dependencies | None = None,
 ) -> CompanyPublicH2Response:
     """Resolve one exact V3 saved result and reproduce its pinned projection.
 
@@ -226,6 +247,10 @@ async def _resolve_exact_v3(
         raise PublicH2Failed("report_failed")
     try:
         snapshot = company_card_v2_from_snapshot(deepcopy(record.normalized_snapshot))
+        projection_binding = _projection_binding_for_pin(
+            pin,
+            expected_inn=expected_inn,
+        )
         _validate_saved_snapshot_policy(
             record,
             snapshot,
@@ -240,12 +265,16 @@ async def _resolve_exact_v3(
             presentation_contract=record.presentation_contract,
             rollout_config_generation=record.rollout_generation,
         )
-        presentation = await session.scalar(
-            select(CompanyReportPresentation).where(
-                CompanyReportPresentation.subject_id == expected_subject_id,
-                CompanyReportPresentation.report_id == record.id,
-                CompanyReportPresentation.presentation_contract
-                == H2_PRESENTATION_CONTRACT,
+        presentation = (
+            dependencies.presentation
+            if dependencies is not None
+            else await session.scalar(
+                select(CompanyReportPresentation).where(
+                    CompanyReportPresentation.subject_id == expected_subject_id,
+                    CompanyReportPresentation.report_id == record.id,
+                    CompanyReportPresentation.presentation_contract
+                    == H2_PRESENTATION_CONTRACT,
+                )
             )
         )
         if (
@@ -264,6 +293,11 @@ async def _resolve_exact_v3(
             or record.generated_at.tzinfo is None
             or record.generated_at.utcoffset() is None
             or snapshot.generated_at != record.generated_at.astimezone(timezone.utc)
+            or (
+                getattr(pin, "projection_scope", None) == "active_publication"
+                and pin.published_lastmod.astimezone(timezone.utc)
+                != record.generated_at.astimezone(timezone.utc)
+            )
             or presentation is None
             or presentation.subject_id != expected_subject_id
             or presentation.report_id != record.id
@@ -282,9 +316,6 @@ async def _resolve_exact_v3(
                 H2_PUBLICATION_POLICY_V2,
                 H2_PUBLICATION_POLICY_V3,
             }
-            or pin.indexable is not False
-            or pin.canonical_path is not None
-            or pin.published_lastmod is not None
         ):
             raise ValueError("company card v2 pin identity is invalid")
 
@@ -304,26 +335,34 @@ async def _resolve_exact_v3(
         ):
             raise ValueError("company card v2 resolved pin shape is invalid")
 
-        job = await session.scalar(
-            select(CompanyCardNarrativeJob)
-            .join(
-                CompanyCardNarrativeArtifact,
-                (CompanyCardNarrativeArtifact.id == CompanyCardNarrativeJob.artifact_id)
-                & (
-                    CompanyCardNarrativeArtifact.generation_key
-                    == CompanyCardNarrativeJob.generation_key
-                ),
-            )
-            .where(
-                CompanyCardNarrativeArtifact.binding_kind
-                == pin.narrative_binding_kind,
-                CompanyCardNarrativeArtifact.binding_key
-                == pin.narrative_binding_key,
+        job = (
+            dependencies.narrative_job
+            if dependencies is not None
+            else await session.scalar(
+                select(CompanyCardNarrativeJob)
+                .join(
+                    CompanyCardNarrativeArtifact,
+                    (CompanyCardNarrativeArtifact.id == CompanyCardNarrativeJob.artifact_id)
+                    & (
+                        CompanyCardNarrativeArtifact.generation_key
+                        == CompanyCardNarrativeJob.generation_key
+                    ),
+                )
+                .where(
+                    CompanyCardNarrativeArtifact.binding_kind
+                    == pin.narrative_binding_kind,
+                    CompanyCardNarrativeArtifact.binding_key
+                    == pin.narrative_binding_key,
+                )
             )
         )
         if job is None or job.artifact_id is None:
             raise ValueError("company card v2 saved result is missing")
-        artifact = await session.get(CompanyCardNarrativeArtifact, job.artifact_id)
+        artifact = (
+            dependencies.narrative_artifact
+            if dependencies is not None
+            else await session.get(CompanyCardNarrativeArtifact, job.artifact_id)
+        )
         if artifact is None:
             raise ValueError("company card v2 saved artifact is missing")
 
@@ -337,11 +376,14 @@ async def _resolve_exact_v3(
         response = build_public_h2(
             snapshot,
             narrative_binding=narrative_binding,
+            projection_binding=projection_binding,
             finance_enabled=pin.publication_policy_version
             in {H2_PUBLICATION_POLICY_V2, H2_PUBLICATION_POLICY_V3},
             arbitration_enabled=pin.publication_policy_version
             == H2_PUBLICATION_POLICY_V3,
         )
+        if response.indexable:
+            _validate_indexable_public_h2(response)
         if response.projection_digest != pin.projection_digest:
             raise ValueError("company card v2 projection digest is invalid")
         return response
@@ -353,6 +395,146 @@ async def _resolve_exact_v3(
         raise
     except Exception as exc:
         raise PublicH2Invalid("company card v2 is invalid") from exc
+
+
+def _is_staged_pin_shape(pin: CompanyReportPresentationPin) -> bool:
+    """Return the exact persisted shape admitted by staged/latest preview."""
+    return (
+        getattr(pin, "projection_scope", None) in {None, "staged_publication"}
+        and pin.indexable is False
+        and pin.canonical_path is None
+        and pin.published_lastmod is None
+    )
+
+
+def _validate_indexable_public_h2(response: CompanyPublicH2Response) -> None:
+    """Enforce the rollout-only eligibility predicate for an indexable H2.
+
+    The public DTO model proves structural and semantic consistency, but a
+    structurally honest failure must still remain noindex.  Policy-v3
+    indexability therefore requires all three bound source families and
+    rejects every unsafe coverage state.  ``not_requested`` is additionally
+    forbidden for the visible finance/arbitration gates: an unexecuted gate is
+    not evidence that can authorize indexing.
+    """
+    if (
+        type(response) is not CompanyPublicH2Response
+        or response.indexable is not True
+        or response.projection_scope != "active_publication"
+        or response.report_version != "3"
+        or response.snapshot_capability != "card_v2"
+        or tuple(item.dataset for item in response.sources)
+        != ("counterparty", "finance", "arbitration")
+    ):
+        raise ValueError("indexable public H2 identity is invalid")
+    disallowed_states = {
+        "failed",
+        "conflict",
+        "gate_closed",
+        "legacy_unavailable",
+    }
+    if any(item.state in disallowed_states for item in response.coverage):
+        raise ValueError("indexable public H2 coverage is unsafe")
+    if any(
+        item.state == "not_requested"
+        and (
+            item.block_id.startswith("finance_")
+            or item.block_id.startswith("arbitration_")
+        )
+        for item in response.coverage
+    ):
+        raise ValueError("indexable public H2 evidence gate is unverified")
+
+
+def _projection_binding_for_pin(
+    pin: CompanyReportPresentationPin,
+    *,
+    expected_inn: str,
+) -> PublicH2ProjectionBindingV1:
+    scope = getattr(pin, "projection_scope", None)
+    default_path = f"/company/{expected_inn}-company"
+    if scope is None:
+        if not _is_staged_pin_shape(pin):
+            raise ValueError("legacy public H2 pin shape is invalid")
+        return PublicH2ProjectionBindingV1(
+            projection_scope="latest_unpublished",
+            canonical_path=default_path,
+            indexable=False,
+            published_lastmod=None,
+        )
+    if scope == "staged_publication":
+        if not _is_staged_pin_shape(pin):
+            raise ValueError("staged public H2 pin shape is invalid")
+        return PublicH2ProjectionBindingV1(
+            projection_scope="staged_publication",
+            canonical_path=default_path,
+            indexable=False,
+            published_lastmod=None,
+        )
+    if scope == "active_publication":
+        if (
+            pin.narrative_binding_status != "resolved"
+            or pin.publication_policy_version != H2_PUBLICATION_POLICY_V3
+            or not isinstance(pin.canonical_path, str)
+            or type(pin.indexable) is not bool
+            or pin.published_lastmod is None
+        ):
+            raise ValueError("active public H2 pin shape is invalid")
+        return PublicH2ProjectionBindingV1(
+            projection_scope="active_publication",
+            canonical_path=pin.canonical_path,
+            indexable=pin.indexable,
+            published_lastmod=pin.published_lastmod,
+        )
+    raise ValueError("public H2 pin scope is invalid")
+
+
+async def build_active_public_h2_for_pin(
+    session: AsyncSession,
+    *,
+    record: CompanyReportRecord,
+    source_pin: CompanyReportPresentationPin,
+    expected_subject_id: object,
+    expected_inn: str,
+    canonical_path: str,
+    indexable: bool,
+    published_lastmod: object,
+    dependencies: ExactPublicH2Dependencies | None = None,
+) -> CompanyPublicH2Response:
+    """Validate one exact staged pin and deterministically plan its active DTO."""
+    if (
+        getattr(source_pin, "projection_scope", None)
+        not in {None, "staged_publication"}
+        or not _is_staged_pin_shape(source_pin)
+        or record.generated_at is None
+        or record.generated_at.tzinfo is None
+        or record.generated_at.utcoffset() is None
+        or published_lastmod != record.generated_at
+    ):
+        raise PublicH2Invalid("company card v2 active source binding is invalid")
+    source = await _resolve_exact_v3(
+        session,
+        record,
+        pin=source_pin,
+        expected_subject_id=expected_subject_id,
+        expected_inn=expected_inn,
+        dependencies=dependencies,
+    )
+    try:
+        active = rebind_public_h2_projection(
+            source,
+            projection_binding=PublicH2ProjectionBindingV1(
+                projection_scope="active_publication",
+                canonical_path=canonical_path,
+                indexable=indexable,
+                published_lastmod=record.generated_at,
+            ),
+        )
+        if active.indexable:
+            _validate_indexable_public_h2(active)
+        return active
+    except Exception as exc:
+        raise PublicH2Invalid("company card v2 active projection is invalid") from exc
 
 
 async def _legacy_preview(session: AsyncSession, record: CompanyReportRecord, inn: str) -> CompanyPublicH2Response:
@@ -857,4 +1039,15 @@ def _is_hex64(value: object) -> bool:
     )
 
 
-__all__ = ["PublicH2Error", "PublicH2Failed", "PublicH2Invalid", "PublicH2NotEligible", "PublicH2NotFound", "PublicH2Pending", "h2_cohort_selected", "resolve_public_h2"]
+__all__ = [
+    "ExactPublicH2Dependencies",
+    "PublicH2Error",
+    "PublicH2Failed",
+    "PublicH2Invalid",
+    "PublicH2NotEligible",
+    "PublicH2NotFound",
+    "PublicH2Pending",
+    "build_active_public_h2_for_pin",
+    "h2_cohort_selected",
+    "resolve_public_h2",
+]

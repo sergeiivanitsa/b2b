@@ -3,15 +3,18 @@ import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SRC = REPO_ROOT / "services" / "product_api" / "src"
-for path in (str(SRC), str(REPO_ROOT)):
+for path in (str(REPO_ROOT), str(SRC)):
     if path not in sys.path:
-        sys.path.append(path)
+        sys.path.insert(0, path)
 
-os.environ.pop("OPENAI_API_KEY", None)
+from tests_support.network_guard import prepare_test_environment
+
+prepare_test_environment(suite="product-unit")
+
+import pytest
+
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://app:app@postgres:5432/app")
 os.environ.setdefault("APP_ENV", "dev")
 os.environ.setdefault("GATEWAY_URL", "http://gateway_api:8001")

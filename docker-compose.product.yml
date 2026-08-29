@@ -4,16 +4,21 @@ services:
     build:
       context: .
       dockerfile: services/product_api/Dockerfile
+      target: local
     restart: unless-stopped
     ports:
       - "127.0.0.1:8000:8000"
     env_file:
-      - .env.product
+      - ${PRODUCT_ENV_FILE:-.env.product}
+    environment:
+      - PRODUCT_RELEASE_COMMIT
 
   company_report_worker:
     image: b2b-product-api:${PRODUCT_IMAGE_TAG:-local}
     env_file:
-      - .env.product
+      - ${PRODUCT_ENV_FILE:-.env.product}
+    environment:
+      - PRODUCT_RELEASE_COMMIT
     restart: unless-stopped
     stop_grace_period: 40s
     command:
@@ -26,7 +31,9 @@ services:
     profiles:
       - company-card-narrative
     env_file:
-      - .env.product
+      - ${PRODUCT_ENV_FILE:-.env.product}
+    environment:
+      - PRODUCT_RELEASE_COMMIT
     restart: unless-stopped
     stop_grace_period: 40s
     command:

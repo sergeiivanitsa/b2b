@@ -2,8 +2,8 @@
 
 The iteration-24 runner creates two explicitly named loopback databases.  This
 module owns their schemas: one database is reused for independent pre-DDL guard
-probes, while the other is left at ``head`` for the affected integration
-suites that the runner executes afterwards.
+probes, while the other is left at explicit revision ``0018`` for the
+iteration-25 runner's separately verified forward-head handoff.
 """
 from __future__ import annotations
 
@@ -102,7 +102,7 @@ def test_iteration24_terminal_defaults_checks_and_round_trip(
     seeded = asyncio.run(_seed_terminal_and_historical_lineage(rendered))
     before = asyncio.run(_predecessor_rows(rendered))
 
-    command.upgrade(config, "head")
+    command.upgrade(config, REVISION)
     assert asyncio.run(_revision(rendered)) == REVISION
     asyncio.run(_assert_decision_schema_and_defaults(rendered, seeded))
     asyncio.run(_assert_disabled_nonnull_rejected(rendered, seeded))
@@ -113,7 +113,7 @@ def test_iteration24_terminal_defaults_checks_and_round_trip(
     assert asyncio.run(_decision_columns(rendered)) == set()
     assert asyncio.run(_predecessor_rows(rendered)) == before
 
-    command.upgrade(config, "head")
+    command.upgrade(config, REVISION)
     assert asyncio.run(_revision(rendered)) == REVISION
     assert asyncio.run(_predecessor_rows(rendered)) == before
     asyncio.run(_assert_decision_schema_and_defaults(rendered, seeded))

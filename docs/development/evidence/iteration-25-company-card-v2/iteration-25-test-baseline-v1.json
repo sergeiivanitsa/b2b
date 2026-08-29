@@ -1,0 +1,63 @@
+{
+  "schema_version": "iteration_25_test_baseline_v1",
+  "recorded_at": "2026-08-28T00:00:00Z",
+  "base_commit": "31b299ac88b5fac7d5c04082324fb122d63db7e7",
+  "gates": {
+    "frozen_iteration20_lifecycle": {
+      "tests": 50,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "product_api_unit": {
+      "tests": 1524,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "gateway_api": {
+      "tests": 31,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "web_unit_component": {
+      "tests": 496,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "release_contract": {
+      "tests": 34,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "iteration24_exact_0018": {
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "iteration24_affected_integration": {
+      "tests": 79,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "iteration20_targeted_integration": {
+      "tests": 117,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "iteration20_full_integration": {
+      "tests": 290,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "failure_allowlist": [],
+  "skip_allowlist": []
+}

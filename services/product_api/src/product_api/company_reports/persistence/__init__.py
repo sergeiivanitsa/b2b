@@ -34,6 +34,7 @@ from .models import (
     CompanyCardNarrativeJob,
     CompanyCardNarrativeOutbox,
     CompanyCardNarrativeRuntimeControl,
+    CompanyCardV2RolloutDecision,
     CompanyReportPublication,
     CompanyReportPublicationBatch,
     CompanyReportPublicationBatchItem,
@@ -86,7 +87,19 @@ from .public_h1 import (
     list_report_resolution_records,
 )
 from .v3 import calculate_company_card_v2_snapshot_hash, company_card_v2_from_snapshot, company_card_v2_to_snapshot
-from .presentations import PresentationAssignmentConflict, append_presentation_pin, assign_pin_cas, create_or_reuse_h2_presentation, stage_h2_pin
+from .presentations import (
+    H2_ACTIVE_PROJECTION_SCOPE,
+    H2_STAGED_PROJECTION_SCOPE,
+    PresentationAssignmentConflict,
+    RolloutAssignmentCommand,
+    RolloutAssignmentOutcome,
+    append_presentation_pin,
+    assign_pin_cas,
+    assign_rollout_pin_cas,
+    bind_rollout_decision,
+    create_or_reuse_h2_presentation,
+    stage_h2_pin,
+)
 from .narrative_outbox import (
     NarrativeOutboxLease,
     NarrativeOutboxOwnershipError,
@@ -131,6 +144,7 @@ __all__ = [
     "CompanyCardNarrativeJob",
     "CompanyCardNarrativeOutbox",
     "CompanyCardNarrativeRuntimeControl",
+    "CompanyCardV2RolloutDecision",
     "CompanyReportDataset",
     "CompanyReportPublication",
     "CompanyReportPublicationBatch",
@@ -151,6 +165,8 @@ __all__ = [
     "CompanyReportPresentationAssignmentJournal",
     "CompanyReportPresentationStagedPointer",
     "PresentationAssignmentConflict",
+    "RolloutAssignmentCommand",
+    "RolloutAssignmentOutcome",
     "CompanyReportRecord",
     "CompanyReportSnapshotError",
     "CompanyReportStateConflictError",
@@ -194,8 +210,12 @@ __all__ = [
     "company_card_v2_to_snapshot",
     "append_presentation_pin",
     "assign_pin_cas",
+    "assign_rollout_pin_cas",
+    "bind_rollout_decision",
     "create_or_reuse_h2_presentation",
     "stage_h2_pin",
+    "H2_ACTIVE_PROJECTION_SCOPE",
+    "H2_STAGED_PROJECTION_SCOPE",
     "PublicationResolutionRecord",
     "ReportResolutionRecord",
     "get_publication_resolution_record",

@@ -34,6 +34,20 @@ class SelectOnlySession:
         self.select_count += 1
         return await self._session.scalar(statement, *args, **kwargs)
 
+    def in_transaction(self) -> bool:
+        """Expose transaction state without weakening the write guard."""
+        return self._session.in_transaction()
+
+    async def connection(self, *args: Any, **kwargs: Any) -> Any:
+        """Permit only the public-sitemap read-only snapshot boundary."""
+        expected_options = {
+            "isolation_level": "REPEATABLE READ",
+            "postgresql_readonly": True,
+        }
+        if args or kwargs != {"execution_options": expected_options}:
+            self._reject("unsafe_connection")
+        return await self._session.connection(*args, **kwargs)
+
     def add(self, *_args: Any, **_kwargs: Any) -> None:
         self._reject("orm_add")
 

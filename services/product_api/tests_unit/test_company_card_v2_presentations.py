@@ -90,6 +90,8 @@ def _unresolved_h2_pin_case():
         presentation_contract=H2_PRESENTATION_CONTRACT,
         generation=1,
         publication_policy_version=H2_PUBLICATION_POLICY_V3,
+        # Explicit legacy row shape after the additive 0019 upgrade.
+        projection_scope=None,
         canonical_path=None,
         published_lastmod=None,
         indexable=False,

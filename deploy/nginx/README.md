@@ -7,17 +7,20 @@
 - `/api/v1/chat` has buffering disabled for SSE streaming
 - `/api/docs`, `/api/redoc`, `/api/openapi.json` are blocked in production
 
-## Manual rollout on RU server
+## Manual rollout boundary
 
-1. Build frontend in repo root:
-   - `npm --prefix services/web_ui ci`
-   - `npm --prefix services/web_ui run build`
-2. Install nginx config:
-   - copy `deploy/nginx/product_api.conf` to nginx site config
-   - ensure the configured `root` path exists and contains `index.html`
-3. Reload nginx:
-   - `nginx -t`
-   - `systemctl reload nginx`
+Do not build on the RU host. The protected exact-SHA workflow consumes the
+already checksummed QA Web/H2 artifacts. The SPA root is the atomic pointer
+`/var/lib/pork/web-ui/v1/current/site`; a release is installed below
+`releases/<40-hex-sha>` only by `deploy/web_ui/install_web_ui_release.sh`.
+The installer verifies the archive manifest and every file, switches the
+symlink atomically, performs a loopback Host/SNI smoke and restores the prior
+pointer/history if that smoke fails.
+
+Validate `product_api.conf` with `nginx -t` before reload. A missing current
+pointer or a release not retained by the reviewed rollback set is a STOP. The
+complete default-off order and P1–P9 evidence gates are in
+`docs/development/runbooks/company-card-v2-rollout.md`.
 
 ## Company Card v2 assets
 
@@ -28,6 +31,13 @@ two verified predecessors.  The installer never deletes immutable assets; a
 new or incomplete host fails until the separately authorized seed/runbook is
 performed.  Product rollback therefore chooses only a retained verified
 manifest, then rolls Product back.
+
+Initial/DR seed is a separate manual path. The fixed reviewed three-release
+bundle is produced by `.github/workflows/company_public_h2_seed_bundle.yml`
+without a production connection. `company_public_h2_seed.py verify-bundle`
+validates its canonical inventory read-only. The seed wrapper accepts only an
+explicit absolute, empty, owned, nonsymlinked root; it copies immutably, fsyncs
+and publishes the pointer last. Normal install never invokes seed implicitly.
 
 ## Smoke checks
 

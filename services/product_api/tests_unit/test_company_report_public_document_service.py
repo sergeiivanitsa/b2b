@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -13,7 +14,16 @@ from product_api.company_reports.persistence.public_documents import PublicDocum
 def _row(contract: str, *, report_subject: str = "subject") -> PublicDocumentAssignmentRow:
     subject = SimpleNamespace(id="subject", normalized_identifier="7701234567")
     assignment = SimpleNamespace(subject_id="subject", presentation_contract=contract, pin_generation=3)
-    pin = SimpleNamespace(subject_id="subject", presentation_contract=contract, generation=3, report_id="report")
+    pin = SimpleNamespace(
+        subject_id="subject",
+        presentation_contract=contract,
+        generation=3,
+        report_id="report",
+        projection_scope=("active_publication" if contract == "company_public_h2_v1" else None),
+        canonical_path=("/company/7701234567-company" if contract == "company_public_h2_v1" else None),
+        indexable=(False if contract == "company_public_h2_v1" else True),
+        published_lastmod=(datetime(2026, 8, 28, tzinfo=timezone.utc) if contract == "company_public_h2_v1" else None),
+    )
     report = SimpleNamespace(id="report", subject_id=report_subject)
     return PublicDocumentAssignmentRow(subject, assignment, pin, report)
 
@@ -42,6 +52,30 @@ async def test_exact_h2_storage_failure_is_not_reclassified_as_binding_corruptio
     monkeypatch.setattr(service, "get_public_document_assignment_row", select)
     monkeypatch.setattr(service, "resolve_exact_assigned_public_h2", unavailable)
     with pytest.raises(OperationalError):
+        await service.resolve_public_document(object(), inn="7701234567")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("projection_scope", (None, "staged_publication"))
+async def test_assigned_nonactive_h2_is_terminal_without_legacy_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    projection_scope: str | None,
+) -> None:
+    row = _row("company_public_h2_v1")
+    row.pin.projection_scope = projection_scope
+    row.pin.canonical_path = None
+    row.pin.published_lastmod = None
+
+    async def select(*_args, **_kwargs):
+        return row
+
+    async def forbidden(*_args, **_kwargs):
+        raise AssertionError("nonactive H2 assignment must not resolve or fall back")
+
+    monkeypatch.setattr(service, "get_public_document_assignment_row", select)
+    monkeypatch.setattr(service, "resolve_exact_assigned_public_h2", forbidden)
+    monkeypatch.setattr(service, "resolve_public_h1", forbidden)
+    with pytest.raises(service.PublicDocumentInvalid, match="not active"):
         await service.resolve_public_document(object(), inn="7701234567")
 
 

@@ -1,213 +1,483 @@
-name: Deploy prod
+name: Deploy exact QA release to production
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact lowercase commit already in protected main history
+        required: true
+        type: string
+      p1_protection_evidence_base64:
+        description: Base64 canonical current protection/reviewer evidence (P1; UNSET means STOP)
+        required: true
+        type: string
+      p1_protection_evidence_sha256:
+        description: SHA-256 of decoded P1 evidence
+        required: true
+        type: string
+      p2_evidence_sha256:
+        description: Backup/restore/schema/drain evidence digest (UNSET means STOP)
+        required: true
+        type: string
+      p3_evidence_sha256:
+        description: Cohort decision evidence digest (activation remains not-authorized)
+        required: true
+        type: string
+      p4_evidence_sha256:
+        description: Monitoring/owner/abort evidence digest (UNSET means STOP)
+        required: true
+        type: string
+      p5_evidence_sha256:
+        description: Seeded current+2 and compatible-image evidence digest (UNSET means STOP)
+        required: true
+        type: string
+      p6_evidence_sha256:
+        description: Provider-disabled decision digest (UNSET means STOP)
+        required: true
+        type: string
+      p7_evidence_sha256:
+        description: AI fallback-only decision digest (UNSET means STOP)
+        required: true
+        type: string
+      p8_evidence_sha256:
+        description: Privacy-key no-activation decision digest (UNSET means STOP)
+        required: true
+        type: string
+      p9_evidence_sha256:
+        description: Indexing noindex/no-assignment decision digest (UNSET means STOP)
+        required: true
+        type: string
+      drain_deadline_seconds:
+        description: P1-approved worker drain deadline; no repository default
+        required: true
+        type: string
+      drain_stable_interval_seconds:
+        description: P1-approved stable-snapshot interval; no repository default
+        required: true
+        type: string
+      provider_mode:
+        description: Must remain disabled for this deploy
+        required: true
+        type: choice
+        options: [disabled]
+      ai_mode:
+        description: Must remain fallback-only for this deploy
+        required: true
+        type: choice
+        options: [fallback-only]
+      indexing_mode:
+        description: Must remain noindex/no-assignment for this deploy
+        required: true
+        type: choice
+        options: [noindex-no-assignment]
+
+permissions:
+  contents: read
+  actions: read
 
 concurrency:
   group: prod-deploy
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
+  trusted-main-and-p1:
+    name: trusted-main-and-p1
+    runs-on: ubuntu-24.04
+    outputs:
+      release_sha: ${{ steps.guard.outputs.release_sha }}
     steps:
-      - name: Start SSH agent
-        uses: webfactory/ssh-agent@v0.9.0
+      - name: Check out current protected main with full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ssh-private-key: ${{ secrets.PROD_SSH_KEY }}
-
-      - name: Add known hosts
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prove current trusted workflow and requested ancestry before local code
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          PROTECTED_REPOSITORY: ${{ vars.PROTECTED_REPOSITORY }}
+          ACTUAL_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -H "${{ secrets.RU_HOST }}" >> ~/.ssh/known_hosts
-          ssh-keyscan -H "${{ secrets.US_HOST }}" >> ~/.ssh/known_hosts
-
-      - name: Checkout deploy commit
-        uses: actions/checkout@v4
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REF" = refs/heads/main
+          test -n "$PROTECTED_REPOSITORY"
+          test "$ACTUAL_REPOSITORY" = "$PROTECTED_REPOSITORY"
+          test "$WORKFLOW_REF" = "$ACTUAL_REPOSITORY/.github/workflows/deploy_prod.yml@refs/heads/main"
+          protected_main="$(git rev-parse HEAD)"
+          test "$WORKFLOW_SHA" = "$protected_main"
+          test "$(git rev-parse "$WORKFLOW_SHA:.github/workflows/deploy_prod.yml")" = "$(git rev-parse "$protected_main:.github/workflows/deploy_prod.yml")"
+          git cat-file -e "$RELEASE_SHA^{commit}"
+          git merge-base --is-ancestor "$RELEASE_SHA" "$protected_main"
+      - name: Check out exact trusted main-history release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.sha }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up locked Python
+        uses: ./.github/actions/setup-python-ci
         with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: services/web_ui/package-lock.json
-
-      - name: Build web_ui static bundle
+          release-sha: ${{ inputs.release_sha }}
+      - name: Validate external P1-P9 STOP gates
+        id: guard
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          ACTUAL_REPOSITORY: ${{ github.repository }}
+          P1_EVIDENCE_BASE64: ${{ inputs.p1_protection_evidence_base64 }}
+          P1_EVIDENCE_SHA256: ${{ inputs.p1_protection_evidence_sha256 }}
+          P2_EVIDENCE_SHA256: ${{ inputs.p2_evidence_sha256 }}
+          P3_EVIDENCE_SHA256: ${{ inputs.p3_evidence_sha256 }}
+          P4_EVIDENCE_SHA256: ${{ inputs.p4_evidence_sha256 }}
+          P5_EVIDENCE_SHA256: ${{ inputs.p5_evidence_sha256 }}
+          P6_EVIDENCE_SHA256: ${{ inputs.p6_evidence_sha256 }}
+          P7_EVIDENCE_SHA256: ${{ inputs.p7_evidence_sha256 }}
+          P8_EVIDENCE_SHA256: ${{ inputs.p8_evidence_sha256 }}
+          P9_EVIDENCE_SHA256: ${{ inputs.p9_evidence_sha256 }}
+          PROVIDER_MODE: ${{ inputs.provider_mode }}
+          AI_MODE: ${{ inputs.ai_mode }}
+          INDEXING_MODE: ${{ inputs.indexing_mode }}
+          DRAIN_DEADLINE_SECONDS: ${{ inputs.drain_deadline_seconds }}
+          DRAIN_STABLE_INTERVAL_SECONDS: ${{ inputs.drain_stable_interval_seconds }}
         run: |
-          npm ci --prefix services/web_ui
-          npm run build --prefix services/web_ui
-          tar -C services/web_ui/dist -czf /tmp/web_ui-dist.tgz .
-          release_stage="$(mktemp -d /tmp/company-public-h2-package.XXXXXX)"
-          mkdir -p "$release_stage/assets"
-          cp services/product_api/src/product_api/company_reports/company_card_v2/public_h2_asset_manifest.json "$release_stage/public_h2_asset_manifest.json"
-          python3 - "$release_stage" <<'PY'
-          import json,pathlib,shutil,sys
-          target=pathlib.Path(sys.argv[1]); source=pathlib.Path('services/web_ui/dist-company-public-h2/assets')
-          manifest=json.loads((target/'public_h2_asset_manifest.json').read_text(encoding='utf-8'))
-          expected={item['path'].removeprefix('/assets/') for item in manifest['assets']}
-          actual={item.name for item in source.iterdir() if item.is_file()}
-          if actual != expected: raise SystemExit('dedicated H2 source graph mismatch')
-          for name in sorted(expected): shutil.copyfile(source/name,target/'assets'/name)
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          python - <<'PY'
+          import base64, binascii, datetime, hashlib, json, os, re
+          digest = re.compile(r"^[0-9a-f]{64}$")
+          for name in ("P1_EVIDENCE_SHA256", "P2_EVIDENCE_SHA256", "P3_EVIDENCE_SHA256", "P4_EVIDENCE_SHA256", "P5_EVIDENCE_SHA256", "P6_EVIDENCE_SHA256", "P7_EVIDENCE_SHA256", "P8_EVIDENCE_SHA256", "P9_EVIDENCE_SHA256"):
+              if digest.fullmatch(os.environ[name]) is None:
+                  raise SystemExit(f"{name} is UNSET/invalid; STOP")
+          if os.environ["PROVIDER_MODE"] != "disabled" or os.environ["AI_MODE"] != "fallback-only" or os.environ["INDEXING_MODE"] != "noindex-no-assignment":
+              raise SystemExit("positive production mode is not authorized")
+          for name in ("DRAIN_DEADLINE_SECONDS", "DRAIN_STABLE_INTERVAL_SECONDS"):
+              try:
+                  value = float(os.environ[name])
+              except ValueError as exc:
+                  raise SystemExit(f"{name} is UNSET/invalid; STOP") from exc
+              if not value > 0 or not value < float("inf"):
+                  raise SystemExit(f"{name} is UNSET/invalid; STOP")
+          try:
+              raw = base64.b64decode(os.environ["P1_EVIDENCE_BASE64"], validate=True)
+          except binascii.Error as exc:
+              raise SystemExit("P1 evidence is not strict base64; STOP") from exc
+          if hashlib.sha256(raw).hexdigest() != os.environ["P1_EVIDENCE_SHA256"]:
+              raise SystemExit("P1 evidence digest mismatch; STOP")
+          if raw.startswith(b"\xef\xbb\xbf") or b"\r" in raw or not raw.endswith(b"\n"):
+              raise SystemExit("P1 evidence bytes are not canonical; STOP")
+          data = json.loads(raw.decode("utf-8"))
+          expected_keys = {
+              "schema_version", "repository", "protected_ref", "release_sha",
+              "required_statuses", "production_environment_required_reviewers",
+              "observed_at_utc", "valid_until_utc", "deployment_window_start_utc",
+              "deployment_window_end_utc", "drain_deadline_seconds",
+              "drain_stable_interval_seconds",
+          }
+          if set(data) != expected_keys or data["schema_version"] != "github_protection_evidence_v1":
+              raise SystemExit("P1 evidence schema mismatch; STOP")
+          if data["repository"] != os.environ["ACTUAL_REPOSITORY"] or data["protected_ref"] != "refs/heads/main":
+              raise SystemExit("P1 repository/ref mismatch; STOP")
+          if data["release_sha"] != os.environ["RELEASE_SHA"]:
+              raise SystemExit("P1 release SHA mismatch; STOP")
+          if data["required_statuses"] != ["qa-required"] or data["production_environment_required_reviewers"] is not True:
+              raise SystemExit("P1 required status/reviewer protection absent; STOP")
+          for evidence_name, input_name in (
+              ("drain_deadline_seconds", "DRAIN_DEADLINE_SECONDS"),
+              ("drain_stable_interval_seconds", "DRAIN_STABLE_INTERVAL_SECONDS"),
+          ):
+              evidence_value = data[evidence_name]
+              if type(evidence_value) not in {int, float} or float(evidence_value) != float(os.environ[input_name]):
+                  raise SystemExit("P1 drain bound mismatch; STOP")
+          canonical = (json.dumps(data, separators=(",", ":"), sort_keys=True) + "\n").encode()
+          if canonical != raw:
+              raise SystemExit("P1 evidence is not canonical JSON; STOP")
+          def instant(value):
+              if not isinstance(value, str) or not value.endswith("Z"):
+                  raise SystemExit("P1 evidence time invalid; STOP")
+              return datetime.datetime.fromisoformat(value[:-1] + "+00:00")
+          now = datetime.datetime.now(datetime.timezone.utc)
+          if not instant(data["observed_at_utc"]) <= now <= instant(data["valid_until_utc"]):
+              raise SystemExit("P1 evidence is stale/not yet valid; STOP")
+          window_start = instant(data["deployment_window_start_utc"])
+          window_end = instant(data["deployment_window_end_utc"])
+          if not window_start < window_end or not window_start <= now <= window_end:
+              raise SystemExit("outside the P1-approved deployment window; STOP")
           PY
-          tar -C "$release_stage" -czf /tmp/company-public-h2-assets.tgz public_h2_asset_manifest.json assets
-          rm -rf "$release_stage"
+          echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
 
-      - name: Upload immutable H2 release to RU
-        run: |
-          scp -o StrictHostKeyChecking=yes /tmp/company-public-h2-assets.tgz "${{ secrets.RU_USER }}@${{ secrets.RU_HOST }}:/tmp/"
+  qa:
+    name: qa-required dependency
+    needs: trusted-main-and-p1
+    uses: ./.github/workflows/qa.yml
+    with:
+      release_sha: ${{ needs.trusted-main-and-p1.outputs.release_sha }}
 
-      - name: Deploy RU
+  deploy:
+    name: exact-SHA protected production deploy
+    needs: [trusted-main-and-p1, qa]
+    if: needs.qa.outputs.verified_release_sha == needs.trusted-main-and-p1.outputs.release_sha
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - name: Check out exact QA release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.trusted-main-and-p1.outputs.release_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up locked Python
+        uses: ./.github/actions/setup-python-ci
+        with:
+          release-sha: ${{ needs.trusted-main-and-p1.outputs.release_sha }}
+      - name: Download sole build-once release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ needs.qa.outputs.release_artifact_name }}
+          path: .release/deploy
+      - name: Download canonical QA attestation
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ needs.qa.outputs.attestation_artifact_name }}
+          path: .release/deploy-attestation
+      - name: Reverify one SHA through attestation, manifests and artifacts
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main-and-p1.outputs.release_sha }}
+          VERIFIED_RELEASE_SHA: ${{ needs.qa.outputs.verified_release_sha }}
         run: |
-          ssh -o StrictHostKeyChecking=yes "${{ secrets.RU_USER }}@${{ secrets.RU_HOST }}" <<'EOF'
           set -euo pipefail
-          cd /opt/b2b
-          DEPLOY_COMMIT='${{ github.sha }}'
-          git fetch origin
-          git checkout main
-          git reset --hard "$DEPLOY_COMMIT"
-          export PRODUCT_IMAGE_TAG="$DEPLOY_COMMIT"
-
-          # Build the exact candidate image before reading its packaged
-          # manifest. This is a build-only operation: API replacement remains
-          # behind the immutable asset/history gate below.
-          docker compose -f docker-compose.product.yml --env-file .env.product build product_api
-          candidate_container="$(docker create "b2b-product-api:${PRODUCT_IMAGE_TAG}")"
-          trap 'docker rm -f "$candidate_container" >/dev/null 2>&1 || true' EXIT
-          candidate_manifest="$(mktemp /tmp/company-public-h2-candidate.XXXXXX)"
-          docker cp "$candidate_container:/app/services/product_api/src/product_api/company_reports/company_card_v2/public_h2_asset_manifest.json" "$candidate_manifest"
-
-          # The exact packaged Product manifest, source graph, durable history,
-          # stored bytes and HTTPS/SNI loopback responses are one CLI gate.
-          # It is intentionally before migrations and replacement of the API.
-          release_dir="$(mktemp -d /tmp/company-public-h2-release.XXXXXX)"
-          tar -xzf /tmp/company-public-h2-assets.tgz -C "$release_dir"
-          bash deploy/nginx/install_company_public_h2_assets.sh \
-            "$release_dir" /var/lib/pork/company-public-h2/v1 \
-            127.0.0.1:443 https://pork.su "$candidate_manifest"
-          rm -rf "$release_dir" "$candidate_manifest" /tmp/company-public-h2-assets.tgz
-
-          # Stop the old worker before changing schema or code. Queued jobs stay queued.
-          docker compose -f docker-compose.product.yml --env-file .env.product stop -t 40 company_report_worker || true
-
-          # A migration failure stops this shell before either new process starts.
-          docker compose -f docker-compose.product.yml --env-file .env.product run --rm -T --no-deps product_api sh -lc "cd /app/services/product_api && alembic -c alembic.ini upgrade head" </dev/null
-
-          docker compose -f docker-compose.product.yml --env-file .env.product up -d --force-recreate --no-deps product_api company_report_worker
-          # health retry ~60s (12*5s)
-          ok=0
-          for i in $(seq 1 12); do
-            if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
-              echo "RU health OK"
-              ok=1
-              break
-            fi
-            echo "RU health not ready ($i/12), waiting..."
-            sleep 5
-          done
-
-          if [ "$ok" -ne 1 ]; then
-            echo "RU health FAILED — docker ps:"
-            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
-            echo "RU logs (last 200):"
-            docker logs --tail 200 b2b-product_api-1 || true
-            exit 1
-          fi
-
-          api_id="$(docker compose -f docker-compose.product.yml --env-file .env.product ps -q product_api)"
-          worker_id="$(docker compose -f docker-compose.product.yml --env-file .env.product ps -q company_report_worker)"
-          if [ -z "$api_id" ] || [ -z "$worker_id" ]; then
-            echo "Product API or CompanyReport worker container is missing"
-            exit 1
-          fi
-
-          api_running="$(docker inspect -f '{{.State.Running}}' "$api_id")"
-          api_restarting="$(docker inspect -f '{{.State.Restarting}}' "$api_id")"
-          if [ "$api_running" != "true" ] || [ "$api_restarting" != "false" ]; then
-            echo "Product API is not stably running"
-            docker inspect -f 'NAME={{.Name}} STATUS={{.State.Status}} RESTARTING={{.State.Restarting}} IMAGE={{.Image}}' "$api_id"
-            exit 1
-          fi
-
-          worker_running="$(docker inspect -f '{{.State.Running}}' "$worker_id")"
-          worker_restarting="$(docker inspect -f '{{.State.Restarting}}' "$worker_id")"
-          if [ "$worker_running" != "true" ] || [ "$worker_restarting" != "false" ]; then
-            echo "CompanyReport worker is not stably running"
-            docker inspect -f 'NAME={{.Name}} STATUS={{.State.Status}} RESTARTING={{.State.Restarting}} IMAGE={{.Image}}' "$worker_id"
-            exit 1
-          fi
-
-          expected_image_id="$(docker image inspect -f '{{.Id}}' "b2b-product-api:${PRODUCT_IMAGE_TAG}")"
-          api_image_id="$(docker inspect -f '{{.Image}}' "$api_id")"
-          worker_image_id="$(docker inspect -f '{{.Image}}' "$worker_id")"
-          if [ "$api_image_id" != "$worker_image_id" ] || [ "$api_image_id" != "$expected_image_id" ]; then
-            echo "Product API and worker image IDs do not match the deployed commit tag"
-            exit 1
-          fi
-          docker inspect -f 'NAME={{.Name}} CREATED={{.Created}} STARTED={{.State.StartedAt}} IMAGE={{.Image}}' "$api_id" "$worker_id"
-          EOF
-
-      - name: Deploy US
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          test "$VERIFIED_RELEASE_SHA" = "$RELEASE_SHA"
+          cd .release/deploy
+          sha256sum --check "checksums-$RELEASE_SHA.txt"
+          cd ../..
+          python deploy/product_api/release_manifest.py "$PWD/.release/deploy" "$RELEASE_SHA"
+          python - <<'PY'
+          import json, os
+          from hashlib import sha256
+          from pathlib import Path
+          release_sha = os.environ["RELEASE_SHA"]
+          release_path = Path(".release/deploy") / f"release-manifest-{release_sha}.json"
+          attestation_path = Path(".release/deploy-attestation") / f"qa-attestation-{release_sha}.json"
+          release = json.loads(release_path.read_text(encoding="utf-8"))
+          attestation_raw = attestation_path.read_bytes()
+          if attestation_raw.startswith(b"\xef\xbb\xbf") or b"\r" in attestation_raw or not attestation_raw.endswith(b"\n"):
+              raise SystemExit("QA attestation bytes are not canonical; STOP")
+          attestation = json.loads(attestation_raw.decode("utf-8"))
+          if attestation_raw != (json.dumps(attestation, separators=(",", ":"), sort_keys=True) + "\n").encode():
+              raise SystemExit("QA attestation JSON is not canonical; STOP")
+          if set(attestation) != {
+              "schema_version", "verified_release_sha", "release_artifact_name",
+              "release_manifest_name", "release_manifest_sha256", "job_conclusions",
+              "workflow_run_attempt", "workflow_run_id",
+          } or attestation.get("schema_version") != "company_card_v2_qa_attestation_v1":
+              raise SystemExit("QA attestation schema mismatch; STOP")
+          if release.get("release_sha") != release_sha or attestation.get("verified_release_sha") != release_sha:
+              raise SystemExit("release/attestation SHA mismatch; STOP")
+          if attestation.get("release_artifact_name") != f"qa-release-{release_sha}" or attestation.get("release_manifest_name") != release_path.name:
+              raise SystemExit("release/attestation artifact identity mismatch; STOP")
+          if attestation.get("release_manifest_sha256") != sha256(release_path.read_bytes()).hexdigest():
+              raise SystemExit("attested release manifest digest mismatch; STOP")
+          jobs = attestation.get("job_conclusions")
+          if not isinstance(jobs, dict) or set(jobs) != {
+              "UNIT_RESULT", "POSTGRES_RESULT", "WEB_RESULT", "BUILD_RESULT",
+              "BROWSER_RESULT", "CONTRACT_RESULT",
+          } or set(jobs.values()) != {"success"}:
+              raise SystemExit("QA attestation is not wholly successful; STOP")
+          if type(attestation.get("workflow_run_attempt")) is not int or attestation["workflow_run_attempt"] < 1 or type(attestation.get("workflow_run_id")) is not int or attestation["workflow_run_id"] < 1:
+              raise SystemExit("QA attestation workflow identity is invalid; STOP")
+          PY
+      - name: Configure strict SSH host identities
+        shell: bash
+        env:
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          RU_SSH_KNOWN_HOSTS: ${{ secrets.RU_SSH_KNOWN_HOSTS }}
+          US_SSH_KNOWN_HOSTS: ${{ secrets.US_SSH_KNOWN_HOSTS }}
         run: |
-          ssh -o StrictHostKeyChecking=yes "${{ secrets.US_USER }}@${{ secrets.US_HOST }}" <<'EOF'
           set -euo pipefail
-          cd /opt/b2b
-          git fetch origin
-          git checkout main
-          git reset --hard origin/main
-
-          cp -f deploy/us/compose/docker-compose.gateway.yml docker-compose.gateway.yml
-          docker compose -f docker-compose.gateway.yml --env-file .env.gateway up -d --build
-
-          # health retry ~60s (12*5s)
-          ok=0
-          for i in $(seq 1 12); do
-            if curl -fsS http://127.0.0.1:8001/health >/dev/null; then
-              echo "US health OK"
-              ok=1
-              break
-            fi
-            echo "US health not ready ($i/12), waiting..."
-            sleep 5
-          done
-
-          if [ "$ok" -ne 1 ]; then
-            echo "US health FAILED — docker ps:"
-            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
-            echo "US logs (last 200):"
-            docker logs --tail 200 b2b-gateway_api-1 || true
-            exit 1
-          fi
-          EOF
-
-      - name: Deploy web_ui static on RU
+          test -n "$PROD_SSH_KEY"
+          test -n "$RU_SSH_KNOWN_HOSTS"
+          test -n "$US_SSH_KNOWN_HOSTS"
+          command -v ssh-agent >/dev/null
+          command -v ssh-add >/dev/null
+          install -m 700 -d "$RUNNER_TEMP/iteration25-ssh"
+          printf '%s\n%s\n' "$RU_SSH_KNOWN_HOSTS" "$US_SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/iteration25-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/iteration25-ssh/known_hosts"
+          eval "$(ssh-agent -s)"
+          printf '%s\n' "$PROD_SSH_KEY" | ssh-add - >/dev/null
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+      - name: Read-only RU/US preflight and record compatible prior identities
+        id: preflight
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main-and-p1.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          US_TARGET: ${{ secrets.US_DEPLOY_TARGET }}
+          RU_RELEASE_ROOT: ${{ vars.RU_RELEASE_ROOT }}
+          US_RELEASE_ROOT: ${{ vars.US_RELEASE_ROOT }}
         run: |
-          scp -o StrictHostKeyChecking=yes /tmp/web_ui-dist.tgz "${{ secrets.RU_USER }}@${{ secrets.RU_HOST }}:/tmp/web_ui-dist.tgz"
-          ssh -o StrictHostKeyChecking=yes "${{ secrets.RU_USER }}@${{ secrets.RU_HOST }}" <<'EOF'
           set -euo pipefail
-          WEB_UI_DIST_DIR="/opt/b2b/services/web_ui/dist"
-
-          mkdir -p "$WEB_UI_DIST_DIR"
-          find "$WEB_UI_DIST_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-          tar -xzf /tmp/web_ui-dist.tgz -C "$WEB_UI_DIST_DIR"
-          rm -f /tmp/web_ui-dist.tgz
-
-          if command -v sudo >/dev/null 2>&1; then
-            sudo nginx -t
-            sudo systemctl reload nginx
-          else
-            nginx -t
-            systemctl reload nginx
-          fi
-
-          curl -fsS --resolve pork.su:443:127.0.0.1 https://pork.su/ >/dev/null
-
-          whoami_code="$(curl -s -o /dev/null -w "%{http_code}" --resolve pork.su:443:127.0.0.1 https://pork.su/api/internal/whoami || true)"
-          if [ "$whoami_code" != "401" ] && [ "$whoami_code" != "200" ]; then
-            echo "Unexpected /api/internal/whoami status: $whoami_code"
-            exit 1
-          fi
-          EOF
+          [[ "$RU_TARGET" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$ ]]
+          [[ "$US_TARGET" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$ ]]
+          [[ "$RU_RELEASE_ROOT" =~ ^/[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*){2,}$ ]]
+          [[ "$US_RELEASE_ROOT" =~ ^/[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*){2,}$ ]]
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/iteration25-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" "set -euo pipefail; command -v docker >/dev/null; command -v python3 >/dev/null; command -v psql >/dev/null; command -v curl >/dev/null; command -v sha256sum >/dev/null; test -f /opt/b2b/.env.product; test -d '$RU_RELEASE_ROOT'; test ! -L '$RU_RELEASE_ROOT'; test ! -e '$RU_RELEASE_ROOT/$RELEASE_SHA'; test -d /var/lib/pork/company-public-h2/v1/manifests/sha256; test -f /var/lib/pork/company-public-h2/v1/manifest-set.json; test -f /var/lib/pork/web-ui/v1/release-set.json; test -d /var/lib/pork/web-ui/v1/releases; test -L /var/lib/pork/web-ui/v1/current; product_id=\$(docker compose -f /opt/b2b/docker-compose.product.yml --env-file /opt/b2b/.env.product ps -q product_api); report_id=\$(docker compose -f /opt/b2b/docker-compose.product.yml --env-file /opt/b2b/.env.product ps -q company_report_worker); narrative_id=\$(docker compose -f /opt/b2b/docker-compose.product.yml --env-file /opt/b2b/.env.product ps -q company_card_narrative_worker); test -n \"\$product_id\"; test -n \"\$report_id\"; test -n \"\$narrative_id\"; product_image=\$(docker inspect --format '{{.Image}}' \"\$product_id\"); test \"\$(docker inspect --format '{{.Image}}' \"\$report_id\")\" = \"\$product_image\"; test \"\$(docker inspect --format '{{.Image}}' \"\$narrative_id\")\" = \"\$product_image\""
+          ssh "${ssh_args[@]}" "$US_TARGET" "set -euo pipefail; command -v docker >/dev/null; command -v curl >/dev/null; command -v sha256sum >/dev/null; test -f /opt/b2b/.env.gateway; test -d '$US_RELEASE_ROOT'; test ! -L '$US_RELEASE_ROOT'; test ! -e '$US_RELEASE_ROOT/$RELEASE_SHA'; gateway_id=\$(docker compose -f /opt/b2b/deploy/us/compose/docker-compose.gateway.yml --env-file /opt/b2b/.env.gateway ps -q gateway_api); test -n \"\$gateway_id\""
+          mkdir -p .release/prior
+          ssh "${ssh_args[@]}" "$RU_TARGET" "docker inspect --format '{{.Image}}' \$(docker compose -f /opt/b2b/docker-compose.product.yml --env-file /opt/b2b/.env.product ps -q product_api); readlink /var/lib/pork/web-ui/v1/current; sha256sum /var/lib/pork/company-public-h2/v1/manifest-set.json" > .release/prior/ru-identities.txt
+          ssh "${ssh_args[@]}" "$US_TARGET" "docker inspect --format '{{.Image}}' \$(docker compose -f /opt/b2b/deploy/us/compose/docker-compose.gateway.yml --env-file /opt/b2b/.env.gateway ps -q gateway_api)" > .release/prior/us-identities.txt
+          test -s .release/prior/ru-identities.txt
+          test -s .release/prior/us-identities.txt
+          echo "ru_stage=$RU_RELEASE_ROOT/$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "us_stage=$US_RELEASE_ROOT/$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+      - name: Upload exact verified release and owned deploy tools
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main-and-p1.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          US_TARGET: ${{ secrets.US_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.preflight.outputs.ru_stage }}
+          US_STAGE: ${{ steps.preflight.outputs.us_stage }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/iteration25-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" "mkdir -m 750 '$RU_STAGE'"
+          ssh "${ssh_args[@]}" "$US_TARGET" "mkdir -m 750 '$US_STAGE'"
+          scp "${ssh_args[@]}" ".release/deploy/product-api-$RELEASE_SHA.oci.tar" ".release/deploy/company-public-h2-$RELEASE_SHA.tgz" ".release/deploy/web-ui-$RELEASE_SHA.tgz" ".release/deploy/release-manifest-$RELEASE_SHA.json" ".release/deploy/checksums-$RELEASE_SHA.txt" deploy/nginx/company_public_h2_release.py deploy/nginx/company_public_h2_seed.py deploy/nginx/install_company_public_h2_assets.sh deploy/nginx/product_api.conf deploy/product_api/worker_drain.py deploy/web_ui/install_web_ui_release.sh docker-compose.product.yml "$RU_TARGET:$RU_STAGE/"
+          scp "${ssh_args[@]}" ".release/deploy/gateway-api-$RELEASE_SHA.oci.tar" ".release/deploy/release-manifest-$RELEASE_SHA.json" ".release/deploy/checksums-$RELEASE_SHA.txt" deploy/us/compose/docker-compose.gateway.yml "$US_TARGET:$US_STAGE/"
+      - name: Record exact compatible rollback identities and pointers
+        id: rollback-record
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main-and-p1.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          US_TARGET: ${{ secrets.US_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.preflight.outputs.ru_stage }}
+          US_STAGE: ${{ steps.preflight.outputs.us_stage }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/iteration25-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" "set -euo pipefail; umask 027; product_id=\$(docker compose -f /opt/b2b/docker-compose.product.yml --env-file /opt/b2b/.env.product ps -q product_api); old_image=\$(docker inspect --format '{{.Image}}' \"\$product_id\"); project=\$(docker inspect --format '{{index .Config.Labels \"com.docker.compose.project\"}}' \"\$product_id\"); printf '%s\n' \"\$project\" | grep -Eq '^[a-z0-9][a-z0-9_-]*$'; docker tag \"\$old_image\" 'b2b-product-api:rollback-$RELEASE_SHA'; old_commit=\$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \"\$product_id\" | grep '^PRODUCT_RELEASE_COMMIT=[0-9a-f]\{40\}$'); old_commit=\${old_commit#PRODUCT_RELEASE_COMMIT=}; test \"\$old_commit\" != '$RELEASE_SHA'; printf '%s\n' \"\$old_commit\" > '$RU_STAGE/prior-product-release-sha'; printf '%s\n' \"\$old_image\" > '$RU_STAGE/prior-product-image-id'; printf '%s\n' \"\$project\" > '$RU_STAGE/prior-product-compose-project'; cp --no-preserve=mode,ownership /var/lib/pork/company-public-h2/v1/manifest-set.json '$RU_STAGE/prior-h2-manifest-set.json'; cp --no-preserve=mode,ownership /var/lib/pork/web-ui/v1/release-set.json '$RU_STAGE/prior-web-release-set.json'; readlink /var/lib/pork/web-ui/v1/current > '$RU_STAGE/prior-web-pointer'; grep -Eq '^releases/[0-9a-f]{40}$' '$RU_STAGE/prior-web-pointer'; cp --no-preserve=mode,ownership /etc/nginx/sites-available/pork.su.conf '$RU_STAGE/prior-nginx.conf'"
+          ssh "${ssh_args[@]}" "$US_TARGET" "set -euo pipefail; umask 027; gateway_id=\$(docker compose -f /opt/b2b/deploy/us/compose/docker-compose.gateway.yml --env-file /opt/b2b/.env.gateway ps -q gateway_api); old_image=\$(docker inspect --format '{{.Image}}' \"\$gateway_id\"); project=\$(docker inspect --format '{{index .Config.Labels \"com.docker.compose.project\"}}' \"\$gateway_id\"); printf '%s\n' \"\$project\" | grep -Eq '^[a-z0-9][a-z0-9_-]*$'; docker tag \"\$old_image\" 'b2b-gateway-api:rollback-$RELEASE_SHA'; printf '%s\n' \"\$old_image\" > '$US_STAGE/prior-gateway-image-id'; printf '%s\n' \"\$project\" > '$US_STAGE/prior-gateway-compose-project'"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+      - name: Install and loopback-verify H2 assets before process or DB mutation
+        id: h2
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main-and-p1.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.preflight.outputs.ru_stage }}
+        run: |
+          set -euo pipefail
+          echo "armed=true" >> "$GITHUB_OUTPUT"
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/iteration25-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" "set -euo pipefail; cd '$RU_STAGE'; sha256sum --strict --ignore-missing --check 'checksums-$RELEASE_SHA.txt'; install -d -m 750 h2; tar -xzf 'company-public-h2-$RELEASE_SHA.tgz' --strip-components=1 -C h2; bash install_company_public_h2_assets.sh \"$RU_STAGE/h2\" /var/lib/pork/company-public-h2/v1 127.0.0.1:443 https://pork.su \"$RU_STAGE/h2/public_h2_asset_manifest.json\""
+      - name: Drain both exact old workers with P1 bounds
+        shell: bash
+        env:
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.preflight.outputs.ru_stage }}
+          DRAIN_DEADLINE_SECONDS: ${{ inputs.drain_deadline_seconds }}
+          DRAIN_STABLE_INTERVAL_SECONDS: ${{ inputs.drain_stable_interval_seconds }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/iteration25-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" "set -euo pipefail; umask 027; report_id=\$(docker compose -f /opt/b2b/docker-compose.product.yml --env-file /opt/b2b/.env.product ps -q company_report_worker); narrative_id=\$(docker compose -f /opt/b2b/docker-compose.product.yml --env-file /opt/b2b/.env.product ps -q company_card_narrative_worker); test -n \"\$report_id\"; test -n \"\$narrative_id\"; python3 '$RU_STAGE/worker_drain.py' --container \"\$report_id\" --container \"\$narrative_id\" --settings-container \"\$report_id\" --deadline-seconds '$DRAIN_DEADLINE_SECONDS' --stable-interval-seconds '$DRAIN_STABLE_INTERVAL_SECONDS' > '$RU_STAGE/worker-drain-result.json'; test -s '$RU_STAGE/worker-drain-result.json'; cat '$RU_STAGE/worker-drain-result.json'"
+      - name: Upgrade additive schema and recreate exact Product/workers
+        id: product
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main-and-p1.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.preflight.outputs.ru_stage }}
+        run: |
+          set -euo pipefail
+          echo "armed=true" >> "$GITHUB_OUTPUT"
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/iteration25-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" "set -euo pipefail; project=\$(cat '$RU_STAGE/prior-product-compose-project'); printf '%s\n' \"\$project\" | grep -Eq '^[a-z0-9][a-z0-9_-]*$'; cd '$RU_STAGE'; sha256sum --strict --ignore-missing --check 'checksums-$RELEASE_SHA.txt'; docker load --input 'product-api-$RELEASE_SHA.oci.tar'; expected_image=\$(python3 -c \"import json,re,sys; value=json.load(open(sys.argv[1],encoding='utf-8')); digest=value['images'][sys.argv[2]]['config_digest']; (isinstance(digest,str) and re.fullmatch(r'sha256:[0-9a-f]{64}',digest)) or sys.exit('invalid Product config digest'); print(digest)\" '$RU_STAGE/release-manifest-$RELEASE_SHA.json' 'product-api-$RELEASE_SHA.oci.tar'); candidate_image=\$(docker image inspect --format '{{.Id}}' 'b2b-product-api:$RELEASE_SHA'); test \"\$candidate_image\" = \"\$expected_image\"; drained_db_sha=\$(python3 -c \"import json,re,sys; value=json.load(open(sys.argv[1],encoding='utf-8')); digest=value.get('database_target_sha256'); (isinstance(digest,str) and re.fullmatch(r'[0-9a-f]{64}',digest)) or sys.exit('invalid drained DB digest'); print(digest)\" '$RU_STAGE/worker-drain-result.json'); candidate_db_sha=\$(docker run --rm --network none --env-file /opt/b2b/.env.product 'b2b-product-api:$RELEASE_SHA' python -c \"from hashlib import sha256; from product_api.settings import get_settings; print(sha256(str(get_settings().database_url).encode('utf-8')).hexdigest())\"); test \"\$candidate_db_sha\" = \"\$drained_db_sha\"; docker run --rm --network host --env-file /opt/b2b/.env.product 'b2b-product-api:$RELEASE_SHA' python -m alembic -c /app/alembic.ini upgrade head; cd /opt/b2b; PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG='$RELEASE_SHA' PRODUCT_RELEASE_COMMIT='$RELEASE_SHA' docker compose -p \"\$project\" --profile company-card-narrative -f '$RU_STAGE/docker-compose.product.yml' --env-file .env.product up -d --no-build --force-recreate product_api company_report_worker company_card_narrative_worker; for service in product_api company_report_worker company_card_narrative_worker; do id=\$(PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG='$RELEASE_SHA' PRODUCT_RELEASE_COMMIT='$RELEASE_SHA' docker compose -p \"\$project\" --profile company-card-narrative -f '$RU_STAGE/docker-compose.product.yml' --env-file .env.product ps -q \"\$service\"); test -n \"\$id\"; test \"\$(docker inspect --format '{{.Config.Image}}' \"\$id\")\" = 'b2b-product-api:$RELEASE_SHA'; test \"\$(docker inspect --format '{{.Image}}' \"\$id\")\" = \"\$candidate_image\"; done; curl --fail --silent --show-error http://127.0.0.1:8000/health >/dev/null"
+          echo "replaced=true" >> "$GITHUB_OUTPUT"
+      - name: Recreate and verify exact Gateway
+        id: gateway
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main-and-p1.outputs.release_sha }}
+          US_TARGET: ${{ secrets.US_DEPLOY_TARGET }}
+          US_STAGE: ${{ steps.preflight.outputs.us_stage }}
+        run: |
+          set -euo pipefail
+          echo "armed=true" >> "$GITHUB_OUTPUT"
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/iteration25-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$US_TARGET" "set -euo pipefail; project=\$(cat '$US_STAGE/prior-gateway-compose-project'); printf '%s\n' \"\$project\" | grep -Eq '^[a-z0-9][a-z0-9_-]*$'; cd '$US_STAGE'; sha256sum --strict --ignore-missing --check 'checksums-$RELEASE_SHA.txt'; docker load --input 'gateway-api-$RELEASE_SHA.oci.tar'; expected_image=\$(python3 -c \"import json,re,sys; value=json.load(open(sys.argv[1],encoding='utf-8')); digest=value['images'][sys.argv[2]]['config_digest']; (isinstance(digest,str) and re.fullmatch(r'sha256:[0-9a-f]{64}',digest)) or sys.exit('invalid Gateway config digest'); print(digest)\" '$US_STAGE/release-manifest-$RELEASE_SHA.json' 'gateway-api-$RELEASE_SHA.oci.tar'); candidate_image=\$(docker image inspect --format '{{.Id}}' 'b2b-gateway-api:$RELEASE_SHA'); test \"\$candidate_image\" = \"\$expected_image\"; cd /opt/b2b; GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG='$RELEASE_SHA' docker compose -p \"\$project\" -f '$US_STAGE/docker-compose.gateway.yml' --env-file .env.gateway up -d --no-build --force-recreate gateway_api; id=\$(GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG='$RELEASE_SHA' docker compose -p \"\$project\" -f '$US_STAGE/docker-compose.gateway.yml' --env-file .env.gateway ps -q gateway_api); test -n \"\$id\"; test \"\$(docker inspect --format '{{.Config.Image}}' \"\$id\")\" = 'b2b-gateway-api:$RELEASE_SHA'; test \"\$(docker inspect --format '{{.Image}}' \"\$id\")\" = \"\$candidate_image\"; curl --fail --silent --show-error http://127.0.0.1:8001/health >/dev/null"
+          echo "replaced=true" >> "$GITHUB_OUTPUT"
+      - name: Atomically switch Web, reload nginx and verify default-off boundaries
+        id: web
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main-and-p1.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.preflight.outputs.ru_stage }}
+        run: |
+          set -euo pipefail
+          echo "armed=true" >> "$GITHUB_OUTPUT"
+          web_sha="$(sha256sum ".release/deploy/web-ui-$RELEASE_SHA.tgz")"
+          web_sha="${web_sha%% *}"
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/iteration25-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" "set -euo pipefail; project=\$(cat '$RU_STAGE/prior-product-compose-project'); printf '%s\n' \"\$project\" | grep -Eq '^[a-z0-9][a-z0-9_-]*$'; install -m 640 '$RU_STAGE/product_api.conf' /etc/nginx/sites-available/pork.su.conf; nginx -t; systemctl reload nginx; python3 '$RU_STAGE/install_web_ui_release.sh' '$RU_STAGE/web-ui-$RELEASE_SHA.tgz' '$RELEASE_SHA' /var/lib/pork/web-ui/v1 '$web_sha' 127.0.0.1:443 https://pork.su; nginx -t; systemctl reload nginx; curl --fail --silent --show-error --resolve pork.su:443:127.0.0.1 https://pork.su/ >/dev/null; code=\$(curl --silent --output /dev/null --write-out '%{http_code}' --resolve pork.su:443:127.0.0.1 https://pork.su/api/internal/whoami); test \"\$code\" = 401; id=\$(PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG='$RELEASE_SHA' PRODUCT_RELEASE_COMMIT='$RELEASE_SHA' docker compose -p \"\$project\" --profile company-card-narrative -f '$RU_STAGE/docker-compose.product.yml' --env-file /opt/b2b/.env.product ps -q product_api); docker exec \"\$id\" python -c \"import os,sys; from product_api.settings import get_settings; s=get_settings(); checks=(os.environ.get('PRODUCT_RELEASE_COMMIT') == '$RELEASE_SHA',not s.datanewton_enabled,not s.company_card_v2_presentations_enabled,not s.company_card_v2_writer_enabled,s.company_card_v2_rollout_generation == 0,s.company_card_v2_allowlist_inns == [],s.company_card_v2_percentage_basis_points == 0,not s.company_card_v2_arbitration_collection_enabled,s.company_card_v2_arbitration_mask_active_key_id is None,s.company_card_v2_arbitration_mask_keyring_json is None,not s.company_card_v2_narrative_enabled,s.company_card_v2_narrative_kill_switch,s.company_card_v2_narrative_daily_limit == 0,s.company_card_v2_narrative_monthly_limit == 0,s.company_card_v2_narrative_concurrency == 0); all(checks) or sys.exit('default-off verification failed')\""
+          echo "replaced=true" >> "$GITHUB_OUTPUT"
+      - name: Fail-closed restore of prior H2 pointer after an armed phase fails
+        if: failure() && steps.rollback-record.outputs.ready == 'true' && steps.h2.outputs.armed == 'true'
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main-and-p1.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.preflight.outputs.ru_stage }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/iteration25-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" "set -euo pipefail; temporary='/var/lib/pork/company-public-h2/v1/.manifest-set.rollback-$RELEASE_SHA'; test ! -e \"\$temporary\"; install -m 640 '$RU_STAGE/prior-h2-manifest-set.json' \"\$temporary\"; mv -T \"\$temporary\" /var/lib/pork/company-public-h2/v1/manifest-set.json; python3 '$RU_STAGE/company_public_h2_seed.py' verify /var/lib/pork/company-public-h2/v1 /var/lib/pork/company-public-h2/v1 >/dev/null"
+      - name: Fail-closed restore of prior Product and workers after Product phase starts
+        if: failure() && steps.rollback-record.outputs.ready == 'true' && steps.product.outputs.armed == 'true'
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main-and-p1.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.preflight.outputs.ru_stage }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/iteration25-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" "set -euo pipefail; old_commit=\$(cat '$RU_STAGE/prior-product-release-sha'); old_image=\$(cat '$RU_STAGE/prior-product-image-id'); project=\$(cat '$RU_STAGE/prior-product-compose-project'); grep -Eq '^[0-9a-f]{40}$' '$RU_STAGE/prior-product-release-sha'; grep -Eq '^sha256:[0-9a-f]{64}$' '$RU_STAGE/prior-product-image-id'; printf '%s\n' \"\$project\" | grep -Eq '^[a-z0-9][a-z0-9_-]*$'; test \"\$(docker image inspect --format '{{.Id}}' 'b2b-product-api:rollback-$RELEASE_SHA')\" = \"\$old_image\"; docker tag 'b2b-product-api:rollback-$RELEASE_SHA' \"b2b-product-api:\$old_commit\"; PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG=\"\$old_commit\" PRODUCT_RELEASE_COMMIT=\"\$old_commit\" docker compose -p \"\$project\" --profile company-card-narrative -f '$RU_STAGE/docker-compose.product.yml' --env-file /opt/b2b/.env.product up -d --no-build --force-recreate product_api company_report_worker company_card_narrative_worker; for service in product_api company_report_worker company_card_narrative_worker; do id=\$(PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG=\"\$old_commit\" PRODUCT_RELEASE_COMMIT=\"\$old_commit\" docker compose -p \"\$project\" --profile company-card-narrative -f '$RU_STAGE/docker-compose.product.yml' --env-file /opt/b2b/.env.product ps -q \"\$service\"); test -n \"\$id\"; test \"\$(docker inspect --format '{{.Image}}' \"\$id\")\" = \"\$old_image\"; done; curl --fail --silent --show-error http://127.0.0.1:8000/health >/dev/null"
+      - name: Fail-closed restore of prior Gateway after Gateway phase starts
+        if: failure() && steps.rollback-record.outputs.ready == 'true' && steps.gateway.outputs.armed == 'true'
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main-and-p1.outputs.release_sha }}
+          US_TARGET: ${{ secrets.US_DEPLOY_TARGET }}
+          US_STAGE: ${{ steps.preflight.outputs.us_stage }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/iteration25-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$US_TARGET" "set -euo pipefail; old_image=\$(cat '$US_STAGE/prior-gateway-image-id'); project=\$(cat '$US_STAGE/prior-gateway-compose-project'); grep -Eq '^sha256:[0-9a-f]{64}$' '$US_STAGE/prior-gateway-image-id'; printf '%s\n' \"\$project\" | grep -Eq '^[a-z0-9][a-z0-9_-]*$'; test \"\$(docker image inspect --format '{{.Id}}' 'b2b-gateway-api:rollback-$RELEASE_SHA')\" = \"\$old_image\"; docker tag 'b2b-gateway-api:rollback-$RELEASE_SHA' 'b2b-gateway-api:rollback-restored-$RELEASE_SHA'; GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG='rollback-restored-$RELEASE_SHA' docker compose -p \"\$project\" -f '$US_STAGE/docker-compose.gateway.yml' --env-file /opt/b2b/.env.gateway up -d --no-build --force-recreate gateway_api; id=\$(GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG='rollback-restored-$RELEASE_SHA' docker compose -p \"\$project\" -f '$US_STAGE/docker-compose.gateway.yml' --env-file /opt/b2b/.env.gateway ps -q gateway_api); test -n \"\$id\"; test \"\$(docker inspect --format '{{.Image}}' \"\$id\")\" = \"\$old_image\"; curl --fail --silent --show-error http://127.0.0.1:8001/health >/dev/null"
+      - name: Fail-closed restore of prior Web pointer and nginx after Web phase starts
+        if: failure() && steps.rollback-record.outputs.ready == 'true' && steps.web.outputs.armed == 'true'
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main-and-p1.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.preflight.outputs.ru_stage }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/iteration25-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" "set -euo pipefail; prior_pointer=\$(cat '$RU_STAGE/prior-web-pointer'); grep -Eq '^releases/[0-9a-f]{40}$' '$RU_STAGE/prior-web-pointer'; test -f \"/var/lib/pork/web-ui/v1/\$prior_pointer/site/index.html\"; history_tmp='/var/lib/pork/web-ui/v1/.release-set.rollback-$RELEASE_SHA'; pointer_tmp='/var/lib/pork/web-ui/v1/.current.rollback-$RELEASE_SHA'; test ! -e \"\$history_tmp\"; test ! -e \"\$pointer_tmp\"; install -m 640 '$RU_STAGE/prior-web-release-set.json' \"\$history_tmp\"; mv -T \"\$history_tmp\" /var/lib/pork/web-ui/v1/release-set.json; ln -s \"\$prior_pointer\" \"\$pointer_tmp\"; mv -T \"\$pointer_tmp\" /var/lib/pork/web-ui/v1/current; test \"\$(readlink /var/lib/pork/web-ui/v1/current)\" = \"\$prior_pointer\"; install -m 640 '$RU_STAGE/prior-nginx.conf' /etc/nginx/sites-available/pork.su.conf; nginx -t; systemctl reload nginx; curl --fail --silent --show-error --resolve pork.su:443:127.0.0.1 https://pork.su/ >/dev/null"
+      - name: Stop local deploy credential agent
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SSH_AGENT_PID:-}"
+          ssh-agent -k >/dev/null

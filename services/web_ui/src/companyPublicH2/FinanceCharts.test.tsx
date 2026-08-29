@@ -192,7 +192,7 @@ describe('FinanceChartForHost', () => {
     expect(negativeBottom).toBeCloseTo(150)
   })
 
-  it('opens disclosure on mouseenter and touchStart, then closes when focus exits the layer', async () => {
+  it('reopens disclosure on the final click in a touch sequence, then closes on every exit path', async () => {
     const dto = (await parseCompanyPublicH2(fixture)).dto
     render(<FinanceChartForHost dto={dto} hostId="finance-f1" onError={() => undefined} />)
     const mark = screen.getByRole('button', { name: /1250; 2025;/ })
@@ -203,10 +203,23 @@ describe('FinanceChartForHost', () => {
     expect(screen.queryByRole('tooltip')).toBeNull()
     fireEvent.touchStart(mark)
     expect(screen.getByRole('tooltip')).toBeTruthy()
+    fireEvent.mouseLeave(layer)
+    expect(screen.getByRole('tooltip')).toBeTruthy()
+    fireEvent.click(mark)
+    expect(screen.getByRole('tooltip')).toBeTruthy()
+    fireEvent.pointerEnter(mark, { pointerType: 'mouse' })
+    fireEvent.mouseLeave(layer)
+    expect(screen.queryByRole('tooltip')).toBeNull()
+    fireEvent.touchStart(mark)
+    expect(screen.getByRole('tooltip')).toBeTruthy()
     fireEvent.keyDown(layer, { key: 'Escape' })
     expect(screen.queryByRole('tooltip')).toBeNull()
     const outside = document.createElement('button')
     document.body.append(outside)
+    fireEvent.touchStart(mark)
+    expect(screen.getByRole('tooltip')).toBeTruthy()
+    fireEvent.pointerDown(outside)
+    expect(screen.queryByRole('tooltip')).toBeNull()
     fireEvent.focus(mark)
     expect(screen.getByRole('tooltip')).toBeTruthy()
     fireEvent.blur(mark, { relatedTarget: outside })

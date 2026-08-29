@@ -20,7 +20,10 @@ from product_api.company_reports.company_card_v2.models import (
     CompanyCardV2SnapshotV3,
     FinanceBasisV1,
 )
-from product_api.company_reports.company_card_v2.public_h2 import build_public_h2
+from product_api.company_reports.company_card_v2.public_h2 import (
+    PublicH2ProjectionBindingV1,
+    build_public_h2,
+)
 from product_api.company_reports.company_card_v2.public_h2_models import PublicH2Narrative
 from product_api.company_reports.persistence.models import (
     CompanyCardNarrativeBudgetReservation,
@@ -245,9 +248,16 @@ def _projection_digest(
     narrative: PublicH2Narrative,
     publication_policy_version: str | None = None,
 ) -> str:
+    canonical_path = f"/company/{snapshot.subject_inn}-company"
     return build_public_h2(
         snapshot,
         narrative_binding=_NarrativeBinding(narrative),
+        projection_binding=PublicH2ProjectionBindingV1(
+            projection_scope="staged_publication",
+            canonical_path=canonical_path,
+            indexable=False,
+            published_lastmod=None,
+        ),
         finance_enabled=publication_policy_version
         in {H2_PUBLICATION_POLICY_V2, H2_PUBLICATION_POLICY_V3},
         arbitration_enabled=publication_policy_version == H2_PUBLICATION_POLICY_V3,

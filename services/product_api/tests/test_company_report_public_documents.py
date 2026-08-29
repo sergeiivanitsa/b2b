@@ -34,6 +34,7 @@ from product_api.company_reports.public_h1_service import (
     validate_assigned_public_h1,
 )
 from product_api.company_reports.company_card_v2.public_h2_asset_manifest import load_public_h2_asset_manifest
+from product_api.company_reports.company_card_v2.service import build_active_public_h2_for_pin
 from product_api.routers.company_reports_public import set_public_h2_asset_manifest
 from product_api.routers import company_reports as generic_routes
 
@@ -205,12 +206,48 @@ async def test_real_assigned_h1_get_and_head_are_read_only_and_use_exact_pin(asy
 
 
 async def _assigned_h2(engine):
-    report_id, _ = await _store_resolved_v3_fallback(engine)
+    report_id, _ = await _store_resolved_v3_fallback(
+        engine,
+        publication_policy_version="company_public_h2_publication_v3",
+    )
     set_public_h2_asset_manifest(load_public_h2_asset_manifest())
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         subject = await session.scalar(select(CompanyReportSubject).where(CompanyReportSubject.normalized_identifier == "7701234567"))
-        pin = await session.scalar(select(CompanyReportPresentationPin).where(CompanyReportPresentationPin.report_id == report_id))
-        session.add(CompanyReportPresentationAssignment(subject_id=subject.id, presentation_contract="company_public_h2_v1", pin_generation=pin.generation, generation=1)); await session.commit()
+        report = await session.get(CompanyReportRecord, report_id)
+        source_pin = await session.scalar(select(CompanyReportPresentationPin).where(CompanyReportPresentationPin.report_id == report_id))
+        active = await build_active_public_h2_for_pin(
+            session,
+            record=report,
+            source_pin=source_pin,
+            expected_subject_id=subject.id,
+            expected_inn=subject.normalized_identifier,
+            canonical_path="/company/7701234567-company",
+            indexable=False,
+            published_lastmod=report.generated_at,
+        )
+        active_pin = CompanyReportPresentationPin(
+            subject_id=subject.id,
+            report_id=report.id,
+            presentation_contract="company_public_h2_v1",
+            generation=source_pin.generation + 1,
+            snapshot_hash=source_pin.snapshot_hash,
+            chart_facts_version=source_pin.chart_facts_version,
+            chart_facts_hash=source_pin.chart_facts_hash,
+            evidence_registry_version=source_pin.evidence_registry_version,
+            publication_policy_version=source_pin.publication_policy_version,
+            projection_scope="active_publication",
+            canonical_path=active.canonical_path,
+            indexable=active.indexable,
+            published_lastmod=report.generated_at,
+            projection_digest=active.projection_digest,
+            narrative_binding_status=source_pin.narrative_binding_status,
+            narrative_binding_kind=source_pin.narrative_binding_kind,
+            narrative_binding_key=source_pin.narrative_binding_key,
+        )
+        session.add(active_pin)
+        await session.flush()
+        session.add(CompanyReportPresentationAssignment(subject_id=subject.id, presentation_contract="company_public_h2_v1", pin_generation=active_pin.generation, generation=1)); await session.commit()
+    return report_id
 
 
 async def _assign_h1_for_existing_subject(engine, report_id):
@@ -334,10 +371,13 @@ async def test_real_non_digest_corrupt_assigned_h2_returns_safe_500_without_fall
     "outcome",
     ("pending", "failed", "unresolved"),
 )
-async def test_real_exact_h2_nonready_outcomes_are_safe_409(
+async def test_real_assigned_h2_nonready_and_nonactive_outcomes_fail_closed(
     async_client, engine, outcome: str,
 ) -> None:
-    report_id, _ = await _store_resolved_v3_fallback(engine)
+    if outcome in {"pending", "failed"}:
+        report_id = await _assigned_h2(engine)
+    else:
+        report_id, _ = await _store_resolved_v3_fallback(engine)
     set_public_h2_asset_manifest(load_public_h2_asset_manifest())
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         subject = await session.scalar(select(CompanyReportSubject).where(
@@ -354,17 +394,18 @@ async def test_real_exact_h2_nonready_outcomes_are_safe_409(
             pin.narrative_binding_kind = None
             pin.narrative_binding_key = None
             pin.projection_digest = None
-        session.add(CompanyReportPresentationAssignment(
-            subject_id=subject.id,
-            presentation_contract="company_public_h2_v1",
-            pin_generation=pin.generation,
-            generation=1,
-        ))
+        if outcome == "unresolved":
+            session.add(CompanyReportPresentationAssignment(
+                subject_id=subject.id,
+                presentation_contract="company_public_h2_v1",
+                pin_generation=pin.generation,
+                generation=1,
+            ))
         await session.commit()
     response, sql = await _observe_read_only_request(
         async_client, engine, "GET", "/company/7701234567-company"
     )
-    _assert_safe_error(response, 409)
+    _assert_safe_error(response, 409 if outcome in {"pending", "failed"} else 500)
     assert sum("company_report_presentation_assignments" in statement for statement in sql) == 1
 
 

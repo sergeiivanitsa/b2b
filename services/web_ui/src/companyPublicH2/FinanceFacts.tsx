@@ -14,7 +14,7 @@ function FactsShell({ id, title, children, context, advisory = false }: { id: st
     <p data-h2-finance-coverage={context.coverage.block_id}>Покрытие представления: {context.coverage.state}.</p>
     {advisory && <p data-h2-finance-advisory="receivables_collection_unassessed">{F1_ADVISORY}</p>}
     {children}
-    <section aria-label="Ограничения финансового представления" data-h2-finance-limitations={context.coverage.block_id}>
+    <section aria-label={`Ограничения финансового представления ${context.coverage.block_id}`} data-h2-finance-limitations={context.coverage.block_id}>
       <h4>Ограничения</h4>
       {context.limitations.length === 0
         ? <p>Ограничения для этого представления не указаны.</p>

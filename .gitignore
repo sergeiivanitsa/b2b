@@ -33,6 +33,14 @@ Thumbs.db
 cookie_*.txt
 req.json
 context/
+/.release/
+/.tmp/iteration25-lockgen/
+/.tmp/iteration25-postgres-*/
+/services/web_ui/playwright-report/
+/services/web_ui/test-results/
+/services/web_ui/.tmp/iteration25-playwright/
+/services/web_ui/dist-company-public-h2/
+/node_modules/
 /.tmp/iteration17-postgres/
 
 # local artifacts

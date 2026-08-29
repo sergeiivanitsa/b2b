@@ -17,6 +17,9 @@ describe('FinanceFacts', () => {
     expect(screen.getByRole('table', { name: 'Финансовые показатели по годам' })).toBeTruthy()
     expect(document.querySelectorAll('[data-h2-finance-enhancement]').length).toBe(5)
     expect(document.querySelectorAll('[data-h2-finance-coverage]').length).toBe(5)
+    for (const blockId of ['finance_f1', 'finance_f2', 'finance_f3', 'finance_f4', 'finance_f5']) {
+      expect(screen.getByRole('region', { name: `Ограничения финансового представления ${blockId}` })).toBeTruthy()
+    }
     expect(screen.getByText('Срок и вероятность погашения дебиторской задолженности не оцениваются.')).toBeTruthy()
   })
 

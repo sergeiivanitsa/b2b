@@ -5,10 +5,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from product_api.company_reports.persistence.models import (
     PUBLICATION_POLICY_VERSION,
@@ -17,8 +18,13 @@ from product_api.company_reports.persistence.models import (
     CompanyReportPublicationBatchItem,
     CompanyReportPublicationControl,
     CompanyReportPublicationJournal,
+    CompanyReportPresentation,
+    CompanyReportPresentationAssignment,
+    CompanyReportPresentationPin,
     CompanyReportRecord,
     CompanyReportSubject,
+    CompanyCardNarrativeArtifact,
+    CompanyCardNarrativeJob,
 )
 from .presentations import append_presentation_pin
 from product_api.company_reports.persistence.serialization import (
@@ -47,6 +53,187 @@ class PublicPageRecord:
     publication: CompanyReportPublication
     report: CompanyReportRecord
     subject: CompanyReportSubject
+
+
+@dataclass(frozen=True)
+class PublicSitemapCandidateKey:
+    normalized_inn: str
+    selected_canonical_path: str
+    subject_id: UUID
+
+
+@dataclass(frozen=True)
+class PublicSitemapCandidate:
+    """One precedence-selected dependency tuple from a bounded SQL window."""
+
+    subject: CompanyReportSubject
+    assignment: CompanyReportPresentationAssignment | None
+    pin: CompanyReportPresentationPin | None
+    report: CompanyReportRecord | None
+    publication: CompanyReportPublication | None
+    presentation: CompanyReportPresentation | None
+    narrative_job: CompanyCardNarrativeJob | None
+    narrative_artifact: CompanyCardNarrativeArtifact | None
+    key: PublicSitemapCandidateKey
+
+
+async def begin_public_sitemap_snapshot(session: AsyncSession) -> None:
+    """Open the route's first transaction as read-only repeatable-read."""
+    if session.in_transaction():
+        raise RuntimeError("sitemap snapshot must be the session's first transaction")
+    await session.connection(
+        execution_options={
+            "isolation_level": "REPEATABLE READ",
+            "postgresql_readonly": True,
+        }
+    )
+
+
+async def fetch_public_sitemap_candidate_window(
+    session: AsyncSession,
+    *,
+    after: PublicSitemapCandidateKey | None,
+    limit: int = 100,
+) -> tuple[PublicSitemapCandidate, ...]:
+    """Select at most one assignment-overlay tuple per subject by keyset."""
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("sitemap validation window must be between 1 and 100")
+
+    selected_report = aliased(CompanyReportRecord, name="sitemap_selected_report")
+    selected_path = case(
+        (
+            CompanyReportPresentationAssignment.id.is_not(None),
+            func.coalesce(CompanyReportPresentationPin.canonical_path, ""),
+        ),
+        else_=func.coalesce(CompanyReportPublication.canonical_path, ""),
+    )
+    statement = (
+        select(
+            CompanyReportSubject,
+            CompanyReportPresentationAssignment,
+            CompanyReportPresentationPin,
+            selected_report,
+            CompanyReportPublication,
+            CompanyReportPresentation,
+            CompanyCardNarrativeJob,
+            CompanyCardNarrativeArtifact,
+            selected_path.label("selected_canonical_path"),
+        )
+        .outerjoin(
+            CompanyReportPresentationAssignment,
+            CompanyReportPresentationAssignment.subject_id
+            == CompanyReportSubject.id,
+        )
+        .outerjoin(
+            CompanyReportPresentationPin,
+            and_(
+                CompanyReportPresentationPin.subject_id
+                == CompanyReportPresentationAssignment.subject_id,
+                CompanyReportPresentationPin.presentation_contract
+                == CompanyReportPresentationAssignment.presentation_contract,
+                CompanyReportPresentationPin.generation
+                == CompanyReportPresentationAssignment.pin_generation,
+            ),
+        )
+        .outerjoin(
+            CompanyReportPublication,
+            CompanyReportPublication.subject_id == CompanyReportSubject.id,
+        )
+        .outerjoin(
+            selected_report,
+            and_(
+                selected_report.subject_id == CompanyReportSubject.id,
+                or_(
+                    and_(
+                        CompanyReportPresentationAssignment.id.is_(None),
+                        selected_report.id == CompanyReportPublication.report_id,
+                    ),
+                    and_(
+                        CompanyReportPresentationAssignment.id.is_not(None),
+                        selected_report.id == CompanyReportPresentationPin.report_id,
+                    ),
+                ),
+            ),
+        )
+        .outerjoin(
+            CompanyReportPresentation,
+            and_(
+                CompanyReportPresentation.subject_id == CompanyReportSubject.id,
+                CompanyReportPresentation.report_id == selected_report.id,
+                CompanyReportPresentation.presentation_contract
+                == "company_public_h2_v1",
+            ),
+        )
+        .outerjoin(
+            CompanyCardNarrativeArtifact,
+            and_(
+                CompanyCardNarrativeArtifact.binding_kind
+                == CompanyReportPresentationPin.narrative_binding_kind,
+                CompanyCardNarrativeArtifact.binding_key
+                == CompanyReportPresentationPin.narrative_binding_key,
+            ),
+        )
+        .outerjoin(
+            CompanyCardNarrativeJob,
+            and_(
+                CompanyCardNarrativeJob.artifact_id
+                == CompanyCardNarrativeArtifact.id,
+                CompanyCardNarrativeJob.generation_key
+                == CompanyCardNarrativeArtifact.generation_key,
+            ),
+        )
+        .where(
+            or_(
+                CompanyReportPresentationAssignment.id.is_not(None),
+                and_(
+                    CompanyReportPublication.status == "active",
+                    CompanyReportPublication.indexable.is_(True),
+                ),
+            )
+        )
+    )
+    if after is not None:
+        statement = statement.where(
+            or_(
+                CompanyReportSubject.normalized_identifier
+                > after.normalized_inn,
+                and_(
+                    CompanyReportSubject.normalized_identifier
+                    == after.normalized_inn,
+                    selected_path > after.selected_canonical_path,
+                ),
+                and_(
+                    CompanyReportSubject.normalized_identifier
+                    == after.normalized_inn,
+                    selected_path == after.selected_canonical_path,
+                    CompanyReportSubject.id > after.subject_id,
+                ),
+            )
+        )
+    statement = statement.order_by(
+        CompanyReportSubject.normalized_identifier,
+        selected_path,
+        CompanyReportSubject.id,
+    ).limit(limit)
+    rows = (await session.execute(statement)).fetchmany(limit)
+    return tuple(
+        PublicSitemapCandidate(
+            subject=row[0],
+            assignment=row[1],
+            pin=row[2],
+            report=row[3],
+            publication=row[4],
+            presentation=row[5],
+            narrative_job=row[6],
+            narrative_artifact=row[7],
+            key=PublicSitemapCandidateKey(
+                normalized_inn=row[0].normalized_identifier,
+                selected_canonical_path=row[8],
+                subject_id=row[0].id,
+            ),
+        )
+        for row in rows
+    )
 
 
 def _utc(value: datetime) -> datetime:
@@ -350,10 +537,28 @@ async def finalize_batch_claim(
         or item.claim_token != claim.token
     ):
         raise PublicationStateConflictError("manifest claim is no longer current")
+    # Serialize publication visibility with first-assignment/no-deindex CAS.
+    # A missing publication row cannot itself be locked, so both writers fence
+    # on the stable subject before reading or creating publication/pin state.
+    subject = await session.get(
+        CompanyReportSubject,
+        item.subject_id,
+        with_for_update=True,
+    )
+    assignment = await session.scalar(
+        select(CompanyReportPresentationAssignment)
+        .where(
+            CompanyReportPresentationAssignment.subject_id == item.subject_id
+        )
+        .with_for_update()
+    )
     report = await session.get(CompanyReportRecord, item.report_id)
-    subject = await session.get(CompanyReportSubject, item.subject_id)
     terminal, reason = "failed", "state_conflict"
     try:
+        if assignment is not None:
+            raise PublicationStateConflictError(
+                "assigned subjects are not eligible for legacy publication"
+            )
         # This complete matrix is a hard gate.  In particular, neither the
         # evaluator nor the publication upsert is reachable on a mismatch.
         report_model = _validated_publication_report(batch=batch, item=item, report=report, subject=subject)
@@ -444,4 +649,21 @@ async def process_batch(session: AsyncSession, *, batch_id: UUID) -> CompanyRepo
     return await finalize_batch_claim(session, claim=claim)
 
 
-__all__ = ["PublicPageRecord", "PublicationBatchClaim", "PublicationStateConflictError", "claim_next_batch_item", "create_batch", "finalize_batch_claim", "get_public_page", "list_indexable_publications", "process_batch", "relinquish_batch_claim", "set_batch_state", "set_publication_control"]
+__all__ = [
+    "PublicPageRecord",
+    "PublicSitemapCandidate",
+    "PublicSitemapCandidateKey",
+    "PublicationBatchClaim",
+    "PublicationStateConflictError",
+    "begin_public_sitemap_snapshot",
+    "claim_next_batch_item",
+    "create_batch",
+    "fetch_public_sitemap_candidate_window",
+    "finalize_batch_claim",
+    "get_public_page",
+    "list_indexable_publications",
+    "process_batch",
+    "relinquish_batch_claim",
+    "set_batch_state",
+    "set_publication_control",
+]

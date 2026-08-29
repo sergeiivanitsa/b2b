@@ -336,6 +336,25 @@ def test_sitemap_predicate_uses_complete_shared_pin_validator(monkeypatch):
     assert public_routes._current_public_projection(page) is None
 
 
+def test_sitemap_overlong_numeric_chunk_is_stable_404_without_scan(monkeypatch):
+    async def forbidden_scan(*_args, **_kwargs):
+        raise AssertionError("an overlong chunk must be rejected before scanning")
+
+    async def fake_session():
+        yield object()
+
+    monkeypatch.setattr(public_routes, "scan_public_sitemap", forbidden_scan)
+    app.dependency_overrides[get_session] = fake_session
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/sitemaps/{'9' * 5000}.xml")
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+    assert response.status_code == 404
+    assert response.headers["x-robots-tag"] == "noindex,follow"
+
+
 @pytest.mark.parametrize("error", [PublicH1NotFoundError(), PublicH1NotEligibleError()])
 def test_ssr_unpublished_states_are_404_but_invalid_active_is_500(monkeypatch, error):
     async def fail(*_args, **_kwargs):

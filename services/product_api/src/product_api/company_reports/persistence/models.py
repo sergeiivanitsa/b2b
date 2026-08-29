@@ -355,6 +355,7 @@ class CompanyReportPresentationPin(Base):
         CheckConstraint("generation > 0", name="company_report_presentation_pins_generation"),
         CheckConstraint(
             "(presentation_contract = 'company_public_h1_v1' "
+            "AND projection_scope IS NULL "
             "AND indexable = true AND publication_policy_version IS NOT NULL "
             "AND canonical_path IS NOT NULL AND published_lastmod IS NOT NULL "
             "AND projection_digest IS NULL "
@@ -362,16 +363,24 @@ class CompanyReportPresentationPin(Base):
             "AND narrative_binding_key IS NULL AND chart_facts_version IS NULL "
             "AND chart_facts_hash IS NULL AND evidence_registry_version IS NULL) "
             "OR (presentation_contract = 'company_public_h2_v1' "
-            "AND indexable = false AND canonical_path IS NULL AND published_lastmod IS NULL "
+            "AND (projection_scope IS NULL OR projection_scope IN "
+            "('staged_publication', 'active_publication')) "
             "AND chart_facts_version IS NOT NULL "
             "AND chart_facts_hash IS NOT NULL AND evidence_registry_version IS NOT NULL "
             "AND publication_policy_version IS NOT NULL "
             "AND ((projection_digest IS NULL AND narrative_binding_status = 'unresolved' "
-            "AND narrative_binding_kind IS NULL AND narrative_binding_key IS NULL) "
+            "AND narrative_binding_kind IS NULL AND narrative_binding_key IS NULL "
+            "AND (projection_scope IS NULL OR projection_scope = 'staged_publication') "
+            "AND indexable = false AND canonical_path IS NULL AND published_lastmod IS NULL) "
             "OR (projection_digest ~ '^[0-9a-f]{64}$' "
             "AND narrative_binding_status = 'resolved' "
             "AND narrative_binding_kind IN ('artifact', 'fallback') "
-            "AND narrative_binding_key ~ '^[0-9a-f]{64}$')))",
+            "AND narrative_binding_key ~ '^[0-9a-f]{64}$' "
+            "AND (((projection_scope IS NULL OR projection_scope = 'staged_publication') "
+            "AND indexable = false AND canonical_path IS NULL AND published_lastmod IS NULL) "
+            "OR (projection_scope = 'active_publication' "
+            "AND publication_policy_version = 'company_public_h2_publication_v3' "
+            "AND canonical_path IS NOT NULL AND published_lastmod IS NOT NULL)))))",
             name="company_report_presentation_pins_contract_shape",
         ),
         ForeignKeyConstraint(
@@ -400,6 +409,7 @@ class CompanyReportPresentationPin(Base):
     chart_facts_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     evidence_registry_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     publication_policy_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    projection_scope: Mapped[str | None] = mapped_column(String(32), nullable=True)
     canonical_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     indexable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     published_lastmod: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -448,6 +458,7 @@ class CompanyReportPresentationAssignment(Base):
         ),
         CheckConstraint("generation > 0 AND pin_generation > 0", name="company_report_presentation_assignment_generation"),
         UniqueConstraint("subject_id", name="uq_company_report_presentation_assignment_subject"),
+        UniqueConstraint("id", "subject_id", name="uq_company_report_presentation_assignment_id_subject"),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     subject_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_subjects.id", ondelete="CASCADE"), nullable=False)
@@ -455,6 +466,56 @@ class CompanyReportPresentationAssignment(Base):
     pin_generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
     generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class CompanyCardV2RolloutDecision(Base):
+    """Non-sensitive global binding for one immutable operator decision."""
+
+    __tablename__ = "company_card_v2_rollout_decisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "decision_digest",
+            name="uq_company_card_v2_rollout_decision_digest",
+        ),
+        UniqueConstraint(
+            "decision_id",
+            "decision_digest",
+            name="uq_company_card_v2_rollout_decision_identity",
+        ),
+        CheckConstraint(
+            "schema_version = 'company_card_v2_rollout_decision_v1' "
+            "AND decision_digest ~ '^[0-9a-f]{64}$' "
+            "AND release_commit ~ '^[0-9a-f]{40}$' "
+            "AND target_count BETWEEN 1 AND 1000 "
+            "AND ((action = 'activate' "
+            "AND stage IN ('allowlist', 'percentage', 'ga') "
+            "AND target_contract = 'company_public_h2_v1' "
+            "AND (stage <> 'ga' OR h2_indexable = true)) "
+            "OR (action = 'rollback' AND stage = 'emergency_rollback' "
+            "AND target_contract = 'company_public_h1_v1' "
+            "AND h2_indexable = false))",
+            name="company_card_v2_rollout_decision_shape",
+        ),
+    )
+
+    decision_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True
+    )
+    decision_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    release_commit: Mapped[str] = mapped_column(String(40), nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_contract: Mapped[str] = mapped_column(String(64), nullable=False)
+    h2_indexable: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    target_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:
+        return (
+            "<CompanyCardV2RolloutDecision "
+            f"decision_id={self.decision_id!s} action={self.action!r} "
+            f"stage={self.stage!r}>"
+        )
 
 
 class CompanyReportPresentationAssignmentJournal(Base):
@@ -470,15 +531,50 @@ class CompanyReportPresentationAssignmentJournal(Base):
             name="fk_company_report_presentation_journal_pin",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["assignment_id", "subject_id"],
+            [
+                "company_report_presentation_assignments.id",
+                "company_report_presentation_assignments.subject_id",
+            ],
+            name="fk_company_report_presentation_journal_assignment_subject",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["decision_id", "decision_digest"],
+            [
+                "company_card_v2_rollout_decisions.decision_id",
+                "company_card_v2_rollout_decisions.decision_digest",
+            ],
+            name="fk_company_report_presentation_journal_decision",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint("generation > 0 AND pin_generation > 0", name="company_report_presentation_assignment_journal_generation"),
+        CheckConstraint(
+            "(decision_id IS NULL AND decision_digest IS NULL AND reason_code IS NULL) "
+            "OR (decision_id IS NOT NULL "
+            "AND decision_digest IS NOT NULL AND reason_code IS NOT NULL "
+            "AND decision_digest ~ '^[0-9a-f]{64}$' "
+            "AND reason_code IN ('activate_allowlist', 'activate_percentage', "
+            "'activate_ga', 'rollback_emergency_rollback'))",
+            name="company_report_presentation_assignment_journal_audit_shape",
+        ),
         UniqueConstraint("assignment_id", "generation", name="uq_company_report_pin_journal_assignment_generation"),
+        UniqueConstraint(
+            "assignment_id",
+            "decision_digest",
+            name="uq_company_report_pin_journal_assignment_decision",
+        ),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
-    assignment_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_presentation_assignments.id", ondelete="CASCADE"), nullable=False)
+    assignment_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     subject_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_subjects.id", ondelete="CASCADE"), nullable=False)
     presentation_contract: Mapped[str] = mapped_column(String(64), nullable=False)
     pin_generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
     generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    decision_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    decision_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
