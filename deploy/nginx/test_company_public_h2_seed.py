@@ -199,20 +199,55 @@ def test_atomic_seed_rejects_target_inode_race_before_publication(
 ) -> None:
     _inventory, _approved, releases = _bundle(tmp_path)
     store = _atomic_root(tmp_path)
+    original_identity = (store.stat().st_dev, store.stat().st_ino)
+    replacement_identities: list[tuple[int, int]] = []
     real_closed_graph = seed._require_closed_seed_graph
 
     def replace_target_after_build(root: Path, values: object) -> None:
         real_closed_graph(root, values)
         if root != store:
-            store.rmdir()
-            store.mkdir(mode=0o750)
+            if os.name == "nt":
+                replacement = store.parent / "replacement-store"
+                replacement.mkdir(mode=0o750)
+                store.rmdir()
+                replacement.rename(store)
+            else:
+                # The production descriptor pins the unlinked inode, so the
+                # immediate replacement cannot receive the original identity.
+                store.rmdir()
+                store.mkdir(mode=0o750)
+            replacement = store.stat(follow_symlinks=False)
+            replacement_identities.append((replacement.st_dev, replacement.st_ino))
 
     monkeypatch.setattr(seed, "_require_closed_seed_graph", replace_target_after_build)
     monkeypatch.setattr(seed, "_atomic_replace_seed_sibling", _portable_atomic_publish)
 
     with pytest.raises(seed.ReleaseValidationError, match="target changed"):
         seed.seed_store_atomic(store, store, releases)
+    assert replacement_identities and replacement_identities[0] != original_identity
     assert list(store.iterdir()) == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX descriptor lifetime contract")
+def test_atomic_seed_target_descriptor_closes_on_failure(
+    tmp_path: Path,
+) -> None:
+    store = _atomic_root(tmp_path)
+    descriptor: int | None = None
+
+    with pytest.raises(RuntimeError, match="stop after pin"):
+        with seed._pin_validated_seed_target(store) as (opened, original):
+            descriptor = opened
+            assert descriptor is not None
+            assert (os.fstat(descriptor).st_dev, os.fstat(descriptor).st_ino) == (
+                original.st_dev,
+                original.st_ino,
+            )
+            raise RuntimeError("stop after pin")
+
+    assert descriptor is not None
+    with pytest.raises(OSError):
+        os.fstat(descriptor)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX ownership/mode contract")

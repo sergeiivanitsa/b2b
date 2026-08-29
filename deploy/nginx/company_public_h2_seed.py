@@ -7,6 +7,7 @@ deletes or replaces an existing store.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from hashlib import sha256
 import json
@@ -16,7 +17,7 @@ import re
 import stat
 import sys
 import tempfile
-from typing import Iterable
+from typing import Iterable, Iterator
 
 from company_public_h2_release import (
     Manifest,
@@ -369,6 +370,43 @@ def _atomic_replace_seed_sibling(
         os.close(descriptor)
 
 
+@contextmanager
+def _pin_validated_seed_target(
+    stable_root: Path,
+) -> Iterator[tuple[int | None, os.stat_result]]:
+    """Hold the validated POSIX target identity until publication completes."""
+    if os.name == "nt":
+        yield None, stable_root.stat(follow_symlinks=False)
+        return
+
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    descriptor = os.open(stable_root, flags)
+    try:
+        pinned = os.fstat(descriptor)
+        current = stable_root.stat(follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(pinned.st_mode)
+            or (pinned.st_dev, pinned.st_ino) != (current.st_dev, current.st_ino)
+        ):
+            raise ReleaseValidationError("atomic seed target changed during validation")
+        if os.listdir(descriptor):
+            raise ReleaseValidationError("seed root must be empty")
+        if (
+            pinned.st_uid != os.geteuid()
+            or pinned.st_gid != os.getegid()
+            or stat.S_IMODE(pinned.st_mode) != 0o750
+        ):
+            raise ReleaseValidationError("atomic seed parent/target ownership invalid")
+        yield descriptor, pinned
+    finally:
+        os.close(descriptor)
+
+
 def seed_store_atomic(
     root: Path,
     approved_root: Path,
@@ -383,64 +421,64 @@ def seed_store_atomic(
     graph is published by one atomic directory replacement.
     """
     stable_root = _require_empty_seed_root(root, approved_root)
-    ordered = tuple(releases)
-    parent = stable_root.parent
-    if _is_link(parent) or not parent.is_dir() or parent.resolve(strict=True) != parent:
-        raise ReleaseValidationError("atomic seed parent is not canonical")
-    parent_stat = parent.stat(follow_symlinks=False)
-    target_stat = stable_root.stat(follow_symlinks=False)
-    if target_stat.st_dev != parent_stat.st_dev:
-        raise ReleaseValidationError("atomic seed target is on a different filesystem")
-    if os.name != "nt" and (
-        parent_stat.st_uid != os.geteuid()
-        or parent_stat.st_gid != os.getegid()
-        or stat.S_IMODE(parent_stat.st_mode) != 0o750
-        or target_stat.st_uid != os.geteuid()
-        or target_stat.st_gid != os.getegid()
-        or stat.S_IMODE(target_stat.st_mode) != 0o750
-    ):
-        raise ReleaseValidationError("atomic seed parent/target ownership invalid")
+    with _pin_validated_seed_target(stable_root) as (_target_descriptor, target_stat):
+        ordered = tuple(releases)
+        parent = stable_root.parent
+        if _is_link(parent) or not parent.is_dir() or parent.resolve(strict=True) != parent:
+            raise ReleaseValidationError("atomic seed parent is not canonical")
+        parent_stat = parent.stat(follow_symlinks=False)
+        if target_stat.st_dev != parent_stat.st_dev:
+            raise ReleaseValidationError("atomic seed target is on a different filesystem")
+        if os.name != "nt" and (
+            parent_stat.st_uid != os.geteuid()
+            or parent_stat.st_gid != os.getegid()
+            or stat.S_IMODE(parent_stat.st_mode) != 0o750
+            or target_stat.st_uid != os.geteuid()
+            or target_stat.st_gid != os.getegid()
+            or stat.S_IMODE(target_stat.st_mode) != 0o750
+        ):
+            raise ReleaseValidationError("atomic seed parent/target ownership invalid")
 
-    temporary = Path(tempfile.mkdtemp(prefix=_ATOMIC_SEED_PREFIX, dir=parent))
-    temporary.chmod(0o750)
-    temporary_stat = temporary.stat(follow_symlinks=False)
-    if temporary_stat.st_dev != parent_stat.st_dev or (
-        os.name != "nt"
-        and (
-            temporary_stat.st_uid != os.geteuid()
-            or temporary_stat.st_gid != os.getegid()
-            or stat.S_IMODE(temporary_stat.st_mode) != 0o750
+        temporary = Path(tempfile.mkdtemp(prefix=_ATOMIC_SEED_PREFIX, dir=parent))
+        temporary.chmod(0o750)
+        temporary_stat = temporary.stat(follow_symlinks=False)
+        if temporary_stat.st_dev != parent_stat.st_dev or (
+            os.name != "nt"
+            and (
+                temporary_stat.st_uid != os.geteuid()
+                or temporary_stat.st_gid != os.getegid()
+                or stat.S_IMODE(temporary_stat.st_mode) != 0o750
+            )
+        ):
+            raise ReleaseValidationError("atomic seed temporary root identity invalid")
+        retained = seed_store(
+            temporary,
+            temporary,
+            ordered,
+            fail_phase=fail_phase,
         )
-    ):
-        raise ReleaseValidationError("atomic seed temporary root identity invalid")
-    retained = seed_store(
-        temporary,
-        temporary,
-        ordered,
-        fail_phase=fail_phase,
-    )
-    if verify_store(temporary, temporary) != retained:
-        raise ReleaseValidationError("atomic seed temporary verification mismatch")
-    _require_closed_seed_graph(temporary, ordered)
+        if verify_store(temporary, temporary) != retained:
+            raise ReleaseValidationError("atomic seed temporary verification mismatch")
+        _require_closed_seed_graph(temporary, ordered)
 
-    current_root = _require_empty_seed_root(root, approved_root)
-    current_stat = current_root.stat(follow_symlinks=False)
-    if (current_stat.st_dev, current_stat.st_ino) != (
-        target_stat.st_dev,
-        target_stat.st_ino,
-    ):
-        raise ReleaseValidationError("atomic seed target changed before publication")
-    _atomic_replace_seed_sibling(
-        parent,
-        temporary,
-        current_root,
-        expected_parent=parent_stat,
-        expected_target=target_stat,
-    )
-    if verify_store(root, approved_root) != retained:
-        raise ReleaseValidationError("published atomic seed verification mismatch")
-    _require_closed_seed_graph(root, ordered)
-    return retained
+        current_root = _require_empty_seed_root(root, approved_root)
+        current_stat = current_root.stat(follow_symlinks=False)
+        if (current_stat.st_dev, current_stat.st_ino) != (
+            target_stat.st_dev,
+            target_stat.st_ino,
+        ):
+            raise ReleaseValidationError("atomic seed target changed before publication")
+        _atomic_replace_seed_sibling(
+            parent,
+            temporary,
+            current_root,
+            expected_parent=parent_stat,
+            expected_target=target_stat,
+        )
+        if verify_store(root, approved_root) != retained:
+            raise ReleaseValidationError("published atomic seed verification mismatch")
+        _require_closed_seed_graph(root, ordered)
+        return retained
 
 
 def verify_store(root: Path, approved_root: Path) -> tuple[str, str, str]:
