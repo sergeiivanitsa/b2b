@@ -56,7 +56,7 @@ def health():
 
 @app.post("/internal/ping")
 async def internal_ping():
-    return {"status": "ok"}
+    return {"status": "ok", "release_commit": settings.gateway_release_commit}
 
 
 @app.post("/v1/chat")

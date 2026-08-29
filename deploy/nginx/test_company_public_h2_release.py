@@ -422,10 +422,12 @@ def test_workflow_consumes_qa_artifacts_and_installs_h2_before_runtime_mutation(
 def test_root_manual_runbook_delegates_to_default_off_exact_sha_runbook() -> None:
     readme = re.sub(r"\s+", " ", (ROOT / "README.md").read_text(encoding="utf-8"))
     assert "docs/development/runbooks/company-card-v2-rollout.md" in readme
-    assert ".github/workflows/deploy_prod_legacy_0015_bootstrap.yml" in readme
-    assert "preserves the existing production DataNewton state" in readme
-    assert "exact external backup/PITR recovery hook" in readme
-    assert "indexable one-company activation" in readme
+    assert ".github/workflows/deploy_prod_fresh_install.yml" in readme
+    assert "deletes only PostgreSQL schema `public`" in readme
+    assert "Claims upload files are outside that destructive scope" in readme
+    assert "persistent host bind" in readme
+    assert "backup/bootstrap workflow is superseded" in readme
+    assert "retained H1 anchor for `7707079463`" in readme
     assert "exact lowercase 40-hex" in readme
 
 
