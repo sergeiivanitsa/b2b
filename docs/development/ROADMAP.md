@@ -57,7 +57,7 @@
 | 22 | `company-card-v2-page-shell` | Завершена |
 | 23 | `company-card-v2-finance-charts` | Завершена |
 | 24 | `company-card-v2-arbitration-charts` | Завершена |
-| 25 | `company-card-v2-qa-rollout` | Запланирована |
+| 25 | `company-card-v2-qa-rollout` | Завершена |
 
 ## 3. Инженерные правила roadmap
 
@@ -1611,42 +1611,37 @@ population либо честно обозначенной returned slice без 
 ID: 25
 Slug: company-card-v2-qa-rollout
 
-Статус: refreshed base-bound specification, proposed owner-decision register,
-implementation plan и baseline evidence подготовлены в ветке
-`codex/iteration-25-company-card-v2-qa-rollout-refresh` на exact base
-`31b299ac88b5fac7d5c04082324fb122d63db7e7`. Bounded delta PR `#150–#152` и
-Stage 0 подтверждают merged behavior iteration 20/24; Product unit
-`1524`, Gateway `31`, Web `496`, release `34`, disposable PostgreSQL
-iteration-24 `2 + 79` и iteration-20 `117 + 290` проходят. Реализация не
-начата. Первый refreshed review вернул `CHANGES_REQUIRED`; единственный
-planning correction pass закрывает subject-bound journal, full-validation
-sitemap, staged/active fences, downgrade race и evidence reproducibility.
-Correction review обнаружил stale iteration-24 `head == 0018` assumption;
-forward-head amendment получил architecture/evidence `VERDICT: APPROVED` без
-оставшихся findings. Owner implementation approval получен 2026-08-28;
-реализация начата в reviewed scope.
-Исторический iteration-24 runner не меняется и не
-переиспользуется как gate; новый iteration-25 acceptance runner/checker
-сохраняет все 0018 assertions, меняет в старом migration test только два stale
-`head` alias на explicit `0018`, затем доказывает `0018 -> 0019/head` и
-повторяет affected phase с JUnit nonzero/zero-skip proof. Production activation
-не авторизована.
+Статус: завершена. Реализация из
+`codex/iteration-25-company-card-v2-qa-rollout-refresh` получила независимый
+`VERDICT: READY` и merged через PR `#153` как squash commit
+`d0860c678754b18959a017580752655dd191fd6c`
+2026-08-29T10:05:49+10:00. Source commit
+`d6f994ebd5d6a259b4c0964b9082b4454c19262d` и merged commit имеют один tree
+`f686bd1a752472c4e3f3295a5c94bf61c22a1bff`. PR QA run `33217935892` и
+отдельный post-merge exact-main-SHA run `33223251563` завершились успешно;
+последний выпустил canonical attestation для exact merged commit. Protected
+default branch требует strict `qa-required`. Exact identities и artifact
+digests зафиксированы в
+`docs/development/evidence/iteration-25-company-card-v2/iteration-25-post-merge-main-qa-v1.md`.
+Production activation не авторизована: P1 остаётся
+`PARTIAL / INSUFFICIENT`, P2–P9 — `UNSET/STOP`, а все runtime defaults
+остаются off/zero.
 
 ### Зависимости
 
 - Все merged contracts/runtime/UI итераций 19–24 и закрытые evidence gates.
 - Post-merge disposable PostgreSQL acceptance итерации 24 закрыт; результат
   зафиксирован в отдельном evidence artifact.
-- Текущий iteration-24 runner подтверждал эти конкретные `2 + 79 passed`, но
-  проверяет только exit code и остаётся исторически неизменным. Новый
-  iteration-25 runner/checker обязан сохранить exact-0018 migration assertions,
-  выполнить forward `0018 -> 0019/head` handoff и дать machine-readable
-  nonzero/zero-skip JUnit proof до использования prerequisite phases как gate.
+- Исторический iteration-24 runner подтверждал конкретные `2 + 79 passed`, но
+  проверял только exit code и остался неизменным. Iteration-25 runner/checker
+  сохранил exact-0018 migration assertions, доказал forward
+  `0018 -> 0019/head` handoff и дал machine-readable nonzero/zero-skip JUnit
+  proof в PR и post-merge exact-SHA QA.
 - Iteration-20 presentation lifecycle continuation merged/reconciled и
   повторно проходит exact contract/PostgreSQL baseline.
-- Исправленные refreshed specification/plan прошли independent review и
-  требуют отдельного owner implementation approval до изменения
-  production/runtime behavior.
+- Исправленные refreshed specification/plan прошли independent review; owner
+  implementation approval был получен, reviewed default-off scope реализован
+  и merged.
 - Feature flags остаются выключенными до отдельного rollout decision.
 
 ### Цель
