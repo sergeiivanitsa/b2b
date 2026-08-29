@@ -3,7 +3,16 @@
 Specification:
 `docs/development/iterations/iteration-25-production-recovery.md`
 
-Статус: `APPROVED — IN PROGRESS`
+Статус: `SUPERSEDED BY OWNER DECISION`
+
+Этот план не исполняется: владелец выбрал schema-only production fresh install
+без backup/bootstrap. Текущий утверждённый план:
+`docs/development/plans/iteration-25-production-fresh-install.md`.
+
+Связанный recovery-код исторически merged через PR `#155` как commit
+`4aa2bd118a65edc13679ea88c1a29b0292634775` 2026-08-29T21:13:38+10:00;
+superseded относится к дальнейшему operational bootstrap plan, а не стирает
+этот merge.
 
 ## Этап 1 — migration compatibility
 

@@ -16,6 +16,8 @@ LEGACY_BOOTSTRAP_RUNNER = ROOT / "deploy/product_api/legacy_0015_bootstrap_runne
 SEED = ROOT / ".github/workflows/company_public_h2_seed_bundle.yml"
 RECOVERY_SPEC = ROOT / "docs/development/iterations/iteration-25-production-recovery.md"
 RECOVERY_PLAN = ROOT / "docs/development/plans/iteration-25-production-recovery.md"
+FRESH_INSTALL_SPEC = ROOT / "docs/development/iterations/iteration-25-production-fresh-install.md"
+FRESH_INSTALL_PLAN = ROOT / "docs/development/plans/iteration-25-production-fresh-install.md"
 RECOVERY_RUNBOOK = ROOT / "docs/development/runbooks/company-card-v2-rollout.md"
 
 POSTGRES_IMAGE = "postgres:16.9-alpine@sha256:b441677c946de564fe88ae4245ba80fe84a69485b22bf560e9c7c3710cd5e21d"
@@ -452,6 +454,56 @@ def test_product_compose_keeps_local_sha_optional_and_deploy_supplies_exact_sha(
     assert "--no-build --force-recreate product_api company_report_worker company_card_narrative_worker" in deploy
 
 
+def test_normal_deploy_preserves_exact_claims_bind_for_candidate_and_rollback() -> None:
+    compose = (ROOT / "docker-compose.product.yml").read_text(encoding="utf-8")
+    deploy = DEPLOY.read_text(encoding="utf-8")
+    product = compose.split("  product_api:", 1)[1].split(
+        "  company_report_worker:", 1
+    )[0]
+    workers = compose.split("  company_report_worker:", 1)[1]
+    assert "source: ${CLAIMS_UPLOAD_ROOT:" in product
+    assert "target: ${CLAIMS_UPLOAD_DIR:" in product
+    assert "CLAIMS_UPLOAD_ROOT" not in workers
+    for token in (
+        "CLAIMS_UPLOAD_ROOT') == '/var/lib/pork/claims-uploads/v1'",
+        "CLAIMS_UPLOAD_DIR') == '/data/claims_uploads'",
+        "stat -c '%u:%g:%a'",
+        "/var/lib/pork/claims-uploads/v1|/data/claims_uploads|true",
+    ):
+        assert token in deploy
+    candidate = deploy.split(
+        "Upgrade additive schema and recreate exact Product/workers", 1
+    )[1].split("Recreate and verify exact Gateway", 1)[0]
+    rollback = deploy.split(
+        "Fail-closed restore of prior Product and workers", 1
+    )[1].split("Fail-closed restore of prior Gateway", 1)[0]
+    for section in (candidate, rollback):
+        assert "/var/lib/pork/claims-uploads/v1|/data/claims_uploads|true" in section
+        assert 'if test \\"\\$service\\" = product_api' in section
+
+
+def test_gateway_release_identity_is_exact_in_normal_deploy_and_rollback() -> None:
+    compose = (ROOT / "deploy/us/compose/docker-compose.gateway.yml").read_text(
+        encoding="utf-8"
+    )
+    deploy = DEPLOY.read_text(encoding="utf-8")
+    settings = (ROOT / "services/gateway_api/src/gateway_api/settings.py").read_text(
+        encoding="utf-8"
+    )
+    main = (ROOT / "services/gateway_api/src/gateway_api/main.py").read_text(
+        encoding="utf-8"
+    )
+    assert "- GATEWAY_RELEASE_COMMIT" in compose
+    assert 're.fullmatch(r"[0-9a-f]{40}"' in settings
+    assert '"release_commit": settings.gateway_release_commit' in main
+    assert "prior-gateway-release-sha" in deploy
+    assert "GATEWAY_RELEASE_COMMIT='$RELEASE_SHA'" in deploy
+    assert 'grep -Fx \'GATEWAY_RELEASE_COMMIT=$RELEASE_SHA\'' in deploy
+    rollback = deploy.split("Fail-closed restore of prior Gateway", 1)[1]
+    assert 'GATEWAY_RELEASE_COMMIT=\\"\\$old_commit\\"' in rollback
+    assert "grep -Eq '^[0-9a-f]{40}$' '$US_STAGE/prior-gateway-release-sha'" in rollback
+
+
 def test_product_example_keeps_privacy_key_unset_and_collection_closed() -> None:
     lines = (ROOT / "services/product_api/.env.example").read_text(encoding="utf-8").splitlines()
     assert "COMPANY_CARD_V2_ARBITRATION_COLLECTION_ENABLED=false" in lines
@@ -462,6 +514,9 @@ def test_product_example_keeps_privacy_key_unset_and_collection_closed() -> None
 
 def test_deploy_is_manual_current_main_protected_qa_consumer_in_exact_order() -> None:
     text = DEPLOY.read_text(encoding="utf-8")
+    candidate = (ROOT / "deploy/product_api/fresh_install_candidate.py").read_text(
+        encoding="utf-8"
+    )
     assert "workflow_dispatch:" in text
     assert "push:" not in text and "pull_request:" not in text
     assert "group: prod-deploy" in text
@@ -496,7 +551,7 @@ def test_deploy_is_manual_current_main_protected_qa_consumer_in_exact_order() ->
         assert f"p{gate}_" in text.lower()
     assert "provider_mode" in text and "preserve" in text
     assert "prior-provider-state" in text
-    assert "EXPECTED_PROVIDER_STATE" in text
+    assert "--provider-state" in text
     assert "fallback-only" in text and "noindex-no-assignment" in text
     assert ". /opt/b2b/.env.product" not in text
     assert "prior-product-env" not in text
@@ -519,16 +574,22 @@ def test_deploy_is_manual_current_main_protected_qa_consumer_in_exact_order() ->
     assert "steps.product.outputs.armed == 'true'" in text
     assert "steps.gateway.outputs.armed == 'true'" in text
     assert "steps.web.outputs.armed == 'true'" in text
-    assert "s.company_card_v2_allowlist_inns == []" in text
-    assert "s.company_card_v2_narrative_daily_limit == 0" in text
-    assert "s.company_card_v2_arbitration_mask_keyring_json is None" in text
-    assert "default-off verification failed" in text
+    assert "fresh_install_candidate.py" in text
+    assert "python - settings --release-sha '$RELEASE_SHA'" in text
+    assert "python - gateway --release-sha '$RELEASE_SHA'" in text
+    assert "settings.company_card_v2_allowlist_inns == []" in candidate
+    assert "settings.company_card_v2_narrative_daily_limit == 0" in candidate
+    assert "settings.company_card_v2_arbitration_mask_keyring_json is None" in candidate
+    assert "candidate settings contract mismatch; STOP" in candidate
     assert "assert " not in text
     assert text.count("python deploy/product_api/release_manifest.py") == 1
 
 
 def test_deploy_checks_effective_provider_and_secret_presence_before_any_live_mutation() -> None:
     text = DEPLOY.read_text(encoding="utf-8")
+    candidate = (ROOT / "deploy/product_api/fresh_install_candidate.py").read_text(
+        encoding="utf-8"
+    )
     offline_name = "Offline verify candidate provider preservation before live mutation"
     offline = text.split(offline_name, 1)[1].split(
         "Install and loopback-verify H2 assets before process or DB mutation", 1
@@ -540,9 +601,10 @@ def test_deploy_checks_effective_provider_and_secret_presence_before_any_live_mu
         "python -m alembic -c /app/alembic.ini upgrade head"
     )
     assert "docker run --rm --network none --env-file /opt/b2b/.env.product" in offline
-    assert "actual == os.environ.get('EXPECTED_PROVIDER_STATE')" in offline
-    assert "datanewton_api_key" in offline
-    assert "key_ok=actual != 'enabled' or bool((s.datanewton_api_key or '').strip())" in offline
+    assert "fresh_install_candidate.py settings" in offline
+    assert "provider == provider_state" in candidate
+    assert "datanewton_api_key" in candidate
+    assert 'key_ok = provider != "enabled" or bool(' in candidate
     for token in (
         "not s.company_card_v2_presentations_enabled",
         "not s.company_card_v2_writer_enabled",
@@ -558,8 +620,8 @@ def test_deploy_checks_effective_provider_and_secret_presence_before_any_live_mu
         "s.company_card_v2_narrative_monthly_limit == 0",
         "s.company_card_v2_narrative_concurrency == 0",
     ):
-        assert token in offline
-    assert "print(s.datanewton_api_key" not in text
+        assert token.replace("s.", "settings.") in candidate
+    assert "print(settings.datanewton_api_key" not in candidate
     assert "echo $DATANEWTON" not in text
 
 
@@ -943,17 +1005,21 @@ def test_legacy_0015_bootstrap_retry_contract_retains_only_immutable_orphans() -
         assert forbidden not in combined
 
 
-def test_recovery_docs_use_backup_restore_not_lossy_alembic_downgrade() -> None:
-    spec = RECOVERY_SPEC.read_text(encoding="utf-8")
-    plan = RECOVERY_PLAN.read_text(encoding="utf-8")
+def test_recovery_docs_are_superseded_by_schema_only_fresh_install() -> None:
+    old_spec = RECOVERY_SPEC.read_text(encoding="utf-8")
+    old_plan = RECOVERY_PLAN.read_text(encoding="utf-8")
+    spec = FRESH_INSTALL_SPEC.read_text(encoding="utf-8")
+    plan = FRESH_INSTALL_PLAN.read_text(encoding="utf-8")
     runbook = RECOVERY_RUNBOOK.read_text(encoding="utf-8")
-    assert "upgrade/downgrade/re-upgrade" not in spec
-    assert "проверить upgrade, downgrade, повторный upgrade" not in plan
-    for text in (spec, plan, runbook):
-        assert "lossy" in text and "downgrade" in text
-        assert "0015 -> head" in text
-        assert "restore" in text
-    assert "Retain this restore/re-upgrade evidence" in runbook
+    for old in (old_spec, old_plan):
+        assert "SUPERSEDED BY OWNER DECISION" in old
+        assert "iteration-25-production-fresh-install.md" in old
+    for current in (spec, plan, runbook):
+        assert "DROP-AND-RECREATE-PRODUCTION-PUBLIC-SCHEMA" in current
+        assert "Claims" in current
+        assert "backup" in current.lower() and "bootstrap" in current.lower()
+    assert "DROP SCHEMA public CASCADE" in spec
+    assert "never delete/copy Claims paths" in runbook
 
 
 def test_asset_installers_bind_exact_nginx_worker_group_in_bootstrap_and_normal_deploy() -> None:
@@ -999,11 +1065,54 @@ def test_asset_installers_bind_exact_nginx_worker_group_in_bootstrap_and_normal_
     assert deploy.count("runuser --user www-data --group www-data -- find /var/lib/pork/web-ui/v1") >= 2
 
 
+def test_normal_and_legacy_deploys_fail_closed_against_fresh_install_recovery() -> None:
+    deploy = DEPLOY.read_text(encoding="utf-8")
+    bootstrap = LEGACY_BOOTSTRAP.read_text(encoding="utf-8")
+    normal_preflight = deploy.split(
+        "Read-only RU/US preflight and record compatible prior identities", 1
+    )[1].split("Upload exact verified release and owned deploy tools", 1)[0]
+    bootstrap_preflight = bootstrap.split(
+        "Exact read-only legacy-0015 preflight and external recovery verification", 1
+    )[1].split("Reset only exact stale retry markers after guarded preflight", 1)[0]
+
+    assert 'state_root=/var/lib/pork/deploy-state' in normal_preflight
+    assert 'test ! -e "$active" && test ! -L "$active"' in normal_preflight
+    assert 'test -f "$success" && test ! -L "$success"' in normal_preflight
+    for canonical_receipt_token in (
+        '"phase": "success"',
+        '"schema_version": "production_fresh_install_global_v1"',
+        '"stage": f"{release_root}/{release_sha}-fresh-install"',
+        'raw != json.dumps(expected, separators=(",", ":"), sort_keys=True) + "\\n"',
+    ):
+        assert canonical_receipt_token in normal_preflight
+    assert normal_preflight.index('state_root=/var/lib/pork/deploy-state') < normal_preflight.index(
+        "mkdir -p .release/prior"
+    )
+
+    assert 'state_root=/var/lib/pork/deploy-state' in bootstrap_preflight
+    assert 'test ! -e "$active" && test ! -L "$active"' in bootstrap_preflight
+    assert 'test ! -e "$success" && test ! -L "$success"' in bootstrap_preflight
+    assert bootstrap_preflight.index('state_root=/var/lib/pork/deploy-state') < bootstrap_preflight.index(
+        'install -d -m 750 "$stage"'
+    )
+
+    for guarded_workflow in (normal_preflight, bootstrap_preflight):
+        assert "systemctl list-units --all --type=service" in guarded_workflow
+        assert "systemctl list-unit-files --type=service" in guarded_workflow
+        assert "'pork-production-fresh-install-*.service'" in guarded_workflow
+    assert "a production fresh-install recovery unit remains installed; STOP" in bootstrap_preflight
+    for guarded_workflow in (normal_preflight,):
+        assert "active|activating|deactivating|reloading|failed" in guarded_workflow
+        assert "enabled|enabled-runtime|linked|linked-runtime|alias" in guarded_workflow
+        assert 'systemctl show --property=ActiveState --value "$unit"' in guarded_workflow
+        assert 'systemctl is-enabled "$unit"' in guarded_workflow
+
+
 def test_preflight_runbook_scopes_external_protection_payload_to_normal_deploy() -> None:
     runbook = RECOVERY_RUNBOOK.read_text(encoding="utf-8")
-    assert "For the normal post-bootstrap `deploy_prod.yml` path only" in runbook
-    assert "The one-time legacy-0015 bootstrap does not" in runbook
-    assert "exact protected-main workflow/SHA" in runbook
+    assert "For the normal post-install `deploy_prod.yml` path only" in runbook
+    assert "The one-time fresh install does not" in runbook
+    assert "protected-main workflow/SHA" in runbook
 
 
 def test_seed_bundle_is_manual_fixed_three_release_non_production_artifact() -> None:

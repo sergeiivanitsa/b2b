@@ -254,7 +254,7 @@ iterations:
     slug: company-card-v2-qa-rollout
     title: "QA и rollout Company Card v2"
     status: reviewing
-    branch: codex/iteration-25-production-recovery
+    branch: codex/production-fresh-install
     commit: null
     merged_at: null
     block_reason: null
@@ -263,7 +263,17 @@ iterations:
       commit: d0860c678754b18959a017580752655dd191fd6c
       merged_at: "2026-08-29T10:05:49+10:00"
       pull_request: 153
-    recovery:
+    superseded_recovery:
       base_commit: c92597839e838da1cdc8acd015e0652dd430c08e
+      branch: codex/iteration-25-production-recovery
+      commit: 4aa2bd118a65edc13679ea88c1a29b0292634775
+      merged_at: "2026-08-29T21:13:38+10:00"
+      pull_request: 155
       specification: docs/development/iterations/iteration-25-production-recovery.md
       plan: docs/development/plans/iteration-25-production-recovery.md
+    fresh_install:
+      authorization: "owner-approved schema-only clean production install"
+      specification: docs/development/iterations/iteration-25-production-fresh-install.md
+      plan: docs/development/plans/iteration-25-production-fresh-install.md
+      destructive_scope: "DROP and recreate PostgreSQL schema public only"
+      claims_uploads: preserve

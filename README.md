@@ -200,19 +200,17 @@ builds Product, Gateway, SPA and H2 once; deploy consumes only the matching
 checksummed artifacts and `qa-required` attestation. It does not rebuild the
 default branch.
 
-The first transition from the verified legacy `0015` server uses only
-`.github/workflows/deploy_prod_legacy_0015_bootstrap.yml`; normal deploy is for
-the post-bootstrap shape. The bootstrap preserves the existing production
-DataNewton state while H2 writer/presentation/arbitration/rollout and paid AI
-remain off/zero. Do not run it until the exact external backup/PITR recovery
-hook proves coverage after ingress and both writers stop, restore rehearsal
-returns exact `0015`, and the reviewed seed/access inputs in the runbook exist.
-After bootstrap, only the explicitly approved one-company canary may receive a
-positive generation and single-target allowlist; percentage/GA rollout remains
-out of scope. The current authorization stops after a receipt-bound staged
-fallback for `7707079463`. Because the retained H1 rollback is structurally
-indexable, assigning H2 requires a separate explicit owner decision for an
-indexable one-company activation; noindex activation is rejected.
+The owner-approved first transition from the verified legacy `0015` server is
+the one-time `.github/workflows/deploy_prod_fresh_install.yml`. It deletes only
+PostgreSQL schema `public`, recreates a clean exact-`0019` schema and deploys
+the exact QA Product/Gateway/H2/Web release under maintenance. Claims upload
+files are outside that destructive scope and Product now requires their
+persistent host bind. The older backup/bootstrap workflow is superseded and
+must not be used for this transition. After DROP, recovery is maintenance plus
+same-SHA roll-forward, never the legacy image. All H2 writer/presentation/
+arbitration/rollout and paid-AI controls remain off/zero. After success, create
+the retained H1 anchor for `7707079463`; assigning H2 still requires a separate
+explicit owner decision. Percentage/GA rollout remains out of scope.
 
 ## SMTP requirements (product_api)
 Set these env vars before production deploy:
@@ -288,6 +286,7 @@ Backend claims-admin endpoints:
 Required claims settings in `services/product_api/.env`:
 - `CLAIM_EDIT_TOKEN_SECRET`
 - `CLAIMS_PRICE_RUB`
+- `CLAIMS_UPLOAD_ROOT`
 - `CLAIMS_UPLOAD_DIR`
 - `CLAIMS_MAX_FILE_SIZE_BYTES`
 - `CLAIMS_ALLOWED_UPLOAD_MIME_TYPES`
@@ -407,13 +406,18 @@ Rendered line1 rules currently implemented:
 - `Email:` fallback line is removed from Step 4 header.
 
 ## Upload persistence and deploy notes
-- Docker local dev uses named volume:
-  - `claims_uploads:/var/lib/product_api/claims_uploads`
-- For production, `CLAIMS_UPLOAD_DIR` must point to persistent storage (volume or mounted disk).
+- Product API always uses one explicit writable host bind; the workers do not mount
+  the upload tree. Local development uses
+  `CLAIMS_UPLOAD_ROOT=./.runtime/claims_uploads` and
+  `CLAIMS_UPLOAD_DIR=/var/lib/product_api/claims_uploads`.
+- Production uses exactly
+  `CLAIMS_UPLOAD_ROOT=/var/lib/pork/claims-uploads/v1` and
+  `CLAIMS_UPLOAD_DIR=/data/claims_uploads`. The root is a real root-owned `0750`
+  directory, never a symlink or a container writable-layer path.
 - Redeploy/checklist:
-  1. verify storage mount exists and is writable by `product_api`;
+  1. verify the exact host-to-container bind exists and is writable by `product_api`;
   2. verify free disk space and backup policy for uploaded evidence files;
-  3. verify restore procedure for `claims_uploads` before production cutover.
+  3. verify restore procedure for the host upload root before production cutover.
 
 ## Claims smoke checklist (manual)
 Public `/claims/*`:

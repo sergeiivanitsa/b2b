@@ -12,6 +12,10 @@ services:
       - ${PRODUCT_ENV_FILE:-.env.product}
     environment:
       - PRODUCT_RELEASE_COMMIT
+    volumes:
+      - type: bind
+        source: ${CLAIMS_UPLOAD_ROOT:?server-local persistent Claims upload root is required}
+        target: ${CLAIMS_UPLOAD_DIR:?fixed container Claims upload directory is required}
 
   company_report_worker:
     image: b2b-product-api:${PRODUCT_IMAGE_TAG:-local}

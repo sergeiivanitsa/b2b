@@ -1,4 +1,5 @@
 from functools import lru_cache
+import re
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -12,6 +13,9 @@ class Settings(BaseSettings):
     app_env: str = "dev"
     log_level: str = "INFO"
     gateway_shared_secret: str = Field(..., validation_alias="GATEWAY_SHARED_SECRET")
+    gateway_release_commit: str | None = Field(
+        default=None, validation_alias="GATEWAY_RELEASE_COMMIT"
+    )
     openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
     gateway_clock_skew_seconds: int = Field(
         default=60, validation_alias="GATEWAY_CLOCK_SKEW_SECONDS"
@@ -38,6 +42,18 @@ class Settings(BaseSettings):
         if not value or not value.strip():
             raise ValueError("GATEWAY_SHARED_SECRET must not be empty")
         return value
+
+    @field_validator("gateway_release_commit", mode="before")
+    @classmethod
+    def _release_commit(cls, value: str | None) -> str | None:
+        if value is None or value == "":
+            return None
+        if not isinstance(value, str):
+            raise ValueError("GATEWAY_RELEASE_COMMIT must be a lowercase 40-hex SHA")
+        normalized = value.strip()
+        if normalized != value or re.fullmatch(r"[0-9a-f]{40}", normalized) is None:
+            raise ValueError("GATEWAY_RELEASE_COMMIT must be a lowercase 40-hex SHA")
+        return normalized
 
     @field_validator("ai_explanation_model_profile")
     @classmethod

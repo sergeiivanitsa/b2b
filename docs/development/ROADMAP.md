@@ -57,7 +57,7 @@
 | 22 | `company-card-v2-page-shell` | Завершена |
 | 23 | `company-card-v2-finance-charts` | Завершена |
 | 24 | `company-card-v2-arbitration-charts` | Завершена |
-| 25 | `company-card-v2-qa-rollout` | Production recovery: review |
+| 25 | `company-card-v2-qa-rollout` | Production fresh install: implementation |
 
 ## 3. Инженерные правила roadmap
 
@@ -1611,7 +1611,7 @@ population либо честно обозначенной returned slice без 
 ID: 25
 Slug: company-card-v2-qa-rollout
 
-Статус: production recovery проходит review. Историческая реализация из
+Статус: owner-approved production fresh install реализуется. Историческая реализация из
 `codex/iteration-25-company-card-v2-qa-rollout-refresh` получила независимый
 `VERDICT: READY` и merged через PR `#153` как squash commit
 `d0860c678754b18959a017580752655dd191fd6c`
@@ -1623,18 +1623,27 @@ Slug: company-card-v2-qa-rollout
 default branch требует strict `qa-required`. Exact identities и artifact
 digests зафиксированы в
 `docs/development/evidence/iteration-25-company-card-v2/iteration-25-post-merge-main-qa-v1.md`.
+Последующий production-recovery код был также merged через PR `#155` как
+commit `4aa2bd118a65edc13679ea88c1a29b0292634775` 2026-08-29T21:13:38+10:00;
+это остаётся историческим фактом, хотя его backup/bootstrap operational plan
+впоследствии был явно superseded решением владельца.
 После merge production-проверка выявила, что фактический сервер остался на
 schema `0015` и legacy UI: первый deploy не поддерживал переход из такой
 формы, а revision `0016` была несовместима с допустимыми historical jobs.
 Поэтому merge/QA остаются историческими фактами, но продуктовая цель итерации
-не считается достигнутой. Утверждённая recovery-спецификация и план:
+не считается достигнутой. Первоначальная backup/bootstrap recovery-стратегия
+была заменена явным решением владельца: production DB data можно удалить и
+выполнить schema-only clean install непосредственно в production. Текущие
+утверждённые спецификация и план:
 
-- `docs/development/iterations/iteration-25-production-recovery.md`;
-- `docs/development/plans/iteration-25-production-recovery.md`.
+- `docs/development/iterations/iteration-25-production-fresh-install.md`;
+- `docs/development/plans/iteration-25-production-fresh-install.md`.
 
-Recovery закрывает production-shaped migration, one-time legacy bootstrap,
-ограниченное ожидание H1 UI и operator-only canary для одного явно заданного
-ИНН. Массовое или процентное включение H2 по-прежнему не входит в scope.
+Fresh install удаляет только PostgreSQL schema `public`, устанавливает чистую
+schema `0019`, exact Product/Gateway/H2/Web и сохраняет Claims uploads через
+постоянный bind. Feature flags остаются default-off. H1 anchor и operator-only
+canary для `7707079463` выполняются позже; массовое или процентное включение H2
+по-прежнему не входит в scope.
 
 ### Зависимости
 
@@ -1675,25 +1684,28 @@ Recovery закрывает production-shaped migration, one-time legacy bootstr
   availability, но не выполнял их и не авторизует их в recovery.
 - CI gates для обязательных backend, frontend и browser checks.
 
-### Текущий recovery scope
+### Текущий production fresh-install scope
 
-- Production-shaped совместимость `0015 -> head` без потери legacy jobs.
-- One-time bootstrap exact legacy production с maintenance boundary и
-  проверяемым возвратом БД к `0015` до старого runtime.
-- Ограничение автоматического H1 polling тремя минутами без ложного `failed`.
-- Единственный exact-target canary `7707079463`, percentage `0`, deterministic
-  narrative fallback, durable exact-lineage receipt и заранее подготовленный
-  H1 rollback. Текущая авторизация заканчивается на staged H2; indexable
-  assignment требует отдельного решения владельца, а несовместимый с H1
-  rollback noindex activation запрещён.
+- Manual protected workflow для exact main-history SHA и wholly successful QA.
+- Read-only exact legacy/DB/Claims/Gateway preflight и reviewed environment.
+- Создание persistent Claims bind без удаления файлов; live legacy path должен
+  оставаться exact empty/unmounted до mutation.
+- Maintenance, остановка всех DB writers, guarded `DROP/CREATE public`, strict
+  schema ACL, exact `0019`, default-off data и initial superadmin bootstrap.
+- Exact Product/Gateway/H2/Web/nginx deploy с boot-resumable roll-forward-only
+  поведением после DROP и durable receipts.
+- После успеха — H1 rollback anchor `7707079463`; H2 assignment требует
+  отдельного решения владельца.
 
 ### Вне recovery scope
 
+- Backup/bootstrap старой DB, сохранение старых DB rows, `DROP DATABASE` или
+  удаление Claims files.
 - Автоматический refresh/backfill старых reports, удаление H1, массовая
   production republish, percentage/GA rollout и любые targets кроме явно
   утверждённого canary.
-- Фактический production deploy/flag change до merge exact recovery SHA,
-  успешной QA и проверенного backup/restore rehearsal.
+- Фактический production deploy/flag change до merge exact fresh-install SHA,
+  успешной QA, reviewed production approval и exact DB identity binding.
 
 ### Критерии приёмки
 

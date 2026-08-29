@@ -323,6 +323,22 @@ jobs:
           RECOVERY_HOOK_SHA256=${13}
           OPERATION_TIMEOUT_SECONDS=${14}
           ROLLBACK_TIMEOUT_SECONDS=${15}
+          command -v systemctl >/dev/null
+          state_root=/var/lib/pork/deploy-state
+          active="$state_root/fresh-install-active.json"
+          success="$state_root/fresh-install-success.json"
+          test ! -e "$active" && test ! -L "$active"
+          test ! -e "$success" && test ! -L "$success"
+          mapfile -t recovery_units < <(
+            {
+              systemctl list-units --all --type=service --full --no-legend --no-pager 'pork-production-fresh-install-*.service'
+              systemctl list-unit-files --type=service --full --no-legend --no-pager 'pork-production-fresh-install-*.service'
+            } | awk 'NF {print $1}' | sort -u
+          )
+          if test "${#recovery_units[@]}" -ne 0; then
+            echo 'a production fresh-install recovery unit remains installed; STOP' >&2
+            exit 2
+          fi
           test -d "$RU_RELEASE_ROOT" && test ! -L "$RU_RELEASE_ROOT"
           stage_identity="$RELEASE_SHA:$PRIOR_RELEASE_SHA:$PRIOR_IMAGE_CONFIG_SHA256:$PRIOR_COMPOSE_SHA256:$PRIOR_NGINX_SHA256:$PRIOR_WEB_TREE_SHA256"
           if test -e "$stage" || test -L "$stage"; then

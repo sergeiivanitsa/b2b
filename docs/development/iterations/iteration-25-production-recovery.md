@@ -8,7 +8,16 @@ Recovery branch: `codex/iteration-25-production-recovery`
 
 Recovery base: `c92597839e838da1cdc8acd015e0652dd430c08e`
 
-Статус: `IMPLEMENTATION APPROVED — IN PROGRESS`
+Historical merge: PR `#155`, commit
+`4aa2bd118a65edc13679ea88c1a29b0292634775`,
+`2026-08-29T21:13:38+10:00`.
+
+Статус: `SUPERSEDED BY OWNER DECISION`
+
+Эта backup/bootstrap стратегия сохранена как историческая спецификация, но не
+исполняется. Владелец разрешил удалить production DB data и выбрал более
+простой schema-only fresh install без backup/bootstrap. Текущая спецификация:
+`docs/development/iterations/iteration-25-production-fresh-install.md`.
 
 Owner approval: пользователь явно потребовал исправить фактический
 production-путь после проверки ИНН `7707079463` 2026-08-29.
