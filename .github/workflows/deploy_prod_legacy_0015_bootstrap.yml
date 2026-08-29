@@ -1,0 +1,828 @@
+name: One-time production bootstrap from exact legacy 0015
+
+# External recovery contract: verify-current-frozen must atomically bind the
+# supplied immutable identity to the exact quiesced revision-0015 recovery
+# point and fail unless that point is restorable.  This workflow never creates
+# or pretends to create a production backup.  Restore/verify phases must be
+# idempotent, interruption-safe and complete within the explicit per-operation
+# rollback bound; the boot-persistent service retries marker-driven recovery.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact lowercase candidate commit already in protected main history
+        required: true
+        type: string
+      prior_release_sha:
+        description: Exact only authorized legacy production release
+        required: true
+        default: 6bee95e881a3e9ea1fe324ca13c11ae239f896f4
+        type: string
+      prior_product_image_config_sha256:
+        description: Reviewed exact legacy Product image config SHA-256 without prefix
+        required: true
+        type: string
+      prior_product_compose_sha256:
+        description: Reviewed exact legacy docker-compose.product.yml SHA-256
+        required: true
+        type: string
+      prior_nginx_sha256:
+        description: Reviewed exact live legacy pork.su nginx config SHA-256
+        required: true
+        type: string
+      prior_web_tree_sha256:
+        description: Reviewed canonical bounded legacy Web file-tree SHA-256
+        required: true
+        type: string
+      seed_bundle_run_id:
+        description: Workflow run containing the reviewed fixed three-release H2 seed bundle
+        required: true
+        type: string
+      seed_bundle_sha256:
+        description: SHA-256 of the reviewed H2 seed bundle artifact
+        required: true
+        type: string
+      database_backup_artifact_id:
+        description: Opaque external PITR set identity pinned by the hook after quiesce
+        required: true
+        type: string
+      database_backup_artifact_sha256:
+        description: SHA-256 of the frozen/PITR recovery set covering writes through quiesce
+        required: true
+        type: string
+      database_recovery_hook_sha256:
+        description: SHA-256 of the fixed remote verify-current-frozen/restore hook
+        required: true
+        type: string
+      drain_deadline_seconds:
+        description: Approved deadline for the one legacy report worker
+        required: true
+        type: string
+      drain_stable_interval_seconds:
+        description: Approved stable aggregate interval
+        required: true
+        type: string
+      operation_timeout_seconds:
+        description: Per opaque forward operation timeout (30-900 seconds)
+        required: true
+        type: string
+      rollback_timeout_seconds:
+        description: Per opaque rollback operation timeout (30-600 seconds)
+        required: true
+        type: string
+      provider_mode:
+        description: Preserve the existing production DataNewton state
+        required: true
+        type: choice
+        options: [preserve]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+
+jobs:
+  trusted-exact-legacy-guard:
+    runs-on: ubuntu-24.04
+    outputs:
+      release_sha: ${{ steps.guard.outputs.release_sha }}
+    steps:
+      - name: Check out current protected main with full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prove trusted workflow and exact one-time identities
+        id: guard
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          PRIOR_RELEASE_SHA: ${{ inputs.prior_release_sha }}
+          PRIOR_IMAGE_CONFIG_SHA256: ${{ inputs.prior_product_image_config_sha256 }}
+          PRIOR_COMPOSE_SHA256: ${{ inputs.prior_product_compose_sha256 }}
+          PRIOR_NGINX_SHA256: ${{ inputs.prior_nginx_sha256 }}
+          PRIOR_WEB_TREE_SHA256: ${{ inputs.prior_web_tree_sha256 }}
+          SEED_RUN_ID: ${{ inputs.seed_bundle_run_id }}
+          SEED_SHA256: ${{ inputs.seed_bundle_sha256 }}
+          BACKUP_ARTIFACT_ID: ${{ inputs.database_backup_artifact_id }}
+          BACKUP_SHA256: ${{ inputs.database_backup_artifact_sha256 }}
+          RECOVERY_HOOK_SHA256: ${{ inputs.database_recovery_hook_sha256 }}
+          DRAIN_DEADLINE_SECONDS: ${{ inputs.drain_deadline_seconds }}
+          DRAIN_STABLE_INTERVAL_SECONDS: ${{ inputs.drain_stable_interval_seconds }}
+          OPERATION_TIMEOUT_SECONDS: ${{ inputs.operation_timeout_seconds }}
+          ROLLBACK_TIMEOUT_SECONDS: ${{ inputs.rollback_timeout_seconds }}
+          PROVIDER_MODE: ${{ inputs.provider_mode }}
+          ACTUAL_REPOSITORY: ${{ github.repository }}
+          PROTECTED_REPOSITORY: ${{ vars.PROTECTED_REPOSITORY }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test -n "$PROTECTED_REPOSITORY"
+          test "$ACTUAL_REPOSITORY" = "$PROTECTED_REPOSITORY"
+          test "$WORKFLOW_REF" = "$ACTUAL_REPOSITORY/.github/workflows/deploy_prod_legacy_0015_bootstrap.yml@refs/heads/main"
+          protected_main="$(git rev-parse HEAD)"
+          test "$WORKFLOW_SHA" = "$protected_main"
+          test "$PRIOR_RELEASE_SHA" = 6bee95e881a3e9ea1fe324ca13c11ae239f896f4
+          test "$PROVIDER_MODE" = preserve
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SEED_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SEED_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$BACKUP_ARTIFACT_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$ ]]
+          [[ "$BACKUP_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$RECOVERY_HOOK_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          for name in PRIOR_IMAGE_CONFIG_SHA256 PRIOR_COMPOSE_SHA256 PRIOR_NGINX_SHA256 PRIOR_WEB_TREE_SHA256; do
+            [[ "${!name}" =~ ^[0-9a-f]{64}$ ]]
+          done
+          python - <<'PY'
+          import math, os
+          for name in ("DRAIN_DEADLINE_SECONDS", "DRAIN_STABLE_INTERVAL_SECONDS", "OPERATION_TIMEOUT_SECONDS", "ROLLBACK_TIMEOUT_SECONDS"):
+              try:
+                  value = float(os.environ[name])
+              except ValueError as exc:
+                  raise SystemExit(f"{name} invalid; STOP") from exc
+              if not math.isfinite(value) or value <= 0:
+                  raise SystemExit(f"{name} invalid; STOP")
+          if float(os.environ["DRAIN_STABLE_INTERVAL_SECONDS"]) >= float(os.environ["DRAIN_DEADLINE_SECONDS"]):
+              raise SystemExit("drain stable interval does not fit deadline; STOP")
+          for name in ("OPERATION_TIMEOUT_SECONDS", "ROLLBACK_TIMEOUT_SECONDS"):
+              value = float(os.environ[name])
+              upper = 900 if name == "OPERATION_TIMEOUT_SECONDS" else 600
+              if not value.is_integer() or not 30 <= value <= upper:
+                  raise SystemExit(f"{name} is outside approved bounds; STOP")
+          if float(os.environ["DRAIN_DEADLINE_SECONDS"]) + 30 > float(os.environ["OPERATION_TIMEOUT_SECONDS"]):
+              raise SystemExit("drain deadline plus shutdown margin exceeds the forward operation bound; STOP")
+          PY
+          git cat-file -e "$RELEASE_SHA^{commit}"
+          git merge-base --is-ancestor "$RELEASE_SHA" "$protected_main"
+          test "$(git rev-parse "$WORKFLOW_SHA:.github/workflows/deploy_prod_legacy_0015_bootstrap.yml")" = "$(git rev-parse "$protected_main:.github/workflows/deploy_prod_legacy_0015_bootstrap.yml")"
+          echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+
+  qa:
+    name: qa-required dependency
+    needs: trusted-exact-legacy-guard
+    uses: ./.github/workflows/qa.yml
+    with:
+      release_sha: ${{ needs.trusted-exact-legacy-guard.outputs.release_sha }}
+
+  bootstrap:
+    name: exact legacy-0015 protected production bootstrap
+    needs: [trusted-exact-legacy-guard, qa]
+    if: needs.qa.outputs.verified_release_sha == needs.trusted-exact-legacy-guard.outputs.release_sha
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - name: Check out exact QA release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.trusted-exact-legacy-guard.outputs.release_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up locked Python
+        uses: ./.github/actions/setup-python-ci
+        with:
+          release-sha: ${{ needs.trusted-exact-legacy-guard.outputs.release_sha }}
+      - name: Download sole build-once QA release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ needs.qa.outputs.release_artifact_name }}
+          path: .release/deploy
+      - name: Download canonical QA attestation
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ needs.qa.outputs.attestation_artifact_name }}
+          path: .release/deploy-attestation
+      - name: Download explicit reviewed three-release H2 seed bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: company-public-h2-seed-bundle-e7478a2fba9aaca17829c3d99e89e8d83d4b3188
+          path: .release/seed
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.seed_bundle_run_id }}
+          github-token: ${{ github.token }}
+      - name: Reverify QA release, attestation and reviewed seed bundle
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-exact-legacy-guard.outputs.release_sha }}
+          VERIFIED_RELEASE_SHA: ${{ needs.qa.outputs.verified_release_sha }}
+          SEED_SHA256: ${{ inputs.seed_bundle_sha256 }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          test "$VERIFIED_RELEASE_SHA" = "$RELEASE_SHA"
+          cd .release/deploy
+          sha256sum --strict --check "checksums-$RELEASE_SHA.txt"
+          cd ../..
+          python deploy/product_api/release_manifest.py "$PWD/.release/deploy" "$RELEASE_SHA"
+          python - <<'PY'
+          import json, os
+          from hashlib import sha256
+          from pathlib import Path
+          release_sha = os.environ["RELEASE_SHA"]
+          release_path = Path(".release/deploy") / f"release-manifest-{release_sha}.json"
+          attestation_path = Path(".release/deploy-attestation") / f"qa-attestation-{release_sha}.json"
+          attestation_raw = attestation_path.read_bytes()
+          if attestation_raw.startswith(b"\xef\xbb\xbf") or b"\r" in attestation_raw or not attestation_raw.endswith(b"\n"):
+              raise SystemExit("QA attestation bytes invalid; STOP")
+          attestation = json.loads(attestation_raw.decode("utf-8"))
+          if attestation_raw != (json.dumps(attestation, separators=(",", ":"), sort_keys=True) + "\n").encode():
+              raise SystemExit("QA attestation is not canonical; STOP")
+          if attestation.get("schema_version") != "company_card_v2_qa_attestation_v1" or attestation.get("verified_release_sha") != release_sha:
+              raise SystemExit("QA attestation identity mismatch; STOP")
+          if attestation.get("release_artifact_name") != f"qa-release-{release_sha}" or attestation.get("release_manifest_name") != release_path.name:
+              raise SystemExit("QA artifact identity mismatch; STOP")
+          if attestation.get("release_manifest_sha256") != sha256(release_path.read_bytes()).hexdigest():
+              raise SystemExit("QA release manifest digest mismatch; STOP")
+          jobs = attestation.get("job_conclusions")
+          if not isinstance(jobs, dict) or set(jobs) != {"UNIT_RESULT", "POSTGRES_RESULT", "WEB_RESULT", "BUILD_RESULT", "BROWSER_RESULT", "CONTRACT_RESULT"} or set(jobs.values()) != {"success"}:
+              raise SystemExit("QA attestation is not wholly successful; STOP")
+          PY
+          seed=.release/seed/company-public-h2-seed-bundle-e7478a2fba9aaca17829c3d99e89e8d83d4b3188.tgz
+          test -f "$seed" && test ! -L "$seed"
+          test "$(sha256sum "$seed" | cut -d' ' -f1)" = "$SEED_SHA256"
+          python - <<'PY'
+          from pathlib import PurePosixPath, Path
+          import tarfile
+          archive = Path('.release/seed/company-public-h2-seed-bundle-e7478a2fba9aaca17829c3d99e89e8d83d4b3188.tgz')
+          with tarfile.open(archive, 'r:gz') as bundle:
+              members = bundle.getmembers()
+              if not members or len(members) > 10000 or sum(item.size for item in members) > 256 * 1024 * 1024:
+                  raise SystemExit('seed archive bounds invalid; STOP')
+              for item in members:
+                  path = PurePosixPath(item.name)
+                  if path.is_absolute() or not path.parts or path.parts[0] != 'seed-bundle' or any(part in {'', '.', '..'} for part in path.parts) or not (item.isfile() or item.isdir()):
+                      raise SystemExit('seed archive member invalid; STOP')
+          PY
+          install -d -m 750 .release/seed/extracted
+          tar -xzf "$seed" --no-same-owner --no-same-permissions -C .release/seed/extracted
+          python deploy/nginx/company_public_h2_seed.py verify-bundle .release/seed/extracted/seed-bundle/seed-inventory.json >/dev/null
+
+      - name: Configure strict RU SSH identity
+        shell: bash
+        env:
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          RU_SSH_KNOWN_HOSTS: ${{ secrets.RU_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$PROD_SSH_KEY" && test -n "$RU_SSH_KNOWN_HOSTS"
+          install -m 700 -d "$RUNNER_TEMP/legacy-0015-ssh"
+          printf '%s\n' "$RU_SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/legacy-0015-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/legacy-0015-ssh/known_hosts"
+          eval "$(ssh-agent -s)"
+          printf '%s\n' "$PROD_SSH_KEY" | ssh-add - >/dev/null
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+
+      - name: Exact read-only legacy-0015 preflight and external recovery verification
+        id: legacy
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-exact-legacy-guard.outputs.release_sha }}
+          PRIOR_RELEASE_SHA: ${{ inputs.prior_release_sha }}
+          PRIOR_IMAGE_CONFIG_SHA256: ${{ inputs.prior_product_image_config_sha256 }}
+          PRIOR_COMPOSE_SHA256: ${{ inputs.prior_product_compose_sha256 }}
+          PRIOR_NGINX_SHA256: ${{ inputs.prior_nginx_sha256 }}
+          PRIOR_WEB_TREE_SHA256: ${{ inputs.prior_web_tree_sha256 }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          RU_RELEASE_ROOT: ${{ vars.RU_RELEASE_ROOT }}
+          RECOVERY_HOOK: ${{ vars.RU_LEGACY_0015_DB_RECOVERY_HOOK }}
+          BACKUP_ARTIFACT: ${{ vars.RU_LEGACY_0015_DB_BACKUP_ARTIFACT }}
+          BACKUP_ARTIFACT_ID: ${{ inputs.database_backup_artifact_id }}
+          BACKUP_SHA256: ${{ inputs.database_backup_artifact_sha256 }}
+          RECOVERY_HOOK_SHA256: ${{ inputs.database_recovery_hook_sha256 }}
+          OPERATION_TIMEOUT_SECONDS: ${{ inputs.operation_timeout_seconds }}
+          ROLLBACK_TIMEOUT_SECONDS: ${{ inputs.rollback_timeout_seconds }}
+        run: |
+          set -euo pipefail
+          [[ "$RU_TARGET" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$ ]]
+          [[ "$RU_RELEASE_ROOT" =~ ^/[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*){2,}$ ]]
+          [[ "$RECOVERY_HOOK" =~ ^/[A-Za-z0-9][A-Za-z0-9._/-]+$ ]]
+          [[ "$BACKUP_ARTIFACT" =~ ^/[A-Za-z0-9][A-Za-z0-9._/-]+$ ]]
+          stage="$RU_RELEASE_ROOT/$RELEASE_SHA-legacy-0015-bootstrap"
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/legacy-0015-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" bash -s -- "$stage" "$RU_RELEASE_ROOT" "$RELEASE_SHA" "$PRIOR_RELEASE_SHA" "$PRIOR_IMAGE_CONFIG_SHA256" "$PRIOR_COMPOSE_SHA256" "$PRIOR_NGINX_SHA256" "$PRIOR_WEB_TREE_SHA256" "$RECOVERY_HOOK" "$BACKUP_ARTIFACT" "$BACKUP_ARTIFACT_ID" "$BACKUP_SHA256" "$RECOVERY_HOOK_SHA256" "$OPERATION_TIMEOUT_SECONDS" "$ROLLBACK_TIMEOUT_SECONDS" <<'REMOTE'
+          set -euo pipefail
+          stage=$1
+          RU_RELEASE_ROOT=$2
+          RELEASE_SHA=$3
+          PRIOR_RELEASE_SHA=$4
+          PRIOR_IMAGE_CONFIG_SHA256=$5
+          PRIOR_COMPOSE_SHA256=$6
+          PRIOR_NGINX_SHA256=$7
+          PRIOR_WEB_TREE_SHA256=$8
+          RECOVERY_HOOK=$9
+          BACKUP_ARTIFACT=${10}
+          BACKUP_ARTIFACT_ID=${11}
+          BACKUP_SHA256=${12}
+          RECOVERY_HOOK_SHA256=${13}
+          OPERATION_TIMEOUT_SECONDS=${14}
+          ROLLBACK_TIMEOUT_SECONDS=${15}
+          test -d "$RU_RELEASE_ROOT" && test ! -L "$RU_RELEASE_ROOT"
+          stage_identity="$RELEASE_SHA:$PRIOR_RELEASE_SHA:$PRIOR_IMAGE_CONFIG_SHA256:$PRIOR_COMPOSE_SHA256:$PRIOR_NGINX_SHA256:$PRIOR_WEB_TREE_SHA256"
+          if test -e "$stage" || test -L "$stage"; then
+            test -d "$stage" && test ! -L "$stage"
+            test "$(cat "$stage/bootstrap-stage-identity")" = "$stage_identity"
+          else
+            install -d -m 750 "$stage"
+            printf '%s\n' "$stage_identity" > "$stage/bootstrap-stage-identity"
+          fi
+          if test -e "$stage/bootstrap-success" || test -L "$stage/bootstrap-success"; then
+            test -f "$stage/bootstrap-success" && test ! -L "$stage/bootstrap-success"
+            test "$(cat "$stage/bootstrap-success")" = "$RELEASE_SHA"
+            echo 'one-time bootstrap already succeeded; repeat execution is forbidden; STOP' >&2
+            exit 2
+          fi
+          rolled_back_retry=false
+          if test -e "$stage/rollback-complete" || test -L "$stage/rollback-complete"; then
+            test -f "$stage/rollback-complete" && test ! -L "$stage/rollback-complete"
+            test "$(cat "$stage/rollback-complete")" = "$RELEASE_SHA"
+            rolled_back_retry=true
+          fi
+          command -v flock >/dev/null
+          command -v timeout >/dev/null
+          command -v systemctl >/dev/null
+          command -v sync >/dev/null
+          command -v getent >/dev/null
+          command -v ps >/dev/null
+          command -v runuser >/dev/null
+          test "$(id -u)" -eq 0
+          nginx_group=$(getent group www-data)
+          test "$(printf '%s\n' "$nginx_group" | cut -d: -f1)" = www-data
+          [[ "$(printf '%s\n' "$nginx_group" | cut -d: -f3)" =~ ^[1-9][0-9]*$ ]]
+          nginx_user=$(nginx -T 2>/dev/null | awk '$1 == "user" && NF == 2 { value=$2; sub(/;$/, "", value); print value }')
+          test "$nginx_user" = www-data
+          nginx_workers=$(ps -C nginx -o user=,group= | awk '$1 != "root" {print $1 ":" $2}' | sort -u)
+          test "$nginx_workers" = www-data:www-data
+          test -z "$(systemctl list-units --type=service --state=running,activating,reloading --plain --no-legend 'pork-legacy-0015-bootstrap-*' | awk 'NF {print $1; exit}')"
+          product_id=$(docker compose -f /opt/b2b/docker-compose.product.yml --env-file /opt/b2b/.env.product ps -q product_api)
+          report_id=$(docker compose -f /opt/b2b/docker-compose.product.yml --env-file /opt/b2b/.env.product ps -q company_report_worker)
+          test -n "$product_id" && test -n "$report_id"
+          global_product_output=$(docker ps -q --filter label=com.docker.compose.service=product_api)
+          global_report_output=$(docker ps -q --filter label=com.docker.compose.service=company_report_worker)
+          global_narrative_output=$(docker ps -q --filter label=com.docker.compose.service=company_card_narrative_worker)
+          global_product_ids=()
+          global_report_ids=()
+          global_narrative_ids=()
+          test -z "$global_product_output" || mapfile -t global_product_ids <<< "$global_product_output"
+          test -z "$global_report_output" || mapfile -t global_report_ids <<< "$global_report_output"
+          test -z "$global_narrative_output" || mapfile -t global_narrative_ids <<< "$global_narrative_output"
+          test "${#global_product_ids[@]}" -eq 1
+          test "${#global_report_ids[@]}" -eq 1
+          test "${#global_narrative_ids[@]}" -eq 0
+          test "${global_product_ids[0]}" = "$product_id"
+          test "${global_report_ids[0]}" = "$report_id"
+          project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$product_id")
+          printf '%s\n' "$project" | grep -Eq '^[a-z0-9][a-z0-9_-]*$'
+          test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$product_id")" = product_api
+          test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$report_id")" = "$project"
+          test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$report_id")" = company_report_worker
+          test "$(docker inspect --format '{{.Config.Image}}' "$product_id")" = "b2b-product-api:$PRIOR_RELEASE_SHA"
+          test "$(docker inspect --format '{{.Config.Image}}' "$report_id")" = "b2b-product-api:$PRIOR_RELEASE_SHA"
+          old_image=$(docker inspect --format '{{.Image}}' "$product_id")
+          test "$old_image" = "sha256:$PRIOR_IMAGE_CONFIG_SHA256"
+          test "$(docker inspect --format '{{.Image}}' "$report_id")" = "$old_image"
+          test "$(sha256sum /opt/b2b/docker-compose.product.yml | cut -d' ' -f1)" = "$PRIOR_COMPOSE_SHA256"
+          test "$(sha256sum /etc/nginx/sites-available/pork.su.conf | cut -d' ' -f1)" = "$PRIOR_NGINX_SHA256"
+          legacy_web_tree_sha256=$(python3 - /opt/b2b/services/web_ui/dist <<'PY'
+          from hashlib import sha256
+          from pathlib import Path
+          import os
+          import stat
+          import sys
+
+          root = Path(sys.argv[1])
+          if root.is_symlink() or not root.is_dir():
+              raise SystemExit("legacy Web root invalid; STOP")
+          digest = sha256()
+          count = 0
+          total = 0
+          observed_index = False
+          for current_root, directory_names, file_names in os.walk(root, followlinks=False):
+              directory_names.sort()
+              file_names.sort()
+              current = Path(current_root)
+              for name in directory_names:
+                  path = current / name
+                  if path.is_symlink() or not path.is_dir():
+                      raise SystemExit("legacy Web tree contains linked/non-directory entry; STOP")
+              for name in file_names:
+                  path = current / name
+                  metadata = path.stat(follow_symlinks=False)
+                  if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+                      raise SystemExit("legacy Web tree contains linked/non-file entry; STOP")
+                  relative = path.relative_to(root).as_posix()
+                  encoded = relative.encode("utf-8")
+                  if not encoded or len(encoded) > 4096:
+                      raise SystemExit("legacy Web path invalid; STOP")
+                  file_digest = sha256()
+                  with path.open("rb") as handle:
+                      for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                          file_digest.update(chunk)
+                  count += 1
+                  total += metadata.st_size
+                  if count > 10000 or total > 256 * 1024 * 1024:
+                      raise SystemExit("legacy Web tree bounds invalid; STOP")
+                  observed_index = observed_index or relative == "index.html"
+                  digest.update(b"F")
+                  digest.update(len(encoded).to_bytes(4, "big"))
+                  digest.update(encoded)
+                  digest.update(metadata.st_size.to_bytes(8, "big"))
+                  digest.update(file_digest.digest())
+          if not observed_index or count == 0:
+              raise SystemExit("legacy Web index missing; STOP")
+          print(digest.hexdigest())
+          PY
+          )
+          test "$legacy_web_tree_sha256" = "$PRIOR_WEB_TREE_SHA256"
+          test "$(docker inspect --format '{{.State.Running}}' "$product_id")" = true
+          test "$(docker inspect --format '{{.State.Running}}' "$report_id")" = true
+          test "$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "$product_id")" = unless-stopped
+          test "$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "$report_id")" = unless-stopped
+          test "$(docker port "$product_id" 8000/tcp)" = "127.0.0.1:8000"
+          test -z "$(docker ps -aq --filter label=com.docker.compose.project="$project" --filter label=com.docker.compose.service=company_card_narrative_worker)"
+          legacy_revision=$(docker exec -w /app/services/product_api "$product_id" python -m alembic -c alembic.ini current)
+          case "$legacy_revision" in
+            0015_claims_company_report_handoff|"0015_claims_company_report_handoff (head)") ;;
+            *) echo 'legacy database must have exactly sole revision 0015; STOP' >&2; exit 2 ;;
+          esac
+          grep -Fq 'root /opt/b2b/services/web_ui/dist;' /etc/nginx/sites-available/pork.su.conf
+          ! grep -Fq 'company-public-h2' /etc/nginx/sites-available/pork.su.conf
+          if test -e /var/lib/pork/web-ui/v1 || test -L /var/lib/pork/web-ui/v1; then
+            test -d /var/lib/pork/web-ui/v1 && test ! -L /var/lib/pork/web-ui/v1
+            test ! -e /var/lib/pork/web-ui/v1/current
+            test ! -L /var/lib/pork/web-ui/v1/current
+            test ! -e /var/lib/pork/web-ui/v1/release-set.json
+            test ! -L /var/lib/pork/web-ui/v1/release-set.json
+            if test "$rolled_back_retry" = false; then
+              test -z "$(timeout --foreground --signal=TERM --kill-after=30 "${OPERATION_TIMEOUT_SECONDS}s" find /var/lib/pork/web-ui/v1 -mindepth 1 -maxdepth 1 -print -quit)"
+            fi
+          fi
+          if test -e /var/lib/pork/company-public-h2/v1 || test -L /var/lib/pork/company-public-h2/v1; then
+            test -d /var/lib/pork/company-public-h2/v1 && test ! -L /var/lib/pork/company-public-h2/v1
+            if test "$rolled_back_retry" = false; then
+              test -z "$(timeout --foreground --signal=TERM --kill-after=30 "${OPERATION_TIMEOUT_SECONDS}s" find /var/lib/pork/company-public-h2/v1 -mindepth 1 -maxdepth 1 -print -quit)"
+            fi
+          fi
+          test -f "$RECOVERY_HOOK" && test ! -L "$RECOVERY_HOOK" && test -x "$RECOVERY_HOOK"
+          test -f "$BACKUP_ARTIFACT" && test ! -L "$BACKUP_ARTIFACT"
+          test "$(timeout --foreground --signal=TERM --kill-after=30 "${OPERATION_TIMEOUT_SECONDS}s" sha256sum "$RECOVERY_HOOK" | cut -d' ' -f1)" = "$RECOVERY_HOOK_SHA256"
+          test "$(timeout --foreground --signal=TERM --kill-after=30 "${OPERATION_TIMEOUT_SECONDS}s" sha256sum "$BACKUP_ARTIFACT" | cut -d' ' -f1)" = "$BACKUP_SHA256"
+          timeout --foreground --signal=TERM --kill-after=30 "${ROLLBACK_TIMEOUT_SECONDS}s" "$RECOVERY_HOOK" verify "$BACKUP_ARTIFACT" "$BACKUP_ARTIFACT_ID" "$BACKUP_SHA256" 0015_claims_company_report_handoff >/dev/null 2>&1
+          provider_state=$(docker exec "$product_id" python -c "from product_api.settings import get_settings; print('enabled' if get_settings().datanewton_enabled else 'disabled')")
+          test "$provider_state" = enabled -o "$provider_state" = disabled
+          printf '%s\n' "$product_id" > "$stage/prior-product-id"
+          printf '%s\n' "$report_id" > "$stage/prior-report-id"
+          printf '%s\n' "$old_image" > "$stage/prior-product-image-id"
+          printf '%s\n' "$project" > "$stage/prior-product-compose-project"
+          printf '%s\n' "$provider_state" > "$stage/prior-provider-state"
+          printf '%s\n' "$legacy_web_tree_sha256" > "$stage/prior-web-tree-sha256"
+          cp --no-preserve=mode,ownership /opt/b2b/docker-compose.product.yml "$stage/prior-docker-compose.product.yml"
+          cp --no-preserve=mode,ownership /etc/nginx/sites-available/pork.su.conf "$stage/prior-nginx.conf"
+          docker tag "$old_image" "b2b-product-api:legacy-0015-rollback-$RELEASE_SHA"
+          REMOTE
+          echo "ru_stage=$stage" >> "$GITHUB_OUTPUT"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Reset only exact stale retry markers after guarded preflight
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-exact-legacy-guard.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.legacy.outputs.ru_stage }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/legacy-0015-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" bash -s -- "$RU_STAGE" "$RELEASE_SHA" <<'REMOTE'
+          set -euo pipefail
+          stage=$1
+          release_sha=$2
+          success="$stage/bootstrap-success"
+          if test -e "$success" || test -L "$success"; then
+            test -f "$success" && test ! -L "$success"
+            test "$(cat "$success")" = "$release_sha"
+            echo 'one-time bootstrap already succeeded; repeat execution is forbidden; STOP' >&2
+            exit 2
+          fi
+          rolled_back=false
+          rollback_complete="$stage/rollback-complete"
+          if test -e "$rollback_complete" || test -L "$rollback_complete"; then
+            test -f "$rollback_complete" && test ! -L "$rollback_complete"
+            test "$(cat "$rollback_complete")" = "$release_sha"
+            rolled_back=true
+          fi
+          for name in bridge-armed bridge-complete drain-armed drain-complete migration-armed product-complete web-armed rollback-failed; do
+            path="$stage/$name"
+            if test -e "$path" || test -L "$path"; then
+              test -f "$path" && test ! -L "$path"
+              test "$(cat "$path")" = "$release_sha"
+              test "$rolled_back" = true
+            fi
+          done
+          drain_result="$stage/legacy-worker-drain-result.json"
+          if test -e "$drain_result" || test -L "$drain_result"; then
+            test -f "$drain_result" && test ! -L "$drain_result"
+            test "$rolled_back" = true
+          fi
+          for name in bridge-armed bridge-complete drain-armed drain-complete migration-armed product-complete web-armed rollback-failed legacy-worker-drain-result.json; do
+            path="$stage/$name"
+            if test -e "$path" || test -L "$path"; then
+              unlink "$path"
+            fi
+          done
+          sync -f "$stage"
+          if test -e "$rollback_complete" || test -L "$rollback_complete"; then
+            unlink "$rollback_complete"
+            sync -f "$stage"
+          fi
+          REMOTE
+
+      - name: Upload exact candidate, reviewed seed and bootstrap tools
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-exact-legacy-guard.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.legacy.outputs.ru_stage }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/legacy-0015-ssh/known_hosts")
+          tool_manifest="$RUNNER_TEMP/legacy-bootstrap-tools-$RELEASE_SHA.sha256"
+          : > "$tool_manifest"
+          for source in \
+            deploy/nginx/company_public_h2_release.py \
+            deploy/nginx/company_public_h2_seed.py \
+            deploy/nginx/seed_company_public_h2_assets.sh \
+            deploy/nginx/install_company_public_h2_assets.sh \
+            deploy/nginx/product_api_legacy_0015_h2_bootstrap.conf \
+            deploy/nginx/product_api.conf \
+            deploy/product_api/legacy_0015_worker_drain.py \
+            deploy/product_api/legacy_0015_bootstrap_runner.sh \
+            deploy/web_ui/install_web_ui_release.sh \
+            docker-compose.product.yml; do
+            digest=$(sha256sum "$source" | cut -d' ' -f1)
+            [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+            printf '%s  %s\n' "$digest" "${source##*/}" >> "$tool_manifest"
+          done
+          scp "${ssh_args[@]}" \
+            ".release/deploy/product-api-$RELEASE_SHA.oci.tar" \
+            ".release/deploy/company-public-h2-$RELEASE_SHA.tgz" \
+            ".release/deploy/web-ui-$RELEASE_SHA.tgz" \
+            ".release/deploy/release-manifest-$RELEASE_SHA.json" \
+            ".release/deploy/checksums-$RELEASE_SHA.txt" \
+            .release/seed/company-public-h2-seed-bundle-e7478a2fba9aaca17829c3d99e89e8d83d4b3188.tgz \
+            deploy/nginx/company_public_h2_release.py \
+            deploy/nginx/company_public_h2_seed.py \
+            deploy/nginx/seed_company_public_h2_assets.sh \
+            deploy/nginx/install_company_public_h2_assets.sh \
+            deploy/nginx/product_api_legacy_0015_h2_bootstrap.conf \
+            deploy/nginx/product_api.conf \
+            deploy/product_api/legacy_0015_worker_drain.py \
+            deploy/product_api/legacy_0015_bootstrap_runner.sh \
+            deploy/web_ui/install_web_ui_release.sh \
+            docker-compose.product.yml \
+            "$tool_manifest" \
+            "$RU_TARGET:$RU_STAGE/"
+
+      - name: Offline verify bootstrap candidate provider preservation before live mutation
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-exact-legacy-guard.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.legacy.outputs.ru_stage }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/legacy-0015-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" "set -euo pipefail; cd '$RU_STAGE'; sha256sum --strict --ignore-missing --check 'checksums-$RELEASE_SHA.txt'; provider_state=\$(cat prior-provider-state); test \"\$provider_state\" = enabled -o \"\$provider_state\" = disabled; docker load --input 'product-api-$RELEASE_SHA.oci.tar' >/dev/null; expected_image=\$(python3 -c \"import json,re,sys; value=json.load(open(sys.argv[1],encoding='utf-8')); digest=value['images'][sys.argv[2]]['config_digest']; (isinstance(digest,str) and re.fullmatch(r'sha256:[0-9a-f]{64}',digest)) or sys.exit('invalid Product config digest'); print(digest)\" 'release-manifest-$RELEASE_SHA.json' 'product-api-$RELEASE_SHA.oci.tar'); candidate_image=\$(docker image inspect --format '{{.Id}}' 'b2b-product-api:$RELEASE_SHA'); test \"\$candidate_image\" = \"\$expected_image\"; docker run --rm --network none --env-file /opt/b2b/.env.product --env EXPECTED_PROVIDER_STATE=\"\$provider_state\" --env PRODUCT_RELEASE_COMMIT='$RELEASE_SHA' 'b2b-product-api:$RELEASE_SHA' python -c \"import os,sys; from product_api.settings import get_settings; s=get_settings(); actual='enabled' if s.datanewton_enabled else 'disabled'; key_ok=actual != 'enabled' or bool((s.datanewton_api_key or '').strip()); checks=(os.environ.get('PRODUCT_RELEASE_COMMIT') == '$RELEASE_SHA',actual == os.environ.get('EXPECTED_PROVIDER_STATE'),key_ok,not s.company_card_v2_presentations_enabled,not s.company_card_v2_writer_enabled,s.company_card_v2_rollout_generation == 0,s.company_card_v2_allowlist_inns == [],s.company_card_v2_percentage_basis_points == 0,not s.company_card_v2_arbitration_collection_enabled,s.company_card_v2_arbitration_mask_active_key_id is None,s.company_card_v2_arbitration_mask_keyring_json is None,not s.company_card_v2_narrative_enabled,s.company_card_v2_narrative_kill_switch,s.company_card_v2_narrative_daily_limit == 0,s.company_card_v2_narrative_monthly_limit == 0,s.company_card_v2_narrative_concurrency == 0); all(checks) or sys.exit('bootstrap candidate provider/default-off preflight failed')\""
+
+      - name: Launch one durable remote bootstrap transaction
+        id: durable
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-exact-legacy-guard.outputs.release_sha }}
+          PRIOR_RELEASE_SHA: ${{ inputs.prior_release_sha }}
+          SEED_SHA256: ${{ inputs.seed_bundle_sha256 }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.legacy.outputs.ru_stage }}
+          RECOVERY_HOOK: ${{ vars.RU_LEGACY_0015_DB_RECOVERY_HOOK }}
+          BACKUP_ARTIFACT: ${{ vars.RU_LEGACY_0015_DB_BACKUP_ARTIFACT }}
+          BACKUP_ARTIFACT_ID: ${{ inputs.database_backup_artifact_id }}
+          BACKUP_SHA256: ${{ inputs.database_backup_artifact_sha256 }}
+          RECOVERY_HOOK_SHA256: ${{ inputs.database_recovery_hook_sha256 }}
+          DRAIN_DEADLINE_SECONDS: ${{ inputs.drain_deadline_seconds }}
+          DRAIN_STABLE_INTERVAL_SECONDS: ${{ inputs.drain_stable_interval_seconds }}
+          OPERATION_TIMEOUT_SECONDS: ${{ inputs.operation_timeout_seconds }}
+          ROLLBACK_TIMEOUT_SECONDS: ${{ inputs.rollback_timeout_seconds }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          unit="pork-legacy-0015-bootstrap-${RELEASE_SHA:0:12}-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          [[ "$unit" =~ ^[a-z0-9-]+$ ]]
+          runner_sha="$(sha256sum deploy/product_api/legacy_0015_bootstrap_runner.sh | cut -d' ' -f1)"
+          [[ "$runner_sha" =~ ^[0-9a-f]{64}$ ]]
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/legacy-0015-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" bash -s -- "$unit" "$RU_STAGE" "$runner_sha" "$RELEASE_SHA" "$PRIOR_RELEASE_SHA" "$RECOVERY_HOOK" "$BACKUP_ARTIFACT" "$BACKUP_ARTIFACT_ID" "$BACKUP_SHA256" "$RECOVERY_HOOK_SHA256" "$DRAIN_DEADLINE_SECONDS" "$DRAIN_STABLE_INTERVAL_SECONDS" "$SEED_SHA256" "$OPERATION_TIMEOUT_SECONDS" "$ROLLBACK_TIMEOUT_SECONDS" <<'REMOTE'
+          set -euo pipefail
+          unit=$1
+          stage=$2
+          runner_sha=$3
+          shift 3
+          release_sha=$1
+          prior_release_sha=$2
+          recovery_hook=$3
+          backup_artifact=$4
+          backup_id=$5
+          backup_sha256=$6
+          recovery_hook_sha256=$7
+          drain_deadline=$8
+          stable_interval=$9
+          seed_sha256=${10}
+          operation_timeout=${11}
+          rollback_timeout=${12}
+          test "$(stat -c '%u:%a' -- "$stage")" = "0:750"
+          test "$(sha256sum "$stage/legacy_0015_bootstrap_runner.sh" | cut -d' ' -f1)" = "$runner_sha"
+          cd "$stage"
+          tool_manifest="legacy-bootstrap-tools-$release_sha.sha256"
+          test -f "$tool_manifest" && test ! -L "$tool_manifest"
+          sha256sum --strict --check "$tool_manifest"
+          for name in \
+            bootstrap-stage-identity \
+            prior-product-id \
+            prior-report-id \
+            prior-product-image-id \
+            prior-product-compose-project \
+            prior-provider-state \
+            prior-web-tree-sha256 \
+            prior-docker-compose.product.yml \
+            prior-nginx.conf \
+            "product-api-$release_sha.oci.tar" \
+            "company-public-h2-$release_sha.tgz" \
+            "web-ui-$release_sha.tgz" \
+            "release-manifest-$release_sha.json" \
+            "checksums-$release_sha.txt" \
+            company-public-h2-seed-bundle-e7478a2fba9aaca17829c3d99e89e8d83d4b3188.tgz \
+            "$tool_manifest" \
+            company_public_h2_release.py \
+            company_public_h2_seed.py \
+            seed_company_public_h2_assets.sh \
+            install_company_public_h2_assets.sh \
+            product_api_legacy_0015_h2_bootstrap.conf \
+            product_api.conf \
+            legacy_0015_worker_drain.py \
+            legacy_0015_bootstrap_runner.sh \
+            install_web_ui_release.sh \
+            docker-compose.product.yml; do
+            test -f "$stage/$name" && test ! -L "$stage/$name"
+            chmod 640 "$stage/$name"
+            sync -f "$stage/$name"
+          done
+          chmod 750 "$stage/legacy_0015_bootstrap_runner.sh"
+          sync -f "$stage/legacy_0015_bootstrap_runner.sh"
+          test -f "$recovery_hook" && test ! -L "$recovery_hook"
+          test -f "$backup_artifact" && test ! -L "$backup_artifact"
+          sync -f "$recovery_hook"
+          sync -f "$backup_artifact"
+          sync -f "$stage"
+          unit_path="/etc/systemd/system/$unit.service"
+          unit_temporary="/etc/systemd/system/.$unit.$$.tmp"
+          test ! -e "$unit_temporary" && test ! -L "$unit_temporary"
+          {
+            printf '%s\n' '[Unit]' 'Description=One-time exact legacy-0015 production bootstrap with boot recovery' 'After=docker.service network-online.target' 'Wants=network-online.target' 'Requires=docker.service' 'StartLimitIntervalSec=0' '' '[Service]' 'Type=exec' 'User=root' 'Group=www-data' "WorkingDirectory=$stage" 'UMask=0027' 'Restart=on-failure' 'RestartSec=30' 'KillMode=control-group' 'KillSignal=SIGTERM' 'RuntimeMaxSec=7200' 'TimeoutStopSec=3600' 'SendSIGKILL=yes' 'NoNewPrivileges=yes' 'PrivateTmp=yes' 'StandardOutput=journal' 'StandardError=journal'
+            printf 'ExecStart=/bin/bash %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\n' "$stage/legacy_0015_bootstrap_runner.sh" "$stage" "$release_sha" "$prior_release_sha" "$recovery_hook" "$backup_artifact" "$backup_id" "$backup_sha256" "$recovery_hook_sha256" "$drain_deadline" "$stable_interval" "$seed_sha256" "$unit" "$operation_timeout" "$rollback_timeout"
+            printf '%s\n' '' '[Install]' 'WantedBy=multi-user.target'
+          } > "$unit_temporary"
+          chmod 640 "$unit_temporary"
+          sync -f "$unit_temporary"
+          if test -e "$unit_path" || test -L "$unit_path"; then
+            test -f "$unit_path" && test ! -L "$unit_path"
+            test "$(stat -c '%u:%a' -- "$unit_path")" = "0:640"
+            cmp -s "$unit_temporary" "$unit_path"
+            unlink "$unit_temporary"
+          else
+            mv -T "$unit_temporary" "$unit_path"
+          fi
+          sync -f "$unit_path"
+          sync -f /etc/systemd/system
+          systemctl daemon-reload
+          systemctl enable --now "$unit.service"
+          test "$(systemctl show --property=LoadState --value "$unit.service")" = loaded
+          REMOTE
+          echo "unit=$unit" >> "$GITHUB_OUTPUT"
+          echo "started=true" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for durable bridge, drain, migration, Web and public checks
+        id: bootstrap_success
+        timeout-minutes: 190
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-exact-legacy-guard.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.legacy.outputs.ru_stage }}
+          UNIT: ${{ steps.durable.outputs.unit }}
+        run: |
+          set -euo pipefail
+          [[ "$UNIT" =~ ^[a-z0-9-]+$ ]]
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/legacy-0015-ssh/known_hosts")
+          for attempt in $(seq 1 2220); do
+            outcome=$(ssh "${ssh_args[@]}" "$RU_TARGET" bash -s -- "$RU_STAGE" "$RELEASE_SHA" "$UNIT" <<'REMOTE'
+          set -euo pipefail
+          stage=$1
+          release_sha=$2
+          unit=$3
+          for state in bootstrap-success rollback-complete rollback-failed; do
+            path="$stage/$state"
+            if test -e "$path"; then
+              test -f "$path" && test ! -L "$path"
+              test "$(cat "$path")" = "$release_sha"
+              printf '%s\n' "$state"
+              exit 0
+            fi
+          done
+          if systemctl is-active --quiet "$unit.service"; then
+            echo running
+            exit 0
+          fi
+          echo 'durable bootstrap unit disappeared without a terminal marker; STOP' >&2
+          exit 2
+          REMOTE
+          )
+            case "$outcome" in
+              bootstrap-success)
+                echo "complete=true" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+              rollback-complete)
+                echo 'durable bootstrap failed and completed DB-first legacy rollback' >&2
+                exit 1
+                ;;
+              rollback-failed)
+                echo 'durable bootstrap rollback failed; maintenance ingress remains; STOP' >&2
+                exit 1
+                ;;
+              running) sleep 5 ;;
+              *) echo 'invalid durable bootstrap status; STOP' >&2; exit 2 ;;
+            esac
+          done
+          echo 'durable bootstrap exceeded bounded forward plus rollback window; STOP' >&2
+          exit 2
+
+      - name: Observe durable DB-first rollback after any unsuccessful transaction
+        if: always() && steps.durable.outputs.started == 'true' && steps.bootstrap_success.outputs.complete != 'true'
+        timeout-minutes: 190
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-exact-legacy-guard.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.legacy.outputs.ru_stage }}
+          UNIT: ${{ steps.durable.outputs.unit }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/legacy-0015-ssh/known_hosts")
+          for attempt in $(seq 1 2220); do
+            outcome=$(ssh "${ssh_args[@]}" "$RU_TARGET" bash -s -- "$RU_STAGE" "$RELEASE_SHA" "$UNIT" <<'REMOTE'
+          set -euo pipefail
+          stage=$1
+          release_sha=$2
+          unit=$3
+          for state in rollback-complete rollback-failed bootstrap-success; do
+            path="$stage/$state"
+            if test -e "$path"; then
+              test -f "$path" && test ! -L "$path"
+              test "$(cat "$path")" = "$release_sha"
+              printf '%s\n' "$state"
+              exit 0
+            fi
+          done
+          systemctl is-active --quiet "$unit.service"
+          echo running
+          REMOTE
+          )
+            case "$outcome" in
+              rollback-complete)
+                echo 'durable DB-first rollback completed; bootstrap remains failed' >&2
+                exit 1
+                ;;
+              rollback-failed)
+                echo 'durable DB-first rollback failed; maintenance ingress remains; STOP' >&2
+                exit 1
+                ;;
+              bootstrap-success) exit 0 ;;
+              running) sleep 5 ;;
+              *) echo 'invalid durable recovery status; STOP' >&2; exit 2 ;;
+            esac
+          done
+          echo 'durable rollback exceeded its 3300-second state-machine bound; STOP' >&2
+          exit 2
+
+      - name: Stop local bootstrap credential agent
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SSH_AGENT_PID:-}"
+          ssh-agent -k >/dev/null

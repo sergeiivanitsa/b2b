@@ -141,7 +141,11 @@ async def create_pending_report(
     started_at: datetime | None = None,
     fresh_until: datetime | None = None,
 ) -> PendingReportRecord:
-    subject = await get_or_create_subject(session, identifier)
+    # Serialize creation of a new legacy pending report with publication and
+    # rollout transitions for the same subject.  The subject-first fence also
+    # prevents a new resolver candidate from appearing after an unassigned H2
+    # activation captured and locked the complete H1 row set.
+    subject = await lock_or_create_subject_for_update(session, identifier)
     result = await session.execute(
         select(CompanyReportRecord)
         .where(

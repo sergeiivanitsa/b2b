@@ -271,6 +271,8 @@ def _copy_immutable(source: Path, destination: Path) -> None:
     try:
         with temporary.open("xb") as handle:
             handle.write(data)
+            if os.name != "nt":
+                os.fchmod(handle.fileno(), 0o640)
             handle.flush()
             os.fsync(handle.fileno())
         try:
@@ -292,6 +294,8 @@ def _replace_pointer(path: Path, data: bytes) -> None:
     try:
         with temporary.open("xb") as handle:
             handle.write(data)
+            if os.name != "nt":
+                os.fchmod(handle.fileno(), 0o640)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)

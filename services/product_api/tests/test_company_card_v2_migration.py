@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -37,8 +38,8 @@ async def test_company_card_v2_foundation_tables_and_legacy_defaults(engine) -> 
         assert "fk_company_report_presentation_pins_report_subject" in constraints
 
 
-def test_company_card_v2_clean_0015_upgrade_downgrade_reupgrade(monkeypatch) -> None:
-    """Exercise 0016 from historical data, then prove the round-trip is stable."""
+def test_company_card_v2_clean_0015_head_refuses_lossy_downgrade(monkeypatch) -> None:
+    """Upgrade 0015 data and prove the narrative downgrade fails atomically."""
     admin_url = os.environ.get("TEST_POSTGRES_ADMIN_URL")
     if not admin_url:
         pytest.skip("TEST_POSTGRES_ADMIN_URL is not configured")
@@ -56,14 +57,46 @@ def test_company_card_v2_clean_0015_upgrade_downgrade_reupgrade(monkeypatch) -> 
         config = _alembic_config(rendered_target)
         command.upgrade(config, "0015_claims_company_report_handoff")
         expected = asyncio.run(_seed_valid_active_h1(rendered_target))
-        command.upgrade(config, "0016_company_card_v2_foundation")
+        expected_jobs = asyncio.run(_seed_legacy_job_cohort(rendered_target))
+        legacy_job_snapshot = asyncio.run(_read_legacy_job_cohort(rendered_target))
+        expected_migrated_jobs = {
+            job_id: (
+                state,
+                attempt_count,
+                "h1_legacy_writer_v2",
+                "company_public_h1_v1",
+                0,
+                attempt_count,
+                "h1_legacy_writer_v2",
+                "company_public_h1_v1",
+                0,
+            )
+            for job_id, (state, attempt_count) in expected_jobs.items()
+        }
+        command.upgrade(config, "head")
         assert asyncio.run(_read_h1_import(rendered_target)) == expected
-        assert asyncio.run(_revision(rendered_target)) == "0016_company_card_v2_foundation"
-        command.downgrade(config, "0015_claims_company_report_handoff")
-        assert asyncio.run(_revision(rendered_target)) == "0015_claims_company_report_handoff"
-        assert asyncio.run(_table_absent(rendered_target, "company_report_presentation_pins"))
-        command.upgrade(config, "0016_company_card_v2_foundation")
+        assert asyncio.run(_read_legacy_job_cohort(rendered_target)) == legacy_job_snapshot
+        assert asyncio.run(_read_migrated_job_cohort(rendered_target)) == expected_migrated_jobs
+        assert asyncio.run(_revision(rendered_target)) == "0019_company_card_v2_rollout_control"
+        with pytest.raises(RuntimeError, match="refuse to discard narrative data"):
+            command.downgrade(config, "0015_claims_company_report_handoff")
+        assert asyncio.run(_revision(rendered_target)) == "0019_company_card_v2_rollout_control"
+        assert not asyncio.run(
+            _table_absent(rendered_target, "company_report_presentation_pins")
+        )
+        assert not asyncio.run(
+            _column_absent(rendered_target, "company_report_jobs", "fence_generation")
+        )
         assert asyncio.run(_read_h1_import(rendered_target)) == expected
+        assert asyncio.run(_read_legacy_job_cohort(rendered_target)) == legacy_job_snapshot
+        assert asyncio.run(_read_migrated_job_cohort(rendered_target)) == expected_migrated_jobs
+        # A retry at head is a no-op. Production rollback is an exact backup
+        # restore to 0015, never a lossy Alembic downgrade of migrated data.
+        command.upgrade(config, "head")
+        assert asyncio.run(_read_h1_import(rendered_target)) == expected
+        assert asyncio.run(_read_legacy_job_cohort(rendered_target)) == legacy_job_snapshot
+        assert asyncio.run(_read_migrated_job_cohort(rendered_target)) == expected_migrated_jobs
+        assert asyncio.run(_revision(rendered_target)) == "0019_company_card_v2_rollout_control"
     finally:
         asyncio.run(_drop_database(rendered_admin, database_name))
 
@@ -164,6 +197,132 @@ async def _seed_valid_active_h1(url: str, *, corrupt_kind: str | None = None) ->
     finally:
         await engine.dispose()
     return str(subject_id), str(report_id), snapshot_hash, generation
+
+
+async def _seed_legacy_job_cohort(url: str) -> dict[str, tuple[str, int]]:
+    """Seed every valid 0013 job shape observed in an existing installation."""
+    claimed_at = datetime(2026, 8, 20, 9, 0, tzinfo=timezone.utc)
+    heartbeat_at = claimed_at + timedelta(seconds=10)
+    lease_expires_at = claimed_at + timedelta(minutes=1)
+    finished_at = claimed_at + timedelta(seconds=30)
+    shapes = (("succeeded", 1),) * 15 + (
+        ("queued", 0),
+        ("running", 1),
+        ("failed", 0),
+        ("failed", 1),
+    )
+    expected: dict[str, tuple[str, int]] = {}
+    engine = create_async_engine(url)
+    try:
+        async with engine.begin() as connection:
+            for ordinal, (state, attempt_count) in enumerate(shapes):
+                subject_id, report_id, job_id = uuid4(), uuid4(), uuid4()
+                worker_token = uuid4() if attempt_count == 1 else None
+                has_attempt = attempt_count == 1
+                is_terminal = state in {"succeeded", "failed"}
+                await connection.execute(
+                    text(
+                        "INSERT INTO company_report_subjects "
+                        "(id, normalized_identifier, identifier_type) "
+                        "VALUES (:id, :inn, 'legal_entity_inn')"
+                    ),
+                    {"id": subject_id, "inn": f"77012346{ordinal:02d}"},
+                )
+                await connection.execute(
+                    text(
+                        "INSERT INTO company_reports "
+                        "(id, subject_id, report_version, lifecycle_status, started_at, "
+                        "generated_at, finished_at, warnings_snapshot, usable_for_public_page, "
+                        "usable_for_future_scoring) VALUES "
+                        "(:id, :subject, '2', :lifecycle, :started_at, :generated_at, "
+                        ":finished_at, CAST('[]' AS json), false, false)"
+                    ),
+                    {
+                        "id": report_id,
+                        "subject": subject_id,
+                        "lifecycle": (
+                            "pending"
+                            if state in {"queued", "running"}
+                            else "complete" if state == "succeeded" else "failed"
+                        ),
+                        "started_at": claimed_at,
+                        "generated_at": finished_at if state == "succeeded" else None,
+                        "finished_at": finished_at if is_terminal else None,
+                    },
+                )
+                await connection.execute(
+                    text(
+                        "INSERT INTO company_report_jobs "
+                        "(id, report_id, subject_id, state, worker_token, attempt_count, "
+                        "claimed_at, heartbeat_at, lease_expires_at, finished_at, "
+                        "safe_failure_code, created_at, updated_at) VALUES "
+                        "(:id, :report, :subject, :state, :worker_token, :attempt_count, "
+                        ":claimed_at, :heartbeat_at, :lease_expires_at, :finished_at, "
+                        ":safe_failure_code, :created_at, :updated_at)"
+                    ),
+                    {
+                        "id": job_id,
+                        "report": report_id,
+                        "subject": subject_id,
+                        "state": state,
+                        "worker_token": worker_token,
+                        "attempt_count": attempt_count,
+                        "claimed_at": claimed_at if has_attempt else None,
+                        "heartbeat_at": heartbeat_at if has_attempt else None,
+                        "lease_expires_at": lease_expires_at if has_attempt else None,
+                        "finished_at": finished_at if is_terminal else None,
+                        "safe_failure_code": "provider_failed" if state == "failed" else None,
+                        "created_at": claimed_at - timedelta(minutes=1),
+                        "updated_at": finished_at if is_terminal else heartbeat_at,
+                    },
+                )
+                expected[str(job_id)] = (state, attempt_count)
+    finally:
+        await engine.dispose()
+    return expected
+
+
+async def _read_legacy_job_cohort(url: str) -> list[tuple[object, ...]]:
+    engine = create_async_engine(url)
+    try:
+        async with engine.connect() as connection:
+            return [
+                tuple(row)
+                for row in (
+                    await connection.execute(
+                        text(
+                            "SELECT id::text, report_id::text, subject_id::text, state, "
+                            "worker_token::text, attempt_count, claimed_at, heartbeat_at, "
+                            "lease_expires_at, finished_at, safe_failure_code, created_at, updated_at "
+                            "FROM company_report_jobs ORDER BY id"
+                        )
+                    )
+                ).all()
+            ]
+    finally:
+        await engine.dispose()
+
+
+async def _read_migrated_job_cohort(
+    url: str,
+) -> dict[str, tuple[str, int, str, str, int, int, str, str, int]]:
+    engine = create_async_engine(url)
+    try:
+        async with engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    text(
+                        "SELECT j.id::text, j.state, j.attempt_count, j.writer_profile, "
+                        "j.presentation_contract, j.rollout_generation, j.fence_generation, "
+                        "r.writer_profile, r.presentation_contract, r.rollout_generation "
+                        "FROM company_report_jobs j "
+                        "JOIN company_reports r ON r.id = j.report_id ORDER BY j.id"
+                    )
+                )
+            ).all()
+            return {row[0]: tuple(row[1:]) for row in rows}
+    finally:
+        await engine.dispose()
 
 
 async def _read_h1_import(url: str) -> tuple[str, str, str, int]:

@@ -10,6 +10,7 @@ import {
   errorCode,
   isCanonicalCompanyPath,
   parseCompanyRoute,
+  pendingAutoPollDeadlineMs,
   setCompanyHead,
   setCompanySafeTitle,
   STATUS_POLL_INTERVAL_MS,
@@ -50,10 +51,20 @@ type ActiveTimer = {
   id: number
 }
 
+type PollMode = 'auto' | 'manual'
+
+type PendingTimeline = {
+  route: RouteIdentity
+  firstObservedAtMs: number
+  serverStartedAt: string | null
+}
+
 type RetryDescriptor = {
   route: RouteIdentity
   operation: H1Operation
   allowAutoCreate: boolean
+  statusMode: PollMode
+  resetPendingTimeline: boolean
 }
 
 function isPendingError(error: unknown): boolean {
@@ -87,7 +98,9 @@ export function CompanyReportPage() {
   const retainedRef = useRef<RetainedDto | null>(null)
   const workRef = useRef<ActiveRequest | null>(null)
   const pollRef = useRef<ActiveRequest | null>(null)
-  const timerRef = useRef<ActiveTimer | null>(null)
+  const pollTimerRef = useRef<ActiveTimer | null>(null)
+  const deadlineTimerRef = useRef<ActiveTimer | null>(null)
+  const pendingTimelineRef = useRef<PendingTimeline | null>(null)
   const retryRef = useRef<RetryDescriptor | null>(null)
   const autoCreateKeysRef = useRef(new Set<string>())
   const pendingStageRef = useRef(0)
@@ -109,10 +122,17 @@ export function CompanyReportPage() {
       poll.controller.abort()
       if (pollRef.current === poll) pollRef.current = null
     }
-    const timer = timerRef.current
-    if (timer && (!route || timer.route === route)) {
-      window.clearTimeout(timer.id)
-      if (timerRef.current === timer) timerRef.current = null
+    const pollTimer = pollTimerRef.current
+    if (pollTimer && (!route || pollTimer.route === route)) {
+      window.clearTimeout(pollTimer.id)
+      if (pollTimerRef.current === pollTimer) pollTimerRef.current = null
+    }
+    const deadlineTimer = deadlineTimerRef.current
+    if (deadlineTimer && (!route || deadlineTimer.route === route)) {
+      window.clearTimeout(deadlineTimer.id)
+      if (deadlineTimerRef.current === deadlineTimer) {
+        deadlineTimerRef.current = null
+      }
     }
   }, [])
 
@@ -135,9 +155,79 @@ export function CompanyReportPage() {
     if (workRef.current === request) workRef.current = null
   }, [])
 
-  const enterPending = useCallback(
-    (route: RouteIdentity, resetStage: boolean) => {
+  const enterDelayed = useCallback(
+    (route: RouteIdentity, checking: boolean) => {
       if (!isCurrentRoute(route)) return
+      if (!checking) {
+        const poll = pollRef.current
+        if (poll?.route === route) {
+          poll.controller.abort()
+          if (pollRef.current === poll) pollRef.current = null
+        }
+      }
+      const pollTimer = pollTimerRef.current
+      if (pollTimer?.route === route) {
+        window.clearTimeout(pollTimer.id)
+        if (pollTimerRef.current === pollTimer) pollTimerRef.current = null
+      }
+      const deadlineTimer = deadlineTimerRef.current
+      if (deadlineTimer?.route === route) {
+        window.clearTimeout(deadlineTimer.id)
+        if (deadlineTimerRef.current === deadlineTimer) {
+          deadlineTimerRef.current = null
+        }
+      }
+      retryRef.current = checking
+        ? null
+        : {
+            route,
+            operation: 'status',
+            allowAutoCreate: false,
+            statusMode: 'manual',
+            resetPendingTimeline: false,
+          }
+      setView({ kind: 'delayed', checking })
+      setCompanySafeTitle('Отчёт ещё формируется')
+    },
+    [isCurrentRoute],
+  )
+
+  const enterPending = useCallback(
+    (
+      route: RouteIdentity,
+      resetStage: boolean,
+      serverStartedAt: string | null = null,
+    ) => {
+      if (!isCurrentRoute(route)) return
+      let timeline = pendingTimelineRef.current
+      if (resetStage || !timeline || timeline.route !== route) {
+        timeline = {
+          route,
+          firstObservedAtMs: Date.now(),
+          serverStartedAt: null,
+        }
+      }
+      if (
+        serverStartedAt !== null &&
+        Number.isFinite(Date.parse(serverStartedAt))
+      ) {
+        const knownStartedAtMs = timeline.serverStartedAt
+          ? Date.parse(timeline.serverStartedAt)
+          : Number.POSITIVE_INFINITY
+        if (Date.parse(serverStartedAt) < knownStartedAtMs) {
+          timeline = { ...timeline, serverStartedAt }
+        }
+      }
+      pendingTimelineRef.current = timeline
+      if (
+        pendingAutoPollDeadlineMs(
+          timeline.firstObservedAtMs,
+          timeline.serverStartedAt,
+        ) <= Date.now()
+      ) {
+        enterDelayed(route, false)
+        return
+      }
       if (resetStage) pendingStageRef.current = 0
       pendingCycleRef.current += 1
       retryRef.current = null
@@ -148,7 +238,7 @@ export function CompanyReportPage() {
       })
       setCompanySafeTitle('Отчёт формируется')
     },
-    [isCurrentRoute],
+    [enterDelayed, isCurrentRoute],
   )
 
   const showError = useCallback(
@@ -157,6 +247,8 @@ export function CompanyReportPage() {
       error: unknown,
       operation: H1Operation,
       allowAutoCreate: boolean,
+      statusMode: PollMode = 'auto',
+      resetPendingTimeline: boolean = true,
     ) => {
       if (!isCurrentRoute(route)) return
       retainedRef.current = null
@@ -168,7 +260,13 @@ export function CompanyReportPage() {
       }
       const classified = classifyH1Error(error, operation)
       if (classified.kind === 'retryable') {
-        retryRef.current = { route, operation, allowAutoCreate }
+        retryRef.current = {
+          route,
+          operation,
+          allowAutoCreate,
+          statusMode,
+          resetPendingTimeline,
+        }
         setView({ kind: 'retryable_error', message: classified.message })
       } else {
         retryRef.current = null
@@ -201,7 +299,12 @@ export function CompanyReportPage() {
   )
 
   const loadH1 = useCallback(
-    async (route: RouteIdentity, allowAutoCreate: boolean) => {
+    async (
+      route: RouteIdentity,
+      allowAutoCreate: boolean,
+      pendingMode: PollMode = 'auto',
+      resetPendingTimeline: boolean = true,
+    ) => {
       if (!isCurrentRoute(route)) return
       retainedRef.current = null
       const request = startWork(route)
@@ -242,7 +345,11 @@ export function CompanyReportPage() {
         if (!canCommitWork(route, request)) return
         releaseWork(request)
         if (isPendingError(error)) {
-          enterPending(route, true)
+          if (pendingMode === 'manual') {
+            enterDelayed(route, false)
+          } else {
+            enterPending(route, resetPendingTimeline)
+          }
           return
         }
         if (
@@ -259,12 +366,20 @@ export function CompanyReportPage() {
           }
           return
         }
-        showError(route, error, 'read', allowAutoCreate)
+        showError(
+          route,
+          error,
+          'read',
+          allowAutoCreate,
+          pendingMode,
+          resetPendingTimeline,
+        )
       }
     },
     [
       canCommitWork,
       createReport,
+      enterDelayed,
       enterPending,
       isCurrentRoute,
       navigate,
@@ -275,8 +390,9 @@ export function CompanyReportPage() {
   )
 
   const pollOnce = useCallback(
-    async (route: RouteIdentity) => {
+    async (route: RouteIdentity, mode: PollMode = 'auto') => {
       if (!isCurrentRoute(route)) return
+      if (mode === 'manual') enterDelayed(route, true)
       const currentPoll = pollRef.current
       if (currentPoll) {
         if (currentPoll.route === route) return
@@ -303,10 +419,29 @@ export function CompanyReportPage() {
             pendingStageRef.current + 1,
             PENDING_TITLES.length - 1,
           )
-          enterPending(route, false)
+          if (mode === 'manual') {
+            const timeline = pendingTimelineRef.current
+            if (timeline?.route === route) {
+              const knownStartedAtMs = timeline.serverStartedAt
+                ? Date.parse(timeline.serverStartedAt)
+                : Number.POSITIVE_INFINITY
+              if (
+                Number.isFinite(Date.parse(status.started_at)) &&
+                Date.parse(status.started_at) < knownStartedAtMs
+              ) {
+                pendingTimelineRef.current = {
+                  ...timeline,
+                  serverStartedAt: status.started_at,
+                }
+              }
+            }
+            enterDelayed(route, false)
+          } else {
+            enterPending(route, false, status.started_at)
+          }
           return
         }
-        await loadH1(route, false)
+        await loadH1(route, false, mode, false)
       } catch (error) {
         if (
           !isCurrentRoute(route) ||
@@ -316,10 +451,10 @@ export function CompanyReportPage() {
           return
         }
         pollRef.current = null
-        showError(route, error, 'status', false)
+        showError(route, error, 'status', false, mode)
       }
     },
-    [enterPending, isCurrentRoute, loadH1, showError],
+    [enterDelayed, enterPending, isCurrentRoute, loadH1, showError],
   )
 
   const retry = useCallback(() => {
@@ -327,22 +462,27 @@ export function CompanyReportPage() {
     if (!descriptor || !isCurrentRoute(descriptor.route)) return
     retryRef.current = null
     if (descriptor.operation === 'read') {
-      void loadH1(descriptor.route, descriptor.allowAutoCreate)
+      void loadH1(
+        descriptor.route,
+        descriptor.allowAutoCreate,
+        descriptor.statusMode,
+        descriptor.resetPendingTimeline,
+      )
       return
     }
     if (descriptor.operation === 'create') {
       void createReport(descriptor.route)
       return
     }
-    enterPending(descriptor.route, false)
-    void pollOnce(descriptor.route)
-  }, [createReport, enterPending, isCurrentRoute, loadH1, pollOnce])
+    void pollOnce(descriptor.route, descriptor.statusMode)
+  }, [createReport, isCurrentRoute, loadH1, pollOnce])
 
   useEffect(() => {
     abortRouteOperations()
     beginCompanyHead()
     retryRef.current = null
     pendingStageRef.current = 0
+    pendingTimelineRef.current = null
 
     if (!inn || !routeKind) {
       routeRef.current = null
@@ -377,6 +517,9 @@ export function CompanyReportPage() {
       if (routeRef.current === route) routeRef.current = null
       abortRouteOperations(route)
       if (retryRef.current?.route === route) retryRef.current = null
+      if (pendingTimelineRef.current?.route === route) {
+        pendingTimelineRef.current = null
+      }
     }
   }, [
     abortRouteOperations,
@@ -390,19 +533,53 @@ export function CompanyReportPage() {
   useEffect(() => {
     if (view.kind !== 'pending') return
     const route = routeRef.current
+    const timeline = pendingTimelineRef.current
+    if (!route || !timeline || timeline.route !== route) return
+    const remainingMs = Math.max(
+      0,
+      pendingAutoPollDeadlineMs(
+        timeline.firstObservedAtMs,
+        timeline.serverStartedAt,
+      ) - Date.now(),
+    )
+    if (remainingMs === 0) {
+      enterDelayed(route, false)
+      return
+    }
+    const timer: ActiveTimer = {
+      route,
+      id: window.setTimeout(() => {
+        if (deadlineTimerRef.current === timer) {
+          deadlineTimerRef.current = null
+        }
+        enterDelayed(route, false)
+      }, remainingMs),
+    }
+    deadlineTimerRef.current = timer
+    return () => {
+      if (deadlineTimerRef.current === timer) {
+        window.clearTimeout(timer.id)
+        deadlineTimerRef.current = null
+      }
+    }
+  }, [enterDelayed, pendingCycle, view.kind])
+
+  useEffect(() => {
+    if (view.kind !== 'pending') return
+    const route = routeRef.current
     if (!route) return
     const timer: ActiveTimer = {
       route,
       id: window.setTimeout(() => {
-        if (timerRef.current === timer) timerRef.current = null
+        if (pollTimerRef.current === timer) pollTimerRef.current = null
         void pollOnce(route)
       }, STATUS_POLL_INTERVAL_MS),
     }
-    timerRef.current = timer
+    pollTimerRef.current = timer
     return () => {
-      if (timerRef.current === timer) {
+      if (pollTimerRef.current === timer) {
         window.clearTimeout(timer.id)
-        timerRef.current = null
+        pollTimerRef.current = null
       }
     }
   }, [pendingCycle, pollOnce, view.kind])

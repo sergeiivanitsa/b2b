@@ -8,6 +8,7 @@ import type {
 import type { CompanyPublicH1Response } from './companyReportTypes'
 
 export const STATUS_POLL_INTERVAL_MS = 3000
+export const STATUS_AUTO_POLL_WINDOW_MS = 3 * 60 * 1000
 export const HEAD_OWNER_ATTRIBUTE = 'data-company-report-head-owner'
 export const HEAD_OWNER_VALUE = 'company-report-h1-v1'
 export const HEAD_KIND_ATTRIBUTE = 'data-company-report-head-kind'
@@ -22,6 +23,18 @@ export type H1Error = {
   kind: 'terminal' | 'retryable'
   message: string
   operation: H1Operation | null
+}
+
+export function pendingAutoPollDeadlineMs(
+  firstObservedAtMs: number,
+  serverStartedAt: string | null,
+): number {
+  const localDeadline = firstObservedAtMs + STATUS_AUTO_POLL_WINDOW_MS
+  if (serverStartedAt === null) return localDeadline
+  const serverStartedAtMs = Date.parse(serverStartedAt)
+  return Number.isFinite(serverStartedAtMs)
+    ? Math.min(localDeadline, serverStartedAtMs + STATUS_AUTO_POLL_WINDOW_MS)
+    : localDeadline
 }
 
 export const BLOCK_LABELS: Readonly<Record<FactualBlockId, string>> =

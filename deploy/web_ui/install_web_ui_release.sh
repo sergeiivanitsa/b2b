@@ -214,6 +214,8 @@ def _write_atomic(path: Path, data: bytes) -> None:
     try:
         with temporary.open("xb") as handle:
             handle.write(data)
+            if os.name != "nt":
+                os.fchmod(handle.fileno(), 0o640)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
@@ -300,6 +302,8 @@ def _extract_release(archive: Path, stage: Path, manifest: WebManifest) -> None:
                     handle.write(chunk)
                     digest.update(chunk)
                     remaining -= len(chunk)
+                if os.name != "nt":
+                    os.fchmod(handle.fileno(), 0o640)
                 if source.read(1):
                     raise WebReleaseError("web release archive member grew")
                 handle.flush()
@@ -376,6 +380,41 @@ def _parse_release_set(path: Path) -> tuple[str, ...]:
     ):
         raise WebReleaseError("Web release set invalid")
     return tuple(data["retained_release_sha"])
+
+
+def rollback_uninitialized(root: Path, approved_root: Path, release_sha: str) -> None:
+    """Restore an initially empty Web pointer state after the first install.
+
+    The immutable release directory is intentionally retained.  Only the exact
+    singleton pointer/history written by the first install may be removed.  A
+    retry after the pointer was already removed is accepted only while the
+    remaining history still identifies that same singleton release.
+    """
+    if _SHA.fullmatch(release_sha) is None:
+        raise WebReleaseError("Web rollback release identity invalid")
+    if not root.is_absolute() or not approved_root.is_absolute() or _is_link(root) or _is_link(approved_root):
+        raise WebReleaseError("Web release root must be an approved absolute directory")
+    try:
+        stable_root = root.resolve(strict=True)
+        approved = approved_root.resolve(strict=True)
+    except OSError as exc:
+        raise WebReleaseError("Web release root missing") from exc
+    if stable_root != approved or not stable_root.is_dir():
+        raise WebReleaseError("Web release root is not approved")
+
+    history_path = stable_root / "release-set.json"
+    current_sha = _read_current_sha(stable_root)
+    if current_sha is None and not history_path.exists() and not _is_link(history_path):
+        return
+    history = _parse_release_set(history_path)
+    if history != (release_sha,) or current_sha not in {None, release_sha}:
+        raise WebReleaseError("Web rollback state is not the exact first release")
+    if current_sha == release_sha:
+        _replace_current(stable_root, None)
+    if _is_link(history_path) or not history_path.is_file():
+        raise WebReleaseError("Web rollback history is invalid")
+    history_path.unlink()
+    _fsync_dir(stable_root)
 
 
 def _connect(value: str) -> tuple[str, int]:
@@ -542,9 +581,18 @@ def main(argv: list[str]) -> int:
             return 2
         print(manifest.release_sha)
         return 0
+    if len(argv) == 5 and argv[1] == "rollback-uninitialized":
+        try:
+            rollback_uninitialized(Path(argv[3]), Path(argv[4]), argv[2])
+        except (OSError, WebReleaseError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(argv[2])
+        return 0
     if len(argv) != 7:
         print(
             "usage: install_web_ui_release.sh verify ARCHIVE RELEASE_SHA ARCHIVE_SHA256\n"
+            "   or: install_web_ui_release.sh rollback-uninitialized RELEASE_SHA ROOT APPROVED_ROOT\n"
             "   or: install_web_ui_release.sh ARCHIVE RELEASE_SHA APPROVED_ROOT ARCHIVE_SHA256 LOOPBACK_CONNECT PUBLIC_ORIGIN",
             file=sys.stderr,
         )

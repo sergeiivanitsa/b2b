@@ -102,6 +102,7 @@ from product_api.company_reports.persistence.v3 import (
     company_card_v2_from_snapshot,
     company_card_v2_to_snapshot,
 )
+from product_api.company_reports.seo import canonical_path as h1_canonical_path
 
 
 EXPECTED_HEAD = "0019_company_card_v2_rollout_control"
@@ -585,7 +586,9 @@ async def _seed_profile(
         contract="company_public_h1_v1",
         generation=1,
         publication_policy_version="publication_sufficiency_v1",
-        canonical_path=profile["canonical_path"],
+        canonical_path=h1_canonical_path(
+            profile["inn"], profile["display_name"]
+        ),
         published_lastmod=generated_at,
         indexable=True,
     )

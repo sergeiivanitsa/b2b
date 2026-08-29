@@ -253,8 +253,17 @@ iterations:
   - id: 25
     slug: company-card-v2-qa-rollout
     title: "QA и rollout Company Card v2"
-    status: merged
-    branch: codex/iteration-25-company-card-v2-qa-rollout-refresh
-    commit: d0860c678754b18959a017580752655dd191fd6c
-    merged_at: "2026-08-29T10:05:49+10:00"
+    status: reviewing
+    branch: codex/iteration-25-production-recovery
+    commit: null
+    merged_at: null
     block_reason: null
+    historical_merge:
+      branch: codex/iteration-25-company-card-v2-qa-rollout-refresh
+      commit: d0860c678754b18959a017580752655dd191fd6c
+      merged_at: "2026-08-29T10:05:49+10:00"
+      pull_request: 153
+    recovery:
+      base_commit: c92597839e838da1cdc8acd015e0652dd430c08e
+      specification: docs/development/iterations/iteration-25-production-recovery.md
+      plan: docs/development/plans/iteration-25-production-recovery.md

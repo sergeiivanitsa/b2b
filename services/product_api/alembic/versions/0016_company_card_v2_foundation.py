@@ -47,6 +47,14 @@ def upgrade() -> None:
         op.alter_column(table, "presentation_contract", nullable=False, server_default=H1_CONTRACT)
         op.alter_column(table, "rollout_generation", nullable=False, server_default="0")
     op.add_column("company_report_jobs", sa.Column("fence_generation", sa.BigInteger(), nullable=False, server_default="0"))
+    # Historical 0013 jobs already encode whether the only allowed worker
+    # attempt happened.  Preserve that fencing generation before adding the
+    # stricter 0016 shape constraint; leaving the new column at its default
+    # would reject every valid running, succeeded, or attempted-failed row.
+    op.execute(sa.text(
+        "UPDATE company_report_jobs SET fence_generation = attempt_count "
+        "WHERE fence_generation <> attempt_count"
+    ))
     op.create_check_constraint("company_reports_profile_contract", "company_reports", "(writer_profile = 'h1_legacy_writer_v2' AND presentation_contract = 'company_public_h1_v1' AND report_version IN ('1','2') AND rollout_generation = 0) OR (writer_profile = 'company_card_v2_writer_v3' AND presentation_contract = 'company_public_h2_v1' AND report_version = '3' AND rollout_generation > 0)")
     op.create_check_constraint("company_report_jobs_profile_contract", "company_report_jobs", "(writer_profile = 'h1_legacy_writer_v2' AND presentation_contract = 'company_public_h1_v1' AND rollout_generation = 0) OR (writer_profile = 'company_card_v2_writer_v3' AND presentation_contract = 'company_public_h2_v1' AND rollout_generation > 0)")
     op.create_check_constraint("company_report_jobs_fence_generation", "company_report_jobs", "fence_generation >= 0")

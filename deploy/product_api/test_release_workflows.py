@@ -11,7 +11,12 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parents[2]
 QA = ROOT / ".github/workflows/qa.yml"
 DEPLOY = ROOT / ".github/workflows/deploy_prod.yml"
+LEGACY_BOOTSTRAP = ROOT / ".github/workflows/deploy_prod_legacy_0015_bootstrap.yml"
+LEGACY_BOOTSTRAP_RUNNER = ROOT / "deploy/product_api/legacy_0015_bootstrap_runner.sh"
 SEED = ROOT / ".github/workflows/company_public_h2_seed_bundle.yml"
+RECOVERY_SPEC = ROOT / "docs/development/iterations/iteration-25-production-recovery.md"
+RECOVERY_PLAN = ROOT / "docs/development/plans/iteration-25-production-recovery.md"
+RECOVERY_RUNBOOK = ROOT / "docs/development/runbooks/company-card-v2-rollout.md"
 
 POSTGRES_IMAGE = "postgres:16.9-alpine@sha256:b441677c946de564fe88ae4245ba80fe84a69485b22bf560e9c7c3710cd5e21d"
 PLAYWRIGHT_IMAGE = "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:c091b21d9fae78c76e85cd4356431e9b018402f172a214fc7d7a5e9a7e29d8ac"
@@ -478,6 +483,7 @@ def test_deploy_is_manual_current_main_protected_qa_consumer_in_exact_order() ->
     sentinels = [
         "Download sole build-once release",
         "Read-only RU/US preflight",
+        "Offline verify candidate provider preservation before live mutation",
         "Install and loopback-verify H2 assets",
         "Drain both exact old workers",
         "python -m alembic -c /app/alembic.ini upgrade head",
@@ -488,7 +494,9 @@ def test_deploy_is_manual_current_main_protected_qa_consumer_in_exact_order() ->
     assert positions == sorted(positions)
     for gate in range(1, 10):
         assert f"p{gate}_" in text.lower()
-    assert "provider_mode" in text and "disabled" in text
+    assert "provider_mode" in text and "preserve" in text
+    assert "prior-provider-state" in text
+    assert "EXPECTED_PROVIDER_STATE" in text
     assert "fallback-only" in text and "noindex-no-assignment" in text
     assert ". /opt/b2b/.env.product" not in text
     assert "prior-product-env" not in text
@@ -496,8 +504,8 @@ def test_deploy_is_manual_current_main_protected_qa_consumer_in_exact_order() ->
     assert "worker-drain-result.json" in text
     assert "database_target_sha256" in text
     assert 'test \\"\\$candidate_db_sha\\" = \\"\\$drained_db_sha\\"' in text
-    assert text.count("['images'][sys.argv[2]]['config_digest']") == 2
-    assert text.count('test \\"\\$candidate_image\\" = \\"\\$expected_image\\"') == 2
+    assert text.count("['images'][sys.argv[2]]['config_digest']") == 3
+    assert text.count('test \\"\\$candidate_image\\" = \\"\\$expected_image\\"') == 3
     assert text.count("docker inspect --format '{{.Image}}'") >= 4
     assert "sha256sum --strict --ignore-missing --check" in text
     assert "com.docker.compose.project" in text
@@ -517,6 +525,485 @@ def test_deploy_is_manual_current_main_protected_qa_consumer_in_exact_order() ->
     assert "default-off verification failed" in text
     assert "assert " not in text
     assert text.count("python deploy/product_api/release_manifest.py") == 1
+
+
+def test_deploy_checks_effective_provider_and_secret_presence_before_any_live_mutation() -> None:
+    text = DEPLOY.read_text(encoding="utf-8")
+    offline_name = "Offline verify candidate provider preservation before live mutation"
+    offline = text.split(offline_name, 1)[1].split(
+        "Install and loopback-verify H2 assets before process or DB mutation", 1
+    )[0]
+    assert text.index("prior-provider-state") < text.index(offline_name)
+    assert text.index(offline_name) < text.index("Install and loopback-verify H2 assets")
+    assert text.index(offline_name) < text.index("Drain both exact old workers")
+    assert text.index(offline_name) < text.index(
+        "python -m alembic -c /app/alembic.ini upgrade head"
+    )
+    assert "docker run --rm --network none --env-file /opt/b2b/.env.product" in offline
+    assert "actual == os.environ.get('EXPECTED_PROVIDER_STATE')" in offline
+    assert "datanewton_api_key" in offline
+    assert "key_ok=actual != 'enabled' or bool((s.datanewton_api_key or '').strip())" in offline
+    for token in (
+        "not s.company_card_v2_presentations_enabled",
+        "not s.company_card_v2_writer_enabled",
+        "s.company_card_v2_rollout_generation == 0",
+        "s.company_card_v2_allowlist_inns == []",
+        "s.company_card_v2_percentage_basis_points == 0",
+        "not s.company_card_v2_arbitration_collection_enabled",
+        "s.company_card_v2_arbitration_mask_active_key_id is None",
+        "s.company_card_v2_arbitration_mask_keyring_json is None",
+        "not s.company_card_v2_narrative_enabled",
+        "s.company_card_v2_narrative_kill_switch",
+        "s.company_card_v2_narrative_daily_limit == 0",
+        "s.company_card_v2_narrative_monthly_limit == 0",
+        "s.company_card_v2_narrative_concurrency == 0",
+    ):
+        assert token in offline
+    assert "print(s.datanewton_api_key" not in text
+    assert "echo $DATANEWTON" not in text
+
+
+def test_legacy_0015_bootstrap_is_manual_exact_main_and_one_time_guarded() -> None:
+    text = LEGACY_BOOTSTRAP.read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in text
+    assert "push:" not in text and "pull_request:" not in text
+    assert "group: prod-deploy" in text and "cancel-in-progress: false" in text
+    assert "environment: production" in text
+    assert "ref: refs/heads/main" in text
+    assert "github.workflow_ref" in text and "github.workflow_sha" in text
+    assert "git merge-base --is-ancestor" in text
+    assert text.count("6bee95e881a3e9ea1fe324ca13c11ae239f896f4") >= 2
+    assert "0015_claims_company_report_handoff" in text
+    assert "needs: [trusted-exact-legacy-guard, qa]" in text
+    assert "npm run build" not in text and "docker build" not in text
+    assert "|| true" not in text
+    for identity in (
+        "prior_product_image_config_sha256",
+        "prior_product_compose_sha256",
+        "prior_nginx_sha256",
+        "prior_web_tree_sha256",
+    ):
+        assert identity in text
+    assert "for name in PRIOR_IMAGE_CONFIG_SHA256 PRIOR_COMPOSE_SHA256 PRIOR_NGINX_SHA256 PRIOR_WEB_TREE_SHA256" in text
+    assert text.count("^[0-9a-f]{64}$") >= 4
+
+
+def test_legacy_0015_bootstrap_requires_exact_qa_seed_and_external_recovery() -> None:
+    workflow = LEGACY_BOOTSTRAP.read_text(encoding="utf-8")
+    runner = LEGACY_BOOTSTRAP_RUNNER.read_text(encoding="utf-8")
+    combined = workflow + "\n" + runner
+    for token in (
+        "qa-release-{release_sha}",
+        "company_card_v2_qa_attestation_v1",
+        "company-public-h2-seed-bundle-e7478a2fba9aaca17829c3d99e89e8d83d4b3188",
+        "seed_bundle_run_id",
+        "seed_bundle_sha256",
+        "database_backup_artifact_id",
+        "database_backup_artifact_sha256",
+        "database_recovery_hook_sha256",
+        "RU_LEGACY_0015_DB_RECOVERY_HOOK",
+        "RU_LEGACY_0015_DB_BACKUP_ARTIFACT",
+    ):
+        assert token in workflow
+    assert "verify-bundle" in combined
+    assert ".release/seed/extracted/seed-bundle/seed-inventory.json" in workflow
+    assert '"$seed_extract/seed-inventory.json"' in runner
+    assert "seed archive member invalid; STOP" in workflow
+    assert '"$recovery_hook" verify-current-frozen ' in runner
+    assert '"$recovery_hook" restore ' in runner
+    assert '"$recovery_hook" verify-restored ' in runner
+    assert "frozen/PITR recovery set covering writes through quiesce" in workflow
+    assert "atomically bind" in workflow and "exact quiesced revision-0015 recovery" in workflow
+    assert "never creates" in workflow and "pretends to create" in workflow
+    assert "pg_dump" not in combined and "pg_restore" not in combined
+
+
+def test_legacy_0015_bootstrap_guards_runtime_shape_and_initial_stores() -> None:
+    workflow = LEGACY_BOOTSTRAP.read_text(encoding="utf-8")
+    runner = LEGACY_BOOTSTRAP_RUNNER.read_text(encoding="utf-8")
+    combined = workflow + "\n" + runner
+    for token in (
+        "com.docker.compose.service",
+        "company_report_worker",
+        "company_card_narrative_worker",
+        "root /opt/b2b/services/web_ui/dist;",
+        "test ! -e /var/lib/pork/web-ui/v1/current",
+        "test ! -e /var/lib/pork/web-ui/v1/release-set.json",
+        "prior-docker-compose.product.yml",
+        "prior-nginx.conf",
+        "prior-provider-state",
+    ):
+        assert token in combined
+    assert "legacy_0015_worker_drain.py" in combined
+    assert runner.count("--container") == 1
+    assert "worker_drain.py' --container" not in combined
+    assert combined.count("docker port") >= 2
+    assert combined.count("127.0.0.1:8000") >= 2
+    preflight = workflow.split(
+        "Exact read-only legacy-0015 preflight and external recovery verification", 1
+    )[1].split("Reset only exact stale retry markers after guarded preflight", 1)[0]
+    assert preflight.count("HostConfig.RestartPolicy.Name") == 2
+    assert "global_product_output=$(docker ps -q" in preflight
+    assert "global_report_output=$(docker ps -q" in preflight
+    assert "global_narrative_output=$(docker ps -q" in preflight
+    assert "mapfile -t global_product_ids <<<" in preflight
+    assert "mapfile -t global_report_ids <<<" in preflight
+    assert "mapfile -t global_narrative_ids <<<" in preflight
+    assert 'test "${#global_product_ids[@]}" -eq 1' in preflight
+    assert 'test "${#global_report_ids[@]}" -eq 1' in preflight
+    assert 'test "${#global_narrative_ids[@]}" -eq 0' in preflight
+    assert 'test "${global_product_ids[0]}" = "$product_id"' in preflight
+    assert 'test "${global_report_ids[0]}" = "$report_id"' in preflight
+    assert 'test "$old_image" = "sha256:$PRIOR_IMAGE_CONFIG_SHA256"' in preflight
+    assert "sha256sum /opt/b2b/docker-compose.product.yml" in preflight
+    assert "sha256sum /etc/nginx/sites-available/pork.su.conf" in preflight
+    assert 'test "$legacy_web_tree_sha256" = "$PRIOR_WEB_TREE_SHA256"' in preflight
+    assert "rolled_back_retry=false" in preflight
+    assert preflight.count('test "$rolled_back_retry" = false') == 2
+    assert "find /var/lib/pork/web-ui/v1 -mindepth 1 -maxdepth 1" in preflight
+    assert "find /var/lib/pork/company-public-h2/v1 -mindepth 1 -maxdepth 1" in preflight
+    assert "one-time bootstrap already succeeded; repeat execution is forbidden; STOP" in preflight
+    candidate = runner.split(
+        "--force-recreate product_api company_report_worker company_card_narrative_worker", 1
+    )[1].split("marker product-complete", 1)[0]
+    assert "{{.Config.Image}}" in candidate
+    assert "{{.State.Running}}" in candidate
+    assert "candidate_global_products" in candidate
+    assert "candidate_global_reports" in candidate
+    assert "candidate_global_narratives" in candidate
+    assert 'docker port "$candidate_product_id" 8000/tcp' in candidate
+
+
+def test_legacy_0015_bootstrap_phase_order_and_db_first_rollback_are_explicit() -> None:
+    workflow = LEGACY_BOOTSTRAP.read_text(encoding="utf-8")
+    runner = LEGACY_BOOTSTRAP_RUNNER.read_text(encoding="utf-8")
+    workflow_sentinels = (
+        "Exact read-only legacy-0015 preflight and external recovery verification",
+        "Reset only exact stale retry markers after guarded preflight",
+        "Upload exact candidate, reviewed seed and bootstrap tools",
+        "Offline verify bootstrap candidate provider preservation before live mutation",
+        "Launch one durable remote bootstrap transaction",
+        "Wait for durable bridge, drain, migration, Web and public checks",
+    )
+    assert [workflow.index(value) for value in workflow_sentinels] == sorted(
+        workflow.index(value) for value in workflow_sentinels
+    )
+    runner_sentinels = (
+        "# Phase 1:",
+        "product_api_legacy_0015_h2_bootstrap.conf",
+        "# Phase 2:",
+        "marker drain-armed",
+        "legacy_0015_worker_drain.py",
+        "# Phase 3:",
+        '"$recovery_hook" verify-current-frozen ',
+        "marker migration-armed",
+        "python -m alembic -c /app/alembic.ini upgrade head",
+        "marker product-complete",
+        "# Phase 4:",
+        "install_web_ui_release.sh",
+        "product_api.conf",
+        "https://pork.su/api/internal/whoami",
+        "marker bootstrap-success",
+    )
+    forward = runner.split("# Phase 1:", 1)[1]
+    runner_sentinels = runner_sentinels[1:]
+    assert [forward.index(value) for value in runner_sentinels] == sorted(
+        forward.index(value) for value in runner_sentinels
+    )
+
+    rollback = runner.split("rollback_legacy() (", 1)[1].split("finish() {", 1)[0]
+    candidate_stop = rollback.index("stop_exact_container")
+    restore = rollback.index('"$recovery_hook" restore ')
+    verified = rollback.index('"$recovery_hook" verify-restored ')
+    old_runtime = rollback.index("b2b-product-api:legacy-0015-rollback")
+    legacy_up = rollback.index("--force-recreate product_api company_report_worker")
+    runtime_verified = rollback.index("sole_legacy_revision")
+    nginx_restore = rollback.index('install -m 640 "$stage/prior-nginx.conf"')
+    assert candidate_stop < restore < verified < old_runtime < legacy_up
+    assert legacy_up < runtime_verified < nginx_restore
+    assert "SIGKILL" not in rollback
+    assert "docker kill --signal=TERM" in runner
+    assert "company_card_narrative_worker" in rollback and "docker rm" in rollback
+
+    pre_migration = rollback.split('if path_present "$stage/migration-armed"; then', 2)[2]
+    drain_armed = pre_migration.split('if path_present "$stage/drain-armed"; then', 1)[1]
+    product_stop = drain_armed.index('stop_exact_container "$product_id"')
+    report_stop = drain_armed.index('stop_exact_container "$report_id"')
+    restart = drain_armed.index("docker update --restart=unless-stopped")
+    report_running = drain_armed.index(
+        'test "$(rollback_bounded docker inspect --format \'{{.State.Running}}\' "$report_id")" = true',
+        restart,
+    )
+    assert product_stop < report_stop < restart < report_running
+
+
+def test_legacy_0015_bootstrap_is_a_durable_cancel_independent_transaction() -> None:
+    workflow = LEGACY_BOOTSTRAP.read_text(encoding="utf-8")
+    runner = LEGACY_BOOTSTRAP_RUNNER.read_text(encoding="utf-8")
+    launch = workflow.split("Launch one durable remote bootstrap transaction", 1)[1].split(
+        "Wait for durable bridge, drain, migration, Web and public checks", 1
+    )[0]
+    assert "systemd-run" not in launch and "--scope" not in launch
+    assert 'unit_path="/etc/systemd/system/$unit.service"' in launch
+    assert "Description=One-time exact legacy-0015 production bootstrap with boot recovery" in launch
+    assert "WantedBy=multi-user.target" in launch
+    assert "Restart=on-failure" in launch and "RestartSec=30" in launch
+    assert "Type=exec" in launch and "User=root" in launch
+    assert "KillMode=control-group" in launch and "KillSignal=SIGTERM" in launch
+    assert "RuntimeMaxSec=7200" in launch and "TimeoutStopSec=3600" in launch
+    assert "SendSIGKILL=yes" in launch
+    assert 'systemctl enable --now "$unit.service"' in launch
+    assert "legacy_0015_bootstrap_runner.sh" in launch
+    assert "runner_sha" in launch
+    assert "legacy-bootstrap-tools-$release_sha.sha256" in launch
+    assert 'sha256sum --strict --check "$tool_manifest"' in launch
+    assert 'sync -f "$stage/$name"' in launch
+    assert 'sync -f "$recovery_hook"' in launch
+    assert 'sync -f "$backup_artifact"' in launch
+    assert 'sync -f "$stage"' in launch
+    assert 'mv -T "$unit_temporary" "$unit_path"' in launch
+    assert 'sync -f "$unit_path"' in launch
+    assert "install -m 644 \"$unit_temporary\"" not in launch
+    assert 'if test -e "$unit_path" || test -L "$unit_path"; then' in launch
+    assert 'test "$(stat -c \'%u:%a\' -- "$unit_path")" = "0:640"' in launch
+    exact_existing_unit = launch.index('cmp -s "$unit_temporary" "$unit_path"')
+    enable = launch.index('systemctl enable --now "$unit.service"')
+    assert exact_existing_unit < enable
+    assert "matching durable bootstrap unit is already active; STOP" not in launch
+    assert workflow.index("Offline verify bootstrap candidate") < workflow.index(
+        "Launch one durable remote bootstrap transaction"
+    )
+    assert "exec 9<\"$stage\"" in runner and "flock -x 9" in runner
+    assert "trap finish EXIT" in runner
+    assert "trap 'exit 143' TERM INT HUP" in runner
+    assert runner.index("marker bridge-armed") < runner.index(
+        "product_api_legacy_0015_h2_bootstrap.conf"
+    )
+    assert runner.index("marker drain-armed") < runner.index(
+        "docker update --restart=no \"$product_id\""
+    )
+    assert runner.index("marker migration-armed") < runner.index(
+        "python -m alembic -c /app/alembic.ini upgrade head"
+    )
+    web_forward = runner.split("# Phase 4:", 1)[1]
+    assert web_forward.index("marker web-armed") < web_forward.index(
+        "install_web_ui_release.sh"
+    )
+    assert web_forward.index("https://pork.su/api/internal/whoami") < web_forward.index(
+        "marker bootstrap-success"
+    )
+    assert "sync -f \"$temporary\"" in runner and "sync -f \"$stage\"" in runner
+    assert "rollback_bounded" in runner
+    assert "timeout --foreground --signal=TERM --kill-after=30" in runner
+    assert "rollback_deadline_epoch=$((EPOCHSECONDS + 3300))" in runner
+    assert "rollback_deadline_epoch - EPOCHSECONDS - 90" in runner
+    assert "terminal_bounded()" in runner and "120s" in runner
+    assert 'sync -f "$unit_path"' in runner
+    assert "multi-user.target.wants/$unit_name.service" in runner
+    assert "operation_timeout_seconds" in workflow
+    assert "rollback_timeout_seconds" in workflow
+    assert "drain deadline plus shutdown margin" in workflow
+    assert "reconciliation_only=true" in runner
+    assert runner.index("reconciliation_only=true") < runner.index("# Phase 1:")
+    assert "marker_once rollback-complete terminal_bounded" in runner
+    assert "status=0" in runner
+    assert 'systemctl disable "$unit_name.service"' in runner
+    observer = workflow.split(
+        "Observe durable DB-first rollback after any unsuccessful transaction", 1
+    )[1].split("Stop local bootstrap credential agent", 1)[0]
+    assert "always()" in observer
+    assert "steps.bootstrap_success.outputs.complete != 'true'" in observer
+    assert '"$recovery_hook" restore ' not in workflow
+    assert "failure()" not in workflow
+
+    runtime_seconds = 7200
+    stop_seconds = 3600
+    poll_seconds = 5
+    poll_attempts = 2220
+    observer_timeout_minutes = 190
+    assert poll_attempts * poll_seconds >= runtime_seconds + stop_seconds + 300
+    assert observer_timeout_minutes * 60 >= poll_attempts * poll_seconds
+    assert workflow.count("timeout-minutes: 190") >= 2
+    assert workflow.count("for attempt in $(seq 1 2220)") >= 2
+
+
+def test_legacy_0015_bootstrap_atomic_seed_is_retry_independent() -> None:
+    runner = LEGACY_BOOTSTRAP_RUNNER.read_text(encoding="utf-8")
+    h2 = runner.split("# Phase 1:", 1)[1].split("# Phase 2:", 1)[0]
+    assert 'mktemp -d -p "$stage" .seed-extract.' in h2
+    assert 'mktemp -d -p "$stage" .candidate-h2.' in h2
+    assert "seed_company_public_h2_assets.sh" in h2
+    assert 'company_public_h2_seed.py seed "$h2_root"' not in h2
+    assert "os.rename(source, target)" not in h2
+    assert "rm -rf" not in h2
+    assert "values not in (seed, candidate)" in h2
+    assert "candidate H2 set mismatch" in h2
+    assert "stat -c '%u:%g:%a'" in h2
+    assert 'ensure_private_directory "$h2_parent"' in h2
+    assert 'ensure_private_directory "$h2_root"' in h2
+    assert "8#$parent_mode & 8#022" in runner
+    assert 'bounded install -d -m 750 "$h2_parent"' not in h2
+
+
+def test_legacy_0015_bootstrap_preserves_provider_and_keeps_h2_default_off() -> None:
+    workflow = LEGACY_BOOTSTRAP.read_text(encoding="utf-8")
+    runner = LEGACY_BOOTSTRAP_RUNNER.read_text(encoding="utf-8")
+    combined = workflow + "\n" + runner
+    assert "options: [preserve]" in workflow
+    assert "EXPECTED_PROVIDER_STATE" in combined
+    offline = workflow.split(
+        "Offline verify bootstrap candidate provider preservation before live mutation", 1
+    )[1].split("Launch one durable remote bootstrap transaction", 1)[0]
+    assert "datanewton_api_key" in offline
+    assert "key_ok=actual != 'enabled'" in offline
+    for token in (
+        "not s.company_card_v2_presentations_enabled",
+        "not s.company_card_v2_writer_enabled",
+        "s.company_card_v2_rollout_generation == 0",
+        "s.company_card_v2_allowlist_inns == []",
+        "s.company_card_v2_percentage_basis_points == 0",
+        "not s.company_card_v2_arbitration_collection_enabled",
+        "s.company_card_v2_arbitration_mask_active_key_id is None",
+        "s.company_card_v2_arbitration_mask_keyring_json is None",
+        "not s.company_card_v2_narrative_enabled",
+        "s.company_card_v2_narrative_kill_switch",
+        "s.company_card_v2_narrative_daily_limit == 0",
+        "s.company_card_v2_narrative_monthly_limit == 0",
+        "s.company_card_v2_narrative_concurrency == 0",
+    ):
+        assert token in offline
+        assert token in runner
+
+
+def test_legacy_0015_bootstrap_requires_exact_sole_revision_not_matching_output() -> None:
+    workflow = LEGACY_BOOTSTRAP.read_text(encoding="utf-8")
+    runner = LEGACY_BOOTSTRAP_RUNNER.read_text(encoding="utf-8")
+    assert "alembic -c alembic.ini current | grep" not in workflow
+    assert "alembic -c alembic.ini current | grep" not in runner
+    assert "legacy_revision=$(docker exec" in workflow
+    assert "legacy database must have exactly sole revision 0015; STOP" in workflow
+    assert "sole_legacy_revision" in runner
+    assert "database is not exactly sole revision 0015; STOP" in runner
+    assert runner.count("sole_legacy_revision") >= 2
+
+
+def test_legacy_0015_bootstrap_rechecks_exact_legacy_web_tree_before_mutation_and_rollback() -> None:
+    workflow = LEGACY_BOOTSTRAP.read_text(encoding="utf-8")
+    runner = LEGACY_BOOTSTRAP_RUNNER.read_text(encoding="utf-8")
+    assert 'printf \'%s\\n\' "$legacy_web_tree_sha256" > "$stage/prior-web-tree-sha256"' in workflow
+    assert "prior-web-tree-sha256" in workflow.split(
+        "Launch one durable remote bootstrap transaction", 1
+    )[1]
+    assert "legacy_web_tree_sha256()" in runner
+    assert runner.count("legacy_web_tree_sha256 /opt/b2b/services/web_ui/dist") == 2
+    assert "legacy_web_tree_sha256 /opt/b2b/services/web_ui/dist rollback_bounded" in runner
+    rollback = runner.split("rollback_legacy() (", 1)[1].split("finish() {", 1)[0]
+    assert rollback.index("legacy_web_tree_sha256 /opt/b2b/services/web_ui/dist") < rollback.index(
+        'install -m 640 "$stage/prior-nginx.conf"'
+    )
+    assert '\"$limiter\" python3 - "$root"' in runner
+
+
+def test_legacy_0015_bootstrap_docker_identity_queries_propagate_failures() -> None:
+    workflow = LEGACY_BOOTSTRAP.read_text(encoding="utf-8")
+    runner = LEGACY_BOOTSTRAP_RUNNER.read_text(encoding="utf-8")
+    assert "collect_ids()" in runner
+    assert "mapfile -t ids < <(rollback_bounded docker" not in runner
+    assert "mapfile -t products < <(bounded docker" not in runner
+    preflight = workflow.split(
+        "Exact read-only legacy-0015 preflight and external recovery verification", 1
+    )[1].split("Reset only exact stale retry markers after guarded preflight", 1)[0]
+    assert "mapfile -t global_product_ids < <(docker" not in preflight
+    assert "global_product_output=$(docker ps -q" in preflight
+
+
+def test_legacy_0015_bootstrap_retry_contract_retains_only_immutable_orphans() -> None:
+    workflow = LEGACY_BOOTSTRAP.read_text(encoding="utf-8")
+    runner = LEGACY_BOOTSTRAP_RUNNER.read_text(encoding="utf-8")
+    combined = workflow + "\n" + runner
+    assert "rollback-uninitialized" in runner
+    assert "rm -rf" not in combined and "rmtree" not in combined
+    assert "legacy-worker-drain-result.json" in runner
+    assert "cat \"$stage/legacy-worker-drain-result.json\"" not in runner
+    reset = workflow.split(
+        "Reset only exact stale retry markers after guarded preflight", 1
+    )[1].split("Upload exact candidate, reviewed seed and bootstrap tools", 1)[0]
+    assert "one-time bootstrap already succeeded; repeat execution is forbidden; STOP" in reset
+    assert 'success="$stage/bootstrap-success"' in reset
+    assert 'unlink "$success"' not in reset
+    assert "rolled_back=false" in reset and 'test "$rolled_back" = true' in reset
+    deletion = reset.split("for name in bridge-armed bridge-complete", 2)[2]
+    assert "bootstrap-success" not in deletion
+    nonterminal_unlink = deletion.index('unlink "$path"')
+    durable_nonterminal_delete = deletion.index('sync -f "$stage"', nonterminal_unlink)
+    terminal_unlink = deletion.index('unlink "$rollback_complete"')
+    durable_terminal_delete = deletion.index('sync -f "$stage"', terminal_unlink)
+    assert nonterminal_unlink < durable_nonterminal_delete < terminal_unlink < durable_terminal_delete
+    for forbidden in ("DATABASE_URL=", "PGPASSWORD", '"report_id":', '"inn":'):
+        assert forbidden not in combined
+
+
+def test_recovery_docs_use_backup_restore_not_lossy_alembic_downgrade() -> None:
+    spec = RECOVERY_SPEC.read_text(encoding="utf-8")
+    plan = RECOVERY_PLAN.read_text(encoding="utf-8")
+    runbook = RECOVERY_RUNBOOK.read_text(encoding="utf-8")
+    assert "upgrade/downgrade/re-upgrade" not in spec
+    assert "проверить upgrade, downgrade, повторный upgrade" not in plan
+    for text in (spec, plan, runbook):
+        assert "lossy" in text and "downgrade" in text
+        assert "0015 -> head" in text
+        assert "restore" in text
+    assert "Retain this restore/re-upgrade evidence" in runbook
+
+
+def test_asset_installers_bind_exact_nginx_worker_group_in_bootstrap_and_normal_deploy() -> None:
+    bootstrap = LEGACY_BOOTSTRAP.read_text(encoding="utf-8")
+    runner = LEGACY_BOOTSTRAP_RUNNER.read_text(encoding="utf-8")
+    deploy = DEPLOY.read_text(encoding="utf-8")
+    bootstrap_preflight = bootstrap.split(
+        "Exact read-only legacy-0015 preflight and external recovery verification", 1
+    )[1].split("Reset only exact stale retry markers after guarded preflight", 1)[0]
+    for token in (
+        "getent group www-data",
+        "nginx -T",
+        "ps -C nginx -o user=,group=",
+        "www-data:www-data",
+    ):
+        assert token in bootstrap_preflight
+    assert bootstrap.index("nginx_workers=") < bootstrap.index("Launch one durable remote bootstrap transaction")
+    assert "'Group=www-data'" in bootstrap
+    assert "$EGID" not in runner
+    assert "runner_gid=$(id -g)" in runner
+    assert 'test "$(id -gn)" = www-data' in runner
+    assert runner.count("verify_nginx_tree_access") == 4
+    assert "runuser --user www-data --group www-data -- find" in runner
+    assert runner.index("ensure_private_directory /var/lib/pork") < runner.index(
+        'ensure_private_directory "$h2_parent"'
+    )
+
+    normal_preflight = deploy.split("Read-only RU/US preflight", 1)[1].split(
+        "Upload exact verified release and owned deploy tools", 1
+    )[0]
+    assert "nginx_workers=" in normal_preflight
+    assert "www-data:www-data" in normal_preflight
+    assert "stat -c '%u:%g:%a'" in normal_preflight
+    assert "! -group www-data" in normal_preflight
+    assert "-type d ! -perm 0750" in normal_preflight
+    assert "-type f ! -perm 0640" in normal_preflight
+    assert "runuser --user www-data --group www-data -- find" in normal_preflight
+    assert "runuser --user root --group www-data -- bash install_company_public_h2_assets.sh" in deploy
+    assert "runuser --user root --group www-data -- python3 '$RU_STAGE/install_web_ui_release.sh'" in deploy
+    assert "runuser --user root --group www-data -- install -m 640 '$RU_STAGE/prior-h2-manifest-set.json'" in deploy
+    assert "runuser --user root --group www-data -- install -m 640 '$RU_STAGE/prior-web-release-set.json'" in deploy
+    assert deploy.count("runuser --user www-data --group www-data -- find /var/lib/pork/company-public-h2/v1") >= 2
+    assert deploy.count("runuser --user www-data --group www-data -- find /var/lib/pork/web-ui/v1") >= 2
+
+
+def test_preflight_runbook_scopes_external_protection_payload_to_normal_deploy() -> None:
+    runbook = RECOVERY_RUNBOOK.read_text(encoding="utf-8")
+    assert "For the normal post-bootstrap `deploy_prod.yml` path only" in runbook
+    assert "The one-time legacy-0015 bootstrap does not" in runbook
+    assert "exact protected-main workflow/SHA" in runbook
 
 
 def test_seed_bundle_is_manual_fixed_three_release_non_production_artifact() -> None:

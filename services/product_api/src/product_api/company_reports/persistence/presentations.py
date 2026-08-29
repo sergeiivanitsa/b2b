@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import and_, or_, select
@@ -357,6 +357,82 @@ def _validate_active_h1_publication(
             "active H1 publication is invalid"
         ) from exc
     return dto.indexable is True
+
+
+async def _validate_unassigned_h1_predecessor(
+    session: AsyncSession,
+    *,
+    subject: CompanyReportSubject,
+    publication: CompanyReportPublication | None,
+    rollback_pin: CompanyReportPresentationPin,
+    rollback_report: CompanyReportRecord | None,
+) -> bool:
+    """Bind an absent-assignment activation to the canonical legacy H1."""
+
+    _validate_h1_rollout_pin(
+        subject=subject,
+        pin=rollback_pin,
+        report=rollback_report,
+    )
+    from product_api.company_reports.persistence.public_h1 import (
+        list_report_resolution_records,
+    )
+    from product_api.company_reports.public_h1_service import resolve_public_h1
+
+    try:
+        resolved = await resolve_public_h1(
+            session, inn=subject.normalized_identifier
+        )
+        candidates = await list_report_resolution_records(
+            session, subject.normalized_identifier
+        )
+    except Exception as exc:
+        raise PresentationAssignmentConflict(
+            "unassigned H1 predecessor is invalid"
+        ) from exc
+    if (
+        not candidates
+        or candidates[0].report.id != resolved.report_id
+        or resolved.report_id != rollback_pin.report_id
+        or resolved.canonical_path != rollback_pin.canonical_path
+        or rollback_pin.published_lastmod is None
+        or resolved.checked_at.astimezone(timezone.utc)
+        != rollback_pin.published_lastmod.astimezone(timezone.utc)
+    ):
+        raise PresentationAssignmentConflict(
+            "unassigned H1 predecessor conflicts"
+        )
+    if publication is not None and publication.status == "active":
+        if (
+            resolved.projection_scope != "published"
+            or resolved.indexable is not True
+            or publication.indexable is not True
+            or publication.report_id != rollback_pin.report_id
+            or publication.snapshot_hash != rollback_pin.snapshot_hash
+            or publication.policy_version
+            != rollback_pin.publication_policy_version
+            or publication.canonical_path != rollback_pin.canonical_path
+            or publication.published_lastmod is None
+            or publication.published_lastmod.astimezone(timezone.utc)
+            != rollback_pin.published_lastmod.astimezone(timezone.utc)
+            or not _validate_active_h1_publication(
+                subject=subject,
+                publication=publication,
+                report=rollback_report,
+            )
+        ):
+            raise PresentationAssignmentConflict(
+                "unassigned H1 publication conflicts"
+            )
+        return True
+    if (
+        resolved.projection_scope != "latest_unpublished"
+        or resolved.indexable is not False
+    ):
+        raise PresentationAssignmentConflict(
+            "unassigned H1 predecessor conflicts"
+        )
+    return False
 
 
 async def bind_rollout_decision(
@@ -1387,11 +1463,33 @@ async def assign_rollout_pin_cas(
         raise PresentationAssignmentConflict("assignment generation conflicts")
 
     legacy_publication = None
+    locked_h1_reports: list[CompanyReportRecord] = []
     if assignment is None:
         legacy_publication = await session.scalar(
             select(CompanyReportPublication)
             .where(CompanyReportPublication.subject_id == command.subject_id)
             .with_for_update()
+        )
+        # Freeze every row that can participate in the legacy latest-H1
+        # resolver.  Together with the subject lock this serializes both
+        # completion of an existing report and creation/publication of a new
+        # predecessor against the first H2 assignment.
+        locked_h1_reports = list(
+            (
+                await session.scalars(
+                    select(CompanyReportRecord)
+                    .where(
+                        CompanyReportRecord.subject_id == command.subject_id,
+                        CompanyReportRecord.writer_profile
+                        == "h1_legacy_writer_v2",
+                        CompanyReportRecord.presentation_contract
+                        == "company_public_h1_v1",
+                        CompanyReportRecord.rollout_generation == 0,
+                    )
+                    .order_by(CompanyReportRecord.id)
+                    .with_for_update()
+                )
+            ).all()
         )
 
     pins = list(
@@ -1485,13 +1583,16 @@ async def assign_rollout_pin_cas(
         report_ids.add(current_pin.report_id)
     if legacy_publication is not None and legacy_publication.status == "active":
         report_ids.add(legacy_publication.report_id)
-    reports: dict[UUID, CompanyReportRecord | None] = {}
+    reports: dict[UUID, CompanyReportRecord | None] = {
+        report.id: report for report in locked_h1_reports
+    }
     for report_id in sorted(report_ids, key=str):
-        reports[report_id] = await session.get(
-            CompanyReportRecord,
-            report_id,
-            with_for_update=True,
-        )
+        if report_id not in reports:
+            reports[report_id] = await session.get(
+                CompanyReportRecord,
+                report_id,
+                with_for_update=True,
+            )
 
     target_report = reports.get(target_pin.report_id)
     if (
@@ -1518,6 +1619,18 @@ async def assign_rollout_pin_cas(
         )
 
     if command.target_contract == H2_PRESENTATION_CONTRACT:
+        if assignment is None:
+            if rollback_pin is None:
+                raise PresentationAssignmentConflict(
+                    "H2 assignment lineage is invalid"
+                )
+            current_h1_indexable = await _validate_unassigned_h1_predecessor(
+                session,
+                subject=subject,
+                publication=legacy_publication,
+                rollback_pin=rollback_pin,
+                rollback_report=reports.get(rollback_pin.report_id),
+            )
         if (
             target_pin.projection_scope != H2_ACTIVE_PROJECTION_SCOPE
             or target_pin.indexable is not command.h2_indexable

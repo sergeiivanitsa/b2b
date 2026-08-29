@@ -28,6 +28,7 @@ import {
   HEAD_KIND_ATTRIBUTE,
   HEAD_OWNER_ATTRIBUTE,
   HEAD_OWNER_VALUE,
+  STATUS_AUTO_POLL_WINDOW_MS,
   STATUS_POLL_INTERVAL_MS,
 } from '../companyReport/companyReportPresentation'
 import type {
@@ -463,6 +464,194 @@ describe('CompanyReportPage lifecycle', () => {
     expect(pollSignal?.aborted).toBe(false)
     result.unmount()
     expect(pollSignal?.aborted).toBe(true)
+  })
+
+  it('stops at the route-local window, aborts an in-flight poll, and keeps manual pending checks paused', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-20T10:00:00Z'))
+    const hangingStatus = deferred<CompanyReportLifecycle>()
+    let hangingSignal: AbortSignal | undefined
+    mockedGet.mockRejectedValueOnce(pendingError())
+    mockedStatus
+      .mockImplementationOnce((_inn, signal) => {
+        hangingSignal = signal
+        return hangingStatus.promise
+      })
+      .mockResolvedValueOnce({
+        report_id: 'manual-pending',
+        status: 'pending',
+        started_at: '2026-08-20T10:00:00Z',
+      })
+    renderPage()
+    await flushPromises()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STATUS_POLL_INTERVAL_MS)
+    })
+    expect(mockedStatus).toHaveBeenCalledTimes(1)
+    expect(hangingSignal?.aborted).toBe(false)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(
+        STATUS_AUTO_POLL_WINDOW_MS - STATUS_POLL_INTERVAL_MS,
+      )
+    })
+    expect(
+      screen.getByRole('heading', {
+        name: 'Отчёт ещё формируется',
+      }),
+    ).toBeTruthy()
+    expect(hangingSignal?.aborted).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Проверить статус' }))
+    await flushPromises()
+    expect(mockedStatus).toHaveBeenCalledTimes(2)
+    expect(
+      screen.getByRole('button', { name: 'Проверить статус' }),
+    ).toBeTruthy()
+    expect(mockedGet).toHaveBeenCalledTimes(1)
+    expect(mockedCreate).not.toHaveBeenCalled()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STATUS_POLL_INTERVAL_MS * 10)
+    })
+    expect(mockedStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses an older server started_at to pause without extending the window', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-20T10:10:00Z'))
+    mockedGet.mockRejectedValueOnce(pendingError())
+    mockedStatus.mockResolvedValueOnce({
+      report_id: 'old-server-job',
+      status: 'pending',
+      started_at: '2026-08-20T10:00:00Z',
+    })
+    renderPage()
+    await flushPromises()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STATUS_POLL_INTERVAL_MS)
+    })
+    expect(
+      screen.getByRole('heading', {
+        name: 'Отчёт ещё формируется',
+      }),
+    ).toBeTruthy()
+    expect(mockedStatus).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STATUS_AUTO_POLL_WINDOW_MS)
+    })
+    expect(mockedStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('loads H1 after a delayed manual check observes a terminal status', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-20T10:10:00Z'))
+    mockedGet
+      .mockRejectedValueOnce(pendingError())
+      .mockResolvedValueOnce(companyA)
+    mockedStatus
+      .mockResolvedValueOnce({
+        report_id: 'old-server-job',
+        status: 'pending',
+        started_at: '2026-08-20T10:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        report_id: 'terminal-job',
+        status: 'complete',
+        started_at: '2026-08-20T10:00:00Z',
+        finished_at: '2026-08-20T10:10:01Z',
+      })
+    renderPage()
+    await flushPromises()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STATUS_POLL_INTERVAL_MS)
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Проверить статус' }))
+    await flushPromises()
+    expect(
+      screen.getByRole('heading', {
+        name: `${companyA.identity.legal_full_name} — ИНН ${companyA.identity.inn}`,
+      }),
+    ).toBeTruthy()
+    expect(mockedStatus).toHaveBeenCalledTimes(2)
+    expect(mockedGet).toHaveBeenCalledTimes(2)
+    expect(mockedCreate).not.toHaveBeenCalled()
+  })
+
+  it('stays paused when the H1 read after a manual terminal status is still pending', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-20T10:10:00Z'))
+    mockedGet.mockRejectedValue(pendingError())
+    mockedStatus
+      .mockResolvedValueOnce({
+        report_id: 'old-server-job',
+        status: 'pending',
+        started_at: '2026-08-20T10:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        report_id: 'terminal-race',
+        status: 'complete',
+        started_at: '2026-08-20T10:00:00Z',
+        finished_at: '2026-08-20T10:10:01Z',
+      })
+    renderPage()
+    await flushPromises()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STATUS_POLL_INTERVAL_MS)
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Проверить статус' }))
+    await flushPromises()
+    expect(
+      screen.getByRole('heading', {
+        name: 'Отчёт ещё формируется',
+      }),
+    ).toBeTruthy()
+    expect(mockedStatus).toHaveBeenCalledTimes(2)
+    expect(mockedGet).toHaveBeenCalledTimes(2)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STATUS_AUTO_POLL_WINDOW_MS)
+    })
+    expect(mockedStatus).toHaveBeenCalledTimes(2)
+    expect(mockedCreate).not.toHaveBeenCalled()
+  })
+
+  it('does not restart the auto-poll window when terminal status races a pending H1 read', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-20T10:00:00Z'))
+    mockedGet.mockRejectedValue(pendingError())
+    mockedStatus.mockResolvedValue({
+      report_id: 'terminal-race',
+      status: 'complete',
+      started_at: '2026-08-20T10:00:00Z',
+      finished_at: '2026-08-20T10:00:01Z',
+    })
+    renderPage()
+    await flushPromises()
+
+    for (
+      let elapsed = 0;
+      elapsed < STATUS_AUTO_POLL_WINDOW_MS;
+      elapsed += STATUS_POLL_INTERVAL_MS
+    ) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(STATUS_POLL_INTERVAL_MS)
+      })
+    }
+
+    expect(
+      screen.getByRole('heading', {
+        name: 'Отчёт ещё формируется',
+      }),
+    ).toBeTruthy()
+    expect(mockedStatus.mock.calls.length).toBeGreaterThan(1)
+    expect(mockedGet.mock.calls.length).toBeGreaterThan(2)
+    expect(mockedCreate).not.toHaveBeenCalled()
+
+    const statusCallsAtDeadline = mockedStatus.mock.calls.length
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STATUS_POLL_INTERVAL_MS * 10)
+    })
+    expect(mockedStatus).toHaveBeenCalledTimes(statusCallsAtDeadline)
   })
 
   it('keeps a delayed final H1 read alive when polling cleanup runs', async () => {

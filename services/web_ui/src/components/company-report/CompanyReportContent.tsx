@@ -6,6 +6,7 @@ import { CompanyReportH1Block } from './CompanyReportH1Blocks'
 export type CompanyReportView =
   | { kind: 'loading_h1' }
   | { kind: 'pending'; title: string; cycle: number }
+  | { kind: 'delayed'; checking: boolean }
   | { kind: 'content'; dto: CompanyPublicH1Response }
   | { kind: 'terminal_error'; message: string }
   | { kind: 'retryable_error'; message: string }
@@ -23,6 +24,10 @@ function liveAnnouncement(view: CompanyReportView): string {
       return 'Загружаем сведения о компании.'
     case 'pending':
       return 'Отчёт формируется.'
+    case 'delayed':
+      return view.checking
+        ? 'Проверяем статус отчёта.'
+        : 'Отчёт ещё формируется.'
     case 'content':
       return 'Сведения о компании загружены.'
     case 'contract_error':
@@ -48,7 +53,10 @@ export function CompanyReportContent({
       ?.focus()
   }, [view.kind])
 
-  const busy = view.kind === 'loading_h1' || view.kind === 'pending'
+  const busy =
+    view.kind === 'loading_h1' ||
+    view.kind === 'pending' ||
+    (view.kind === 'delayed' && view.checking)
   const contentAttributes =
     view.kind === 'content'
       ? {
@@ -102,6 +110,11 @@ function CompanyReportState({
         ]
       : view.kind === 'pending'
         ? [view.title, 'Отчёт формируется. Это может занять несколько минут.']
+        : view.kind === 'delayed'
+          ? [
+              'Отчёт ещё формируется',
+              'Формирование заняло больше трёх минут. Проверьте статус ещё раз или вернитесь позже.',
+            ]
         : view.kind === 'contract_error'
           ? ['Неподдерживаемый формат отчёта', 'Сведения временно недоступны.']
           : view.kind === 'invalid_route'
@@ -120,6 +133,11 @@ function CompanyReportState({
       {view.kind === 'retryable_error' && onRetry ? (
         <button type="button" onClick={onRetry}>
           Повторить
+        </button>
+      ) : null}
+      {view.kind === 'delayed' && onRetry ? (
+        <button type="button" onClick={onRetry} disabled={view.checking}>
+          {view.checking ? 'Проверяем…' : 'Проверить статус'}
         </button>
       ) : null}
     </section>
