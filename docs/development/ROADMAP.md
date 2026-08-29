@@ -57,7 +57,7 @@
 | 22 | `company-card-v2-page-shell` | Завершена |
 | 23 | `company-card-v2-finance-charts` | Завершена |
 | 24 | `company-card-v2-arbitration-charts` | Завершена |
-| 25 | `company-card-v2-qa-rollout` | Завершена |
+| 25 | `company-card-v2-qa-rollout` | Production recovery: review |
 
 ## 3. Инженерные правила roadmap
 
@@ -1611,7 +1611,7 @@ population либо честно обозначенной returned slice без 
 ID: 25
 Slug: company-card-v2-qa-rollout
 
-Статус: завершена. Реализация из
+Статус: production recovery проходит review. Историческая реализация из
 `codex/iteration-25-company-card-v2-qa-rollout-refresh` получила независимый
 `VERDICT: READY` и merged через PR `#153` как squash commit
 `d0860c678754b18959a017580752655dd191fd6c`
@@ -1623,9 +1623,18 @@ Slug: company-card-v2-qa-rollout
 default branch требует strict `qa-required`. Exact identities и artifact
 digests зафиксированы в
 `docs/development/evidence/iteration-25-company-card-v2/iteration-25-post-merge-main-qa-v1.md`.
-Production activation не авторизована: P1 остаётся
-`PARTIAL / INSUFFICIENT`, P2–P9 — `UNSET/STOP`, а все runtime defaults
-остаются off/zero.
+После merge production-проверка выявила, что фактический сервер остался на
+schema `0015` и legacy UI: первый deploy не поддерживал переход из такой
+формы, а revision `0016` была несовместима с допустимыми historical jobs.
+Поэтому merge/QA остаются историческими фактами, но продуктовая цель итерации
+не считается достигнутой. Утверждённая recovery-спецификация и план:
+
+- `docs/development/iterations/iteration-25-production-recovery.md`;
+- `docs/development/plans/iteration-25-production-recovery.md`.
+
+Recovery закрывает production-shaped migration, one-time legacy bootstrap,
+ограниченное ожидание H1 UI и operator-only canary для одного явно заданного
+ИНН. Массовое или процентное включение H2 по-прежнему не входит в scope.
 
 ### Зависимости
 
@@ -1661,16 +1670,30 @@ Production activation не авторизована: P1 остаётся
   fallback/budget/kill switch, privacy/telemetry и Claims target verification.
 - Acceptance fixtures: СКС и минимум три обезличенных edge profiles без
   production raw в git.
-- Feature flag/runbook/observability/rollback rehearsal и staged activation
-  plan: test publications → allowlisted companies → controlled production
-  percentage → general availability.
+- Feature flag/runbook/observability/rollback rehearsal и только документный
+  staged activation plan. Historical plan упоминал percentage и general
+  availability, но не выполнял их и не авторизует их в recovery.
 - CI gates для обязательных backend, frontend и browser checks.
 
-### Вне scope
+### Текущий recovery scope
+
+- Production-shaped совместимость `0015 -> head` без потери legacy jobs.
+- One-time bootstrap exact legacy production с maintenance boundary и
+  проверяемым возвратом БД к `0015` до старого runtime.
+- Ограничение автоматического H1 polling тремя минутами без ложного `failed`.
+- Единственный exact-target canary `7707079463`, percentage `0`, deterministic
+  narrative fallback, durable exact-lineage receipt и заранее подготовленный
+  H1 rollback. Текущая авторизация заканчивается на staged H2; indexable
+  assignment требует отдельного решения владельца, а несовместимый с H1
+  rollback noindex activation запрещён.
+
+### Вне recovery scope
 
 - Автоматический refresh/backfill старых reports, удаление H1, массовая
-  production republish и фактический production deploy/flag change без
-  отдельного разрешения владельца.
+  production republish, percentage/GA rollout и любые targets кроме явно
+  утверждённого canary.
+- Фактический production deploy/flag change до merge exact recovery SHA,
+  успешной QA и проверенного backup/restore rehearsal.
 
 ### Критерии приёмки
 

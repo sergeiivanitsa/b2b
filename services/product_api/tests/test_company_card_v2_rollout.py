@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import delete, func, select, text
@@ -20,12 +20,19 @@ from product_api.company_reports.company_card_v2.rollout import (
 from product_api.company_reports.persistence.models import (
     CompanyCardNarrativeArtifact,
     CompanyCardV2RolloutDecision,
+    CompanyReportJob,
     CompanyReportPublication,
     CompanyReportPublicationBatchItem,
     CompanyReportPresentationAssignment,
     CompanyReportPresentationAssignmentJournal,
     CompanyReportPresentationPin,
     CompanyReportRecord,
+    CompanyReportSubject,
+)
+from product_api.company_reports.persistence import (
+    create_pending_report,
+    enqueue_company_report_job,
+    finalize_report,
 )
 from product_api.company_reports.persistence import publications as publications_module
 from product_api.company_reports.persistence.publications import (
@@ -217,6 +224,27 @@ async def _immutable_subject_row_bytes(
         ).all()
     )
     return report_rows, pin_rows, artifact_rows
+
+
+async def _publication_row_bytes(
+    session: AsyncSession,
+    subject_id: UUID,
+) -> tuple[str, ...]:
+    return tuple(
+        (
+            await session.scalars(
+                text(
+                    f"""
+                    SELECT to_jsonb(publication_row)::text
+                    FROM {CompanyReportPublication.__tablename__} AS publication_row
+                    WHERE publication_row.subject_id = CAST(:subject_id AS uuid)
+                    ORDER BY publication_row.id
+                    """
+                ),
+                {"subject_id": str(subject_id)},
+            )
+        ).all()
+    )
 
 
 @pytest.mark.asyncio
@@ -475,6 +503,442 @@ async def _make_latest_sufficient_h1_candidate(engine, profile) -> None:
             )
             pin.published_lastmod = generated_at
             pin.indexable = True
+
+
+async def _append_newer_h1_candidate(
+    engine,
+    profile,
+    *,
+    usable: bool,
+) -> UUID:
+    generated_at = datetime(2026, 8, 30, tzinfo=timezone.utc)
+    report_model = complete_company_report(
+        counterparty=counterparty_facts().model_copy(
+            update={
+                "inn": profile["inn"],
+                "full_name": "ООО Более новый H1 отчёт",
+            }
+        ),
+        report_version="2",
+    ).model_copy(
+        update={
+            "report_id": uuid4(),
+            "generated_at": generated_at,
+            "target_identifier": profile["inn"],
+            "usable_for_public_page": usable,
+            "usable_for_future_scoring": usable,
+        }
+    )
+    snapshot = company_report_to_snapshot(report_model)
+    async with AsyncSession(bind=engine) as session:
+        async with session.begin():
+            session.add(
+                CompanyReportRecord(
+                    id=report_model.report_id,
+                    subject_id=UUID(profile["subject_id"]),
+                    report_version="2",
+                    writer_profile="h1_legacy_writer_v2",
+                    presentation_contract=H1_CONTRACT,
+                    rollout_generation=0,
+                    lifecycle_status="complete",
+                    started_at=generated_at,
+                    generated_at=generated_at,
+                    finished_at=generated_at,
+                    normalized_snapshot=snapshot,
+                    snapshot_hash=calculate_company_report_snapshot_hash(snapshot),
+                    completeness_snapshot={},
+                    freshness_snapshot={},
+                    warnings_snapshot=[],
+                    usable_for_public_page=usable,
+                    usable_for_future_scoring=usable,
+                )
+            )
+    return report_model.report_id
+
+
+def _newer_h1_report(profile, report_id: UUID):
+    generated_at = datetime(2026, 8, 31, tzinfo=timezone.utc)
+    return complete_company_report(
+        counterparty=counterparty_facts().model_copy(
+            update={
+                "inn": profile["inn"],
+                "full_name": "ООО Новый H1 отчёт во время rollout",
+            }
+        ),
+        report_version="2",
+    ).model_copy(
+        update={
+            "report_id": report_id,
+            "generated_at": generated_at,
+            "target_identifier": profile["inn"],
+            "usable_for_public_page": True,
+            "usable_for_future_scoring": True,
+        }
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("usable", (True, False), ids=("eligible", "ineligible"))
+async def test_rollout_real_postgres_newer_h1_after_decision_rejects_without_mutation(
+    engine,
+    db_url: str,
+    usable: bool,
+) -> None:
+    profiles = await prepare_unassigned_acceptance_seed(engine, db_url)
+    await _remove_synthetic_active_pins(engine)
+    profile = profiles[0]
+    parsed, _config = await build_activation_decision(
+        engine,
+        (profile,),
+        decision_id="25000000-0000-4000-8000-000000000113",
+        indexable=True,
+    )
+    await _bind_activation(engine, parsed)
+    await _append_newer_h1_candidate(engine, profile, usable=usable)
+
+    async with AsyncSession(bind=engine) as session:
+        with pytest.raises(
+            PresentationAssignmentConflict,
+            match="unassigned H1 predecessor conflicts",
+        ):
+            async with session.begin():
+                await assign_rollout_pin_cas(
+                    session,
+                    command=_activation_command(parsed),
+                )
+
+    assert await _rollout_mutation_counts(engine) == (0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("snapshot_hash", "f" * 64),
+        ("policy_version", "drifted_publication_policy"),
+        ("canonical_path", "/company/7701234567-drifted"),
+        (
+            "published_lastmod",
+            datetime(2026, 8, 29, tzinfo=timezone.utc) + timedelta(seconds=1),
+        ),
+        ("indexable", False),
+    ),
+)
+@pytest.mark.asyncio
+async def test_rollout_real_postgres_active_h1_publication_drift_rejects_exact_cas(
+    engine,
+    db_url: str,
+    field: str,
+    value: object,
+) -> None:
+    profiles = await prepare_unassigned_acceptance_seed(engine, db_url)
+    await _remove_synthetic_active_pins(engine)
+    profile = profiles[0]
+    await _make_latest_sufficient_h1_candidate(engine, profile)
+    claim, subject_id = await _claimed_h1_publication(engine)
+    assert subject_id == UUID(profile["subject_id"])
+    async with AsyncSession(bind=engine) as session:
+        async with session.begin():
+            await finalize_batch_claim(session, claim=claim)
+    parsed, _config = await build_activation_decision(
+        engine,
+        (profile,),
+        decision_id="25000000-0000-4000-8000-000000000114",
+        indexable=True,
+    )
+    await _bind_activation(engine, parsed)
+    async with AsyncSession(bind=engine) as session:
+        async with session.begin():
+            publication = await session.scalar(
+                select(CompanyReportPublication).where(
+                    CompanyReportPublication.subject_id == subject_id
+                )
+            )
+            assert publication is not None
+            setattr(publication, field, value)
+    async with AsyncSession(bind=engine) as session:
+        immutable_before = await _immutable_subject_row_bytes(session, subject_id)
+        publication_before = await _publication_row_bytes(session, subject_id)
+
+    async with AsyncSession(bind=engine) as session:
+        with pytest.raises(
+            PresentationAssignmentConflict,
+            match=(
+                "active H1 publication is invalid|"
+                "unassigned H1 publication conflicts"
+            ),
+        ):
+            async with session.begin():
+                await assign_rollout_pin_cas(
+                    session,
+                    command=_activation_command(parsed),
+                )
+
+    assert await _rollout_mutation_counts(engine) == (0, 0, 0)
+    async with AsyncSession(bind=engine) as session:
+        assert await _immutable_subject_row_bytes(session, subject_id) == immutable_before
+        assert await _publication_row_bytes(session, subject_id) == publication_before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("winner", ("enqueue", "rollout"))
+async def test_rollout_real_postgres_h1_enqueue_and_unassigned_apply_serialize(
+    engine,
+    db_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+    winner: str,
+) -> None:
+    profiles = await prepare_unassigned_acceptance_seed(engine, db_url)
+    await _remove_synthetic_active_pins(engine)
+    profile = profiles[0]
+    subject_id = UUID(profile["subject_id"])
+    parsed, _config = await build_activation_decision(
+        engine,
+        (profile,),
+        decision_id=(
+            "25000000-0000-4000-8000-000000000115"
+            if winner == "enqueue"
+            else "25000000-0000-4000-8000-000000000116"
+        ),
+        indexable=True,
+    )
+    await _bind_activation(engine, parsed)
+    async with AsyncSession(bind=engine) as session:
+        publication_before = await _publication_row_bytes(session, subject_id)
+
+    winner_holds_subject = asyncio.Event()
+    release_winner = asyncio.Event()
+
+    async def enqueue_h1(*, hold_subject: bool):
+        async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+            async with session.begin():
+                if hold_subject:
+                    subject = await session.get(
+                        CompanyReportSubject,
+                        subject_id,
+                        with_for_update=True,
+                    )
+                    assert subject is not None
+                    winner_holds_subject.set()
+                    await release_winner.wait()
+                return await enqueue_company_report_job(session, profile["inn"])
+
+    async def apply_rollout() -> tuple[str, str | None]:
+        async with AsyncSession(bind=engine) as session:
+            try:
+                async with session.begin():
+                    outcome = await assign_rollout_pin_cas(
+                        session,
+                        command=_activation_command(parsed),
+                    )
+            except PresentationAssignmentConflict as exc:
+                return exc.code, str(exc)
+        return outcome.code, None
+
+    if winner == "enqueue":
+        winner_task = asyncio.create_task(enqueue_h1(hold_subject=True))
+        await asyncio.wait_for(winner_holds_subject.wait(), timeout=10)
+        contender_task = asyncio.create_task(apply_rollout())
+    else:
+        original_plan = presentations_module._plan_active_h2_pin_locked
+
+        async def held_rollout_plan(*args, **kwargs):
+            planned = await original_plan(*args, **kwargs)
+            winner_holds_subject.set()
+            await release_winner.wait()
+            return planned
+
+        monkeypatch.setattr(
+            presentations_module,
+            "_plan_active_h2_pin_locked",
+            held_rollout_plan,
+        )
+        winner_task = asyncio.create_task(apply_rollout())
+        await asyncio.wait_for(winner_holds_subject.wait(), timeout=10)
+        contender_task = asyncio.create_task(enqueue_h1(hold_subject=False))
+
+    await asyncio.sleep(0.1)
+    assert contender_task.done() is False
+    release_winner.set()
+    winner_result, contender_result = await asyncio.gather(
+        winner_task,
+        contender_task,
+    )
+    if winner == "enqueue":
+        enqueued = winner_result
+        rollout_result = contender_result
+    else:
+        rollout_result = winner_result
+        enqueued = contender_result
+
+    assert rollout_result == ("applied", None)
+    assert enqueued.reused is False
+    assert enqueued.subject_id == subject_id
+    async with AsyncSession(bind=engine) as session:
+        report = await session.get(CompanyReportRecord, enqueued.report_id)
+        job = await session.get(CompanyReportJob, enqueued.job_id)
+        assignment = await session.scalar(
+            select(CompanyReportPresentationAssignment).where(
+                CompanyReportPresentationAssignment.subject_id == subject_id
+            )
+        )
+        publication_after = await _publication_row_bytes(session, subject_id)
+    assert report is not None and report.lifecycle_status == "pending"
+    assert report.presentation_contract == H1_CONTRACT
+    assert job is not None and job.state == "queued"
+    assert assignment is not None
+    assert assignment.presentation_contract == H2_CONTRACT
+    assert publication_after == publication_before
+    assert await _rollout_mutation_counts(engine) == (1, 1, 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("winner", ("finalizer", "rollout"))
+async def test_rollout_real_postgres_h1_finalization_and_unassigned_apply_serialize(
+    engine,
+    db_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+    winner: str,
+) -> None:
+    profiles = await prepare_unassigned_acceptance_seed(engine, db_url)
+    await _remove_synthetic_active_pins(engine)
+    profile = profiles[0]
+    subject_id = UUID(profile["subject_id"])
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        async with session.begin():
+            pending = await create_pending_report(
+                session,
+                identifier=profile["inn"],
+            )
+            pending_id = pending.id
+    h1_report = _newer_h1_report(profile, pending_id)
+    parsed, _config = await build_activation_decision(
+        engine,
+        (profile,),
+        decision_id=(
+            "25000000-0000-4000-8000-000000000117"
+            if winner == "finalizer"
+            else "25000000-0000-4000-8000-000000000118"
+        ),
+        indexable=True,
+    )
+    await _bind_activation(engine, parsed)
+
+    finalizer_holds_report = asyncio.Event()
+    release_finalizer = asyncio.Event()
+    rollout_reached_plan = asyncio.Event()
+    release_rollout = asyncio.Event()
+    original_plan = presentations_module._plan_active_h2_pin_locked
+
+    async def held_rollout_plan(*args, **kwargs):
+        planned = await original_plan(*args, **kwargs)
+        rollout_reached_plan.set()
+        await release_rollout.wait()
+        return planned
+
+    monkeypatch.setattr(
+        presentations_module,
+        "_plan_active_h2_pin_locked",
+        held_rollout_plan,
+    )
+
+    async def finalize_h1(*, hold_report: bool) -> UUID:
+        async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+            async with session.begin():
+                if hold_report:
+                    locked = await session.get(
+                        CompanyReportRecord,
+                        pending_id,
+                        with_for_update=True,
+                    )
+                    assert locked is not None
+                    finalizer_holds_report.set()
+                    await release_finalizer.wait()
+                stored = await finalize_report(
+                    session,
+                    h1_report,
+                    finished_at=h1_report.generated_at,
+                )
+                return stored.id
+
+    async def apply_rollout() -> tuple[str, str | None]:
+        async with AsyncSession(bind=engine) as session:
+            try:
+                async with session.begin():
+                    outcome = await assign_rollout_pin_cas(
+                        session,
+                        command=_activation_command(parsed),
+                    )
+            except PresentationAssignmentConflict as exc:
+                return exc.code, str(exc)
+        return outcome.code, None
+
+    if winner == "finalizer":
+        finalizer_task = asyncio.create_task(finalize_h1(hold_report=True))
+        await asyncio.wait_for(finalizer_holds_report.wait(), timeout=10)
+        rollout_task = asyncio.create_task(apply_rollout())
+        await asyncio.sleep(0.1)
+        assert rollout_task.done() is False
+        release_finalizer.set()
+        assert await finalizer_task == pending_id
+        await asyncio.wait_for(rollout_reached_plan.wait(), timeout=10)
+        async with AsyncSession(bind=engine) as session:
+            immutable_before = await _immutable_subject_row_bytes(
+                session,
+                subject_id,
+            )
+            publication_before = await _publication_row_bytes(session, subject_id)
+        assert await _rollout_mutation_counts(engine) == (0, 0, 0)
+        release_rollout.set()
+        rollout_result = await rollout_task
+
+        assert rollout_result == (
+            "presentation_assignment_conflict",
+            "unassigned H1 predecessor conflicts",
+        )
+        assert await _rollout_mutation_counts(engine) == (0, 0, 0)
+        async with AsyncSession(bind=engine) as session:
+            assert (
+                await _immutable_subject_row_bytes(session, subject_id)
+                == immutable_before
+            )
+            assert (
+                await _publication_row_bytes(session, subject_id)
+                == publication_before
+            )
+            assignment = await session.scalar(
+                select(CompanyReportPresentationAssignment).where(
+                    CompanyReportPresentationAssignment.subject_id == subject_id
+                )
+            )
+        assert assignment is None
+    else:
+        rollout_task = asyncio.create_task(apply_rollout())
+        await asyncio.wait_for(rollout_reached_plan.wait(), timeout=10)
+        finalizer_task = asyncio.create_task(finalize_h1(hold_report=False))
+        await asyncio.sleep(0.1)
+        assert finalizer_task.done() is False
+        release_rollout.set()
+        rollout_result, finalized_id = await asyncio.gather(
+            rollout_task,
+            finalizer_task,
+        )
+
+        assert rollout_result == ("applied", None)
+        assert finalized_id == pending_id
+        assert await _rollout_mutation_counts(engine) == (1, 1, 1)
+        async with AsyncSession(bind=engine) as session:
+            assignment = await session.scalar(
+                select(CompanyReportPresentationAssignment).where(
+                    CompanyReportPresentationAssignment.subject_id == subject_id
+                )
+            )
+        assert assignment is not None
+        assert assignment.presentation_contract == H2_CONTRACT
+
+    async with AsyncSession(bind=engine) as session:
+        stored = await session.get(CompanyReportRecord, pending_id)
+    assert stored is not None and stored.lifecycle_status == "complete"
+    assert stored.snapshot_hash is not None
 
 
 @pytest.mark.asyncio

@@ -62,6 +62,46 @@ describe('CompanyReportContent', () => {
     expect(pendingHeading.textContent).toBe('Собираем сведения о должнике')
   })
 
+  it('renders a paused delayed state with an explicit one-shot status action', () => {
+    const onRetry = vi.fn()
+    const result = renderContent({
+      view: { kind: 'delayed', checking: false },
+      onRetry,
+    })
+    const heading = screen.getByRole('heading', {
+      name: 'Отчёт ещё формируется',
+    })
+    expect(document.activeElement).toBe(heading)
+    expect(result.container.querySelector('main')?.hasAttribute('aria-busy')).toBe(
+      false,
+    )
+    expect(result.container.querySelector('[aria-live="polite"]')?.textContent).toBe(
+      'Отчёт ещё формируется.',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Проверить статус' }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
+
+    result.rerender(
+      <MemoryRouter>
+        <CompanyReportContent
+          view={{ kind: 'delayed', checking: true }}
+          onRetry={onRetry}
+        />
+      </MemoryRouter>,
+    )
+    expect(result.container.querySelector('main')?.getAttribute('aria-busy')).toBe(
+      'true',
+    )
+    expect(
+      screen
+        .getByRole('button', { name: 'Проверяем…' })
+        .hasAttribute('disabled'),
+    ).toBe(true)
+    expect(result.container.querySelector('[aria-live="polite"]')?.textContent).toBe(
+      'Проверяем статус отчёта.',
+    )
+  })
+
   it('moves focus to the sole H1 after content becomes available', () => {
     const result = renderContent({ view: { kind: 'loading_h1' } })
     result.rerender(

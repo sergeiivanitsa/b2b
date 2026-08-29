@@ -6,6 +6,7 @@ import importlib.machinery
 import importlib.util
 from io import BytesIO
 import json
+import os
 from pathlib import Path
 import sys
 import tarfile
@@ -78,7 +79,9 @@ def portable_pointer(monkeypatch: pytest.MonkeyPatch):
 
 def _root(tmp_path: Path) -> Path:
     root = tmp_path / "approved-web-root"
-    root.mkdir()
+    root.mkdir(mode=0o750)
+    if os.name != "nt":
+        root.chmod(0o750)
     return root.resolve()
 
 
@@ -115,6 +118,21 @@ def test_atomic_install_idempotency_and_current_plus_two_history(tmp_path: Path,
     assert (root / "release-set.json").read_bytes() == before
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX nginx group/mode contract")
+def test_new_web_release_files_bind_to_effective_nginx_group(tmp_path: Path, portable_pointer) -> None:
+    root = _root(tmp_path)
+    archive, release_sha, _bodies = _archive(tmp_path, 1)
+    _install(archive, release_sha, root)
+    target = root / "releases" / release_sha
+    for path in (target, *target.rglob("*")):
+        if path.is_symlink():
+            continue
+        metadata = path.stat(follow_symlinks=False)
+        assert metadata.st_uid == os.geteuid()
+        assert metadata.st_gid == os.getegid()
+        assert metadata.st_mode & 0o777 == (0o750 if path.is_dir() else 0o640)
+
+
 @pytest.mark.parametrize("phase", ("history", "pointer", "smoke"))
 def test_post_history_failure_restores_exact_previous_pointers(tmp_path: Path, portable_pointer, phase: str) -> None:
     root = _root(tmp_path)
@@ -143,6 +161,59 @@ def test_failed_real_smoke_restores_previous_pointer(tmp_path: Path, portable_po
         _install(second_archive, second_sha, root, smoke=fail_smoke)
     assert (root / ".test-current").read_text(encoding="ascii") == first_sha
     assert (root / "release-set.json").read_bytes() == before_history
+
+
+def test_rollback_uninitialized_removes_only_first_pointer_metadata_and_is_idempotent(
+    tmp_path: Path, portable_pointer
+) -> None:
+    root = _root(tmp_path)
+    archive, release_sha, _ = _archive(tmp_path, 1)
+    _install(archive, release_sha, root)
+    immutable_release = root / "releases" / release_sha
+
+    release.rollback_uninitialized(root, root, release_sha)
+    assert not (root / ".test-current").exists()
+    assert not (root / "release-set.json").exists()
+    assert immutable_release.is_dir()
+    release.rollback_uninitialized(root, root, release_sha)
+    assert immutable_release.is_dir()
+
+
+def test_rollback_uninitialized_completes_exact_interrupted_pointer_first_state(
+    tmp_path: Path, portable_pointer
+) -> None:
+    root = _root(tmp_path)
+    archive, release_sha, _ = _archive(tmp_path, 1)
+    _install(archive, release_sha, root)
+    (root / ".test-current").unlink()
+    release.rollback_uninitialized(root, root, release_sha)
+    assert not (root / "release-set.json").exists()
+
+
+def test_rollback_uninitialized_refuses_prior_or_different_release_state(
+    tmp_path: Path, portable_pointer
+) -> None:
+    root = _root(tmp_path)
+    first_archive, first_sha, _ = _archive(tmp_path, 1)
+    second_archive, second_sha, _ = _archive(tmp_path, 2)
+    _install(first_archive, first_sha, root)
+    _install(second_archive, second_sha, root)
+    before_pointer = (root / ".test-current").read_bytes()
+    before_history = (root / "release-set.json").read_bytes()
+    with pytest.raises(release.WebReleaseError, match="exact first release"):
+        release.rollback_uninitialized(root, root, second_sha)
+    assert (root / ".test-current").read_bytes() == before_pointer
+    assert (root / "release-set.json").read_bytes() == before_history
+
+
+def test_rollback_uninitialized_cli_contract(tmp_path: Path, portable_pointer, capsys) -> None:
+    root = _root(tmp_path)
+    archive, release_sha, _ = _archive(tmp_path, 1)
+    _install(archive, release_sha, root)
+    assert release.main(
+        [str(MODULE), "rollback-uninitialized", release_sha, str(root), str(root)]
+    ) == 0
+    assert capsys.readouterr().out == f"{release_sha}\n"
 
 
 @pytest.mark.parametrize("member_name", ("../escape", "/absolute", "site/../escape", "site\\escape"))

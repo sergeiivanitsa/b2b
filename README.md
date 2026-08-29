@@ -193,19 +193,26 @@ Nginx:
 - Use `deploy/nginx/gateway_api.conf` on Gateway server.
 - Replace allowlist IPs in gateway config with RU server public IPs.
 
-Iteration-25 release and rollout are documented in
+Iteration-25 release, legacy-production recovery and rollout are documented in
 `docs/development/runbooks/company-card-v2-rollout.md`. Production is manual,
 protected and bound to one exact lowercase 40-hex main-history commit. CI
 builds Product, Gateway, SPA and H2 once; deploy consumes only the matching
 checksummed artifacts and `qa-required` attestation. It does not rebuild the
 default branch.
 
-All production gates P1–P9 remain `UNSET/STOP`. Repository defaults keep the
-provider off, AI fallback-only/kill-switched with zero budgets, rollout
-generation and percentage at zero, allowlist empty, and public assignment/
-indexing unchanged. Do not run seed, migration, deploy, assignment or a
-positive flag change until the runbook's separate evidence and authorization
-requirements are satisfied.
+The first transition from the verified legacy `0015` server uses only
+`.github/workflows/deploy_prod_legacy_0015_bootstrap.yml`; normal deploy is for
+the post-bootstrap shape. The bootstrap preserves the existing production
+DataNewton state while H2 writer/presentation/arbitration/rollout and paid AI
+remain off/zero. Do not run it until the exact external backup/PITR recovery
+hook proves coverage after ingress and both writers stop, restore rehearsal
+returns exact `0015`, and the reviewed seed/access inputs in the runbook exist.
+After bootstrap, only the explicitly approved one-company canary may receive a
+positive generation and single-target allowlist; percentage/GA rollout remains
+out of scope. The current authorization stops after a receipt-bound staged
+fallback for `7707079463`. Because the retained H1 rollback is structurally
+indexable, assigning H2 requires a separate explicit owner decision for an
+indexable one-company activation; noindex activation is rejected.
 
 ## SMTP requirements (product_api)
 Set these env vars before production deploy:

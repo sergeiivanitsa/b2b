@@ -410,16 +410,22 @@ def test_workflow_consumes_qa_artifacts_and_installs_h2_before_runtime_mutation(
 
     shell = (ROOT / "deploy/nginx/install_company_public_h2_assets.sh").read_text(encoding="utf-8")
     assert "approved_root=/var/lib/pork/company-public-h2/v1" in shell
+    assert "approved_parent=/var/lib/pork/company-public-h2" in shell
     assert "realpath -e" in shell and "flock -x" in shell
+    assert 'exec 9<"$approved_parent"' in shell
+    assert '$target_root/.install.lock' not in shell
     assert '"$script_dir/company_public_h2_release.py" install' in shell
+    assert shell.count("stat -c '%u:%g:%a' -- \"$target_root\"") == 2
     assert "mv -n" not in shell and "rm -rf" not in shell
 
 
 def test_root_manual_runbook_delegates_to_default_off_exact_sha_runbook() -> None:
     readme = re.sub(r"\s+", " ", (ROOT / "README.md").read_text(encoding="utf-8"))
     assert "docs/development/runbooks/company-card-v2-rollout.md" in readme
-    assert "P1–P9" in readme
-    assert "UNSET/STOP" in readme
+    assert ".github/workflows/deploy_prod_legacy_0015_bootstrap.yml" in readme
+    assert "preserves the existing production DataNewton state" in readme
+    assert "exact external backup/PITR recovery hook" in readme
+    assert "indexable one-company activation" in readme
     assert "exact lowercase 40-hex" in readme
 
 

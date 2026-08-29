@@ -19,11 +19,13 @@ import {
   isCanonicalCompanyPath,
   parseCompanyKey,
   parseCompanyRoute,
+  pendingAutoPollDeadlineMs,
   RESULT_LABELS,
   ROLE_LABELS,
   setCompanyHead,
   setCompanySafeTitle,
   STATUS_LABELS,
+  STATUS_AUTO_POLL_WINDOW_MS,
 } from './companyReportPresentation'
 import { ApiHttpError } from '../lib/api'
 
@@ -104,6 +106,28 @@ describe('CompanyReport presentation policy', () => {
     expect(displayIsoDate('2026-01-02')).toBe('02.01.2026')
     expect(displayIsoDate('1970-01-01')).toBe('01.01.1970')
     expect(dateSpy).not.toHaveBeenCalled()
+  })
+
+  it('bounds automatic polling by the earlier server or route-local deadline', () => {
+    const firstObservedAtMs = Date.parse('2026-08-20T10:02:00Z')
+    expect(
+      pendingAutoPollDeadlineMs(
+        firstObservedAtMs,
+        '2026-08-20T10:00:00Z',
+      ),
+    ).toBe(Date.parse('2026-08-20T10:00:00Z') + STATUS_AUTO_POLL_WINDOW_MS)
+    expect(
+      pendingAutoPollDeadlineMs(
+        firstObservedAtMs,
+        '2026-08-20T10:10:00Z',
+      ),
+    ).toBe(firstObservedAtMs + STATUS_AUTO_POLL_WINDOW_MS)
+    expect(pendingAutoPollDeadlineMs(firstObservedAtMs, null)).toBe(
+      firstObservedAtMs + STATUS_AUTO_POLL_WINDOW_MS,
+    )
+    expect(pendingAutoPollDeadlineMs(firstObservedAtMs, 'not-an-iso-date')).toBe(
+      firstObservedAtMs + STATUS_AUTO_POLL_WINDOW_MS,
+    )
   })
 
   it('provides a closed Russian label for every reachable catalog value', () => {
