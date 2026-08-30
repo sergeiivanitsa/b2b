@@ -7,8 +7,8 @@
 set -Eeuo pipefail
 umask 027
 
-if [[ $# -ne 6 ]]; then
-  echo 'usage: fresh_install_runner.sh STAGE RELEASE_SHA SEED_SHA256 UNIT_NAME OPERATION_TIMEOUT IDENTITY_CREDENTIAL' >&2
+if [[ $# -ne 7 ]]; then
+  echo 'usage: fresh_install_runner.sh STAGE RELEASE_SHA SEED_SHA256 UNIT_NAME OPERATION_TIMEOUT IDENTITY_CREDENTIAL CONTROL_SHA' >&2
   exit 2
 fi
 
@@ -18,10 +18,12 @@ seed_sha256=$3
 unit_name=$4
 operation_timeout=$5
 identity_credential=$6
+control_sha=$7
 runner_gid=$(id -g)
 
 [[ "$stage" = /* && -d "$stage" && ! -L "$stage" ]]
 [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
+[[ "$control_sha" =~ ^[0-9a-f]{40}$ ]]
 [[ "$seed_sha256" =~ ^[0-9a-f]{64}$ ]]
 [[ "$unit_name" =~ ^pork-production-fresh-install-[a-z0-9-]+$ ]]
 [[ "$operation_timeout" =~ ^[1-9][0-9]*$ ]]
@@ -46,6 +48,43 @@ terminal_bounded() {
 path_present() {
   test -e "$1" || test -L "$1"
 }
+
+# The protected-main workflow may intentionally repair deployment control
+# while reusing an older build-once application release.  Bind this durable
+# runner to that exact control checkout before any image is loaded or runtime
+# state is changed.
+test "$0" = "$stage/fresh_install_runner.sh"
+test -f "$0" && test ! -L "$0"
+test -f "$stage/deployment-control.json" && test ! -L "$stage/deployment-control.json"
+runner_sha256=$(bounded sha256sum "$0" | cut -d' ' -f1)
+[[ "$runner_sha256" =~ ^[0-9a-f]{64}$ ]]
+bounded python3 - "$stage/deployment-control.json" "$control_sha" \
+  "$release_sha" "$runner_sha256" <<'PY'
+import json
+import re
+import sys
+
+path, control_sha, release_sha, runner_sha256 = sys.argv[1:]
+if (
+    re.fullmatch(r"[0-9a-f]{40}", control_sha) is None
+    or re.fullmatch(r"[0-9a-f]{40}", release_sha) is None
+    or re.fullmatch(r"[0-9a-f]{64}", runner_sha256) is None
+):
+    raise SystemExit("deployment control identity invalid; STOP")
+with open(path, encoding="utf-8", newline="") as handle:
+    raw = handle.read()
+value = {
+    "control_sha": control_sha,
+    "release_sha": release_sha,
+    "runner_sha256": runner_sha256,
+    "schema_version": "production_fresh_install_control_v1",
+}
+if (
+    json.loads(raw) != value
+    or raw != json.dumps(value, separators=(",", ":"), sort_keys=True) + "\n"
+):
+    raise SystemExit("deployment control receipt mismatch; STOP")
+PY
 
 marker() {
   local phase=$1
@@ -111,15 +150,25 @@ if re.fullmatch(r"[0-9a-f]{40}", release_sha) is None:
 raw = receipt_path.read_text(encoding="utf-8")
 receipt = json.loads(raw)
 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-expected_image = manifest["images"][f"gateway-api-{release_sha}.oci.tar"]["config_digest"]
+image = manifest["images"][f"gateway-api-{release_sha}.oci.tar"]
+allowed_gateway_image_ids = sorted({image.get("oci_digest"), image.get("config_digest")})
+gateway_image_id = receipt.get("gateway_image_id")
 expected = {
-    "gateway_image_id": expected_image,
+    "allowed_gateway_image_ids": allowed_gateway_image_ids,
+    "gateway_image_id": gateway_image_id,
     "phase": "gateway-complete",
     "release_sha": release_sha,
-    "schema_version": "production_fresh_install_gateway_v1",
+    "schema_version": "production_fresh_install_gateway_v2",
 }
 if (
-    re.fullmatch(r"sha256:[0-9a-f]{64}", expected_image) is None
+    not 1 <= len(allowed_gateway_image_ids) <= 2
+    or any(
+        not isinstance(item, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", item) is None
+        for item in allowed_gateway_image_ids
+    )
+    or not isinstance(gateway_image_id, str)
+    or gateway_image_id not in allowed_gateway_image_ids
     or receipt != expected
     or raw != json.dumps(expected, separators=(",", ":"), sort_keys=True) + "\n"
 ):
@@ -140,6 +189,61 @@ collect_ids() {
       values+=("$line")
     done <<< "$output"
   fi
+}
+
+readiness_run() {
+  local deadline=$1
+  shift
+  local remaining=$((deadline - SECONDS))
+  test "$remaining" -gt 0 || return 124
+  timeout --foreground --signal=TERM --kill-after=1 "${remaining}s" "$@"
+}
+
+wait_product_ready() {
+  local expected_id=$1
+  local deadline=$((SECONDS + 30))
+  local current_id current_image current_config_image current_running current_port current_env release_count release_value
+  while (( SECONDS < deadline )); do
+    if ! current_id=$(readiness_run "$deadline" env PRODUCT_ENV_FILE=/opt/b2b/.env.product \
+      PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" \
+      docker compose -p "$project" --profile company-card-narrative \
+      -f "$stage/docker-compose.product.yml" --env-file .env.product \
+      ps -q --all product_api); then
+      echo 'Product readiness container lookup failed or exceeded its shared deadline; STOP' >&2
+      return 2
+    fi
+    if test "$current_id" != "$expected_id"; then
+      echo 'Product readiness no longer targets the same Product container; STOP' >&2
+      return 2
+    fi
+    if ! current_image=$(readiness_run "$deadline" docker inspect --format '{{.Image}}' "$current_id") || \
+      ! current_config_image=$(readiness_run "$deadline" docker inspect --format '{{.Config.Image}}' "$current_id") || \
+      ! current_running=$(readiness_run "$deadline" docker inspect --format '{{.State.Running}}' "$current_id") || \
+      ! current_port=$(readiness_run "$deadline" docker port "$current_id" 8000/tcp) || \
+      ! current_env=$(readiness_run "$deadline" docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$current_id"); then
+      echo 'Product readiness identity inspection failed or exceeded its shared deadline; STOP' >&2
+      return 2
+    fi
+    release_count=$(printf '%s\n' "$current_env" | sed -n '/^PRODUCT_RELEASE_COMMIT=/p' | wc -l)
+    release_value=$(printf '%s\n' "$current_env" | sed -n 's/^PRODUCT_RELEASE_COMMIT=//p')
+    if test "$current_image" != "$candidate_image" || \
+      test "$current_config_image" != "b2b-product-api:$release_sha" || \
+      test "$current_port" != 127.0.0.1:8000 || \
+      test "$release_count" -ne 1 || test "$release_value" != "$release_sha"; then
+      echo 'Product readiness identity changed from the signed candidate; STOP' >&2
+      return 2
+    fi
+    if test "$current_running" = true && \
+      readiness_run "$deadline" curl --connect-timeout 1 --max-time 2 --fail --silent --show-error \
+        http://127.0.0.1:8000/health >/dev/null 2>&1; then
+      return 0
+    fi
+    if test "$SECONDS" -lt "$deadline"; then
+      sleep 1
+    fi
+  done
+  echo "Product readiness deadline exceeded for id=$current_id running=$current_running image=$current_image config_image=$current_config_image; STOP" >&2
+  return 2
 }
 
 stop_container() {
@@ -380,9 +484,39 @@ fi
 cd "$stage"
 bounded sha256sum --strict --ignore-missing --check "checksums-$release_sha.txt"
 bounded docker load --input "product-api-$release_sha.oci.tar" >/dev/null
-expected_image=$(bounded python3 -c "import json,re,sys; value=json.load(open(sys.argv[1],encoding='utf-8')); digest=value['images'][sys.argv[2]]['config_digest']; (isinstance(digest,str) and re.fullmatch(r'sha256:[0-9a-f]{64}',digest)) or sys.exit('invalid Product config digest'); print(digest)" "release-manifest-$release_sha.json" "product-api-$release_sha.oci.tar")
+mapfile -t allowed_product_image_ids < <(bounded python3 - \
+  "release-manifest-$release_sha.json" "product-api-$release_sha.oci.tar" <<'PY'
+import json
+import re
+import sys
+
+record = json.load(open(sys.argv[1], encoding="utf-8"))["images"][sys.argv[2]]
+allowed = sorted({record.get("oci_digest"), record.get("config_digest")})
+if (
+    not 1 <= len(allowed) <= 2
+    or any(
+        not isinstance(item, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", item) is None
+        for item in allowed
+    )
+):
+    raise SystemExit("signed Product image identity pair is invalid; STOP")
+print(*allowed, sep="\n")
+PY
+)
+test "${#allowed_product_image_ids[@]}" -ge 1
+test "${#allowed_product_image_ids[@]}" -le 2
 candidate_image=$(bounded docker image inspect --format '{{.Id}}' "b2b-product-api:$release_sha")
-test "$candidate_image" = "$expected_image"
+candidate_image_allowed=false
+for allowed_product_image_id in "${allowed_product_image_ids[@]}"; do
+  if test "$candidate_image" = "$allowed_product_image_id"; then
+    candidate_image_allowed=true
+  fi
+done
+if test "$candidate_image_allowed" != true; then
+  echo 'loaded Product runtime is outside the signed Product image identity pair; STOP' >&2
+  exit 2
+fi
 
 project=$(cat "$stage/prior-product-compose-project")
 provider_state=$(cat "$stage/prior-provider-state")
@@ -577,16 +711,22 @@ if ! path_present "$stage/product-complete"; then
   bounded install -m 640 docker-compose.product.yml /opt/b2b/docker-compose.product.yml
   cd /opt/b2b
   bounded env PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" docker compose -p "$project" --profile company-card-narrative -f "$stage/docker-compose.product.yml" --env-file .env.product up -d --no-build --force-recreate product_api company_report_worker company_card_narrative_worker
+  product_id=
   for service in product_api company_report_worker company_card_narrative_worker; do
-    id=$(bounded env PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" docker compose -p "$project" --profile company-card-narrative -f "$stage/docker-compose.product.yml" --env-file .env.product ps -q "$service")
+    id=$(bounded env PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" docker compose -p "$project" --profile company-card-narrative -f "$stage/docker-compose.product.yml" --env-file .env.product ps -q --all "$service")
     test -n "$id"
     test "$(bounded docker inspect --format '{{.Config.Image}}' "$id")" = "b2b-product-api:$release_sha"
     test "$(bounded docker inspect --format '{{.Image}}' "$id")" = "$candidate_image"
-    test "$(bounded docker inspect --format '{{.State.Running}}' "$id")" = true
+    if test "$service" = product_api; then
+      product_id=$id
+    else
+      test "$(bounded docker inspect --format '{{.State.Running}}' "$id")" = true
+    fi
   done
-  product_mount=$(bounded docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data/claims_uploads"}}{{printf "%s|%s|%t" .Source .Destination .RW}}{{end}}{{end}}' "$(bounded env PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" docker compose -p "$project" --profile company-card-narrative -f "$stage/docker-compose.product.yml" --env-file .env.product ps -q product_api)")
+  test -n "$product_id"
+  product_mount=$(bounded docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data/claims_uploads"}}{{printf "%s|%s|%t" .Source .Destination .RW}}{{end}}{{end}}' "$product_id")
   test "$product_mount" = "/var/lib/pork/claims-uploads/v1|/data/claims_uploads|true"
-  bounded curl --connect-timeout 10 --max-time 30 --fail --silent --show-error http://127.0.0.1:8000/health >/dev/null
+  wait_product_ready "$product_id"
   db_guard verify-runtime >/dev/null
   marker_once product-complete
 fi
@@ -600,7 +740,8 @@ if ! path_present "$stage/web-complete"; then
 fi
 
 cd /opt/b2b
-product_id=$(bounded env PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" docker compose -p "$project" --profile company-card-narrative -f "$stage/docker-compose.product.yml" --env-file .env.product ps -q product_api)
+product_id=$(bounded env PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" docker compose -p "$project" --profile company-card-narrative -f "$stage/docker-compose.product.yml" --env-file .env.product ps -q --all product_api)
+wait_product_ready "$product_id"
 bounded docker exec -i "$product_id" python - settings \
   --release-sha "$release_sha" --provider-state "$provider_state" \
   < "$stage/fresh_install_candidate.py"
@@ -612,13 +753,16 @@ for service in product_api company_report_worker company_card_narrative_worker; 
   test "$(bounded docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$id")" = "$project"
   test "$(bounded docker inspect --format '{{.Config.Image}}' "$id")" = "b2b-product-api:$release_sha"
   test "$(bounded docker inspect --format '{{.Image}}' "$id")" = "$candidate_image"
-  test "$(bounded docker inspect --format '{{.State.Running}}' "$id")" = true
+  if test "$service" = product_api; then
+    test "$id" = "$product_id"
+  else
+    test "$(bounded docker inspect --format '{{.State.Running}}' "$id")" = true
+  fi
   test "$(bounded docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "$id")" = unless-stopped
 done
 test "$(bounded docker port "$product_id" 8000/tcp)" = 127.0.0.1:8000
 product_mount=$(bounded docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data/claims_uploads"}}{{printf "%s|%s|%t" .Source .Destination .RW}}{{end}}{{end}}' "$product_id")
 test "$product_mount" = "/var/lib/pork/claims-uploads/v1|/data/claims_uploads|true"
-bounded curl --connect-timeout 10 --max-time 30 --fail --silent --show-error http://127.0.0.1:8000/health >/dev/null
 if path_present "$stage/ingress-armed"; then
   db_guard verify-live-runtime >/dev/null
 else

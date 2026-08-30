@@ -30,6 +30,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       release_sha: ${{ steps.guard.outputs.release_sha }}
+      control_sha: ${{ steps.guard.outputs.control_sha }}
     steps:
       - name: Check out current protected main with full history
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -67,6 +68,7 @@ jobs:
           git merge-base --is-ancestor "$RELEASE_SHA" "$protected_main"
           test "$(git rev-parse "$WORKFLOW_SHA:.github/workflows/deploy_prod_fresh_install.yml")" = "$(git rev-parse "$protected_main:.github/workflows/deploy_prod_fresh_install.yml")"
           echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "control_sha=$protected_main" >> "$GITHUB_OUTPUT"
 
   qa:
     name: qa-required dependency
@@ -88,6 +90,28 @@ jobs:
           ref: ${{ needs.trusted-main.outputs.release_sha }}
           fetch-depth: 1
           persist-credentials: false
+      - name: Check out exact protected deployment control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.trusted-main.outputs.control_sha }}
+          path: .release/control
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Prove exact protected deployment control checkout
+        shell: bash
+        env:
+          CONTROL_SHA: ${{ needs.trusted-main.outputs.control_sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CONTROL_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONTROL_SHA" = "$WORKFLOW_SHA"
+          test "$(git -C .release/control rev-parse HEAD)" = "$CONTROL_SHA"
+          test "$(git -C .release/control rev-parse "$CONTROL_SHA^{commit}")" = "$CONTROL_SHA"
+          for path in .github/workflows/deploy_prod_fresh_install.yml deploy/product_api/fresh_install_runner.sh; do
+            test -f ".release/control/$path" && test ! -L ".release/control/$path"
+            test "$(git -C .release/control hash-object "$path")" = "$(git -C .release/control rev-parse "$CONTROL_SHA:$path")"
+          done
       - name: Set up locked Python
         uses: ./.github/actions/setup-python-ci
         with:
@@ -212,6 +236,7 @@ jobs:
         shell: bash
         env:
           RELEASE_SHA: ${{ needs.trusted-main.outputs.release_sha }}
+          CONTROL_SHA: ${{ needs.trusted-main.outputs.control_sha }}
           RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
           US_TARGET: ${{ secrets.US_DEPLOY_TARGET }}
           RU_RELEASE_ROOT: ${{ vars.RU_RELEASE_ROOT }}
@@ -226,9 +251,9 @@ jobs:
           [[ "$US_RELEASE_ROOT" =~ ^/[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*){2,}$ ]]
           ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/fresh-install-ssh/known_hosts")
           mkdir -m 750 -p .release/preflight
-          ssh "${ssh_args[@]}" "$RU_TARGET" bash -s -- "$RU_RELEASE_ROOT/$RELEASE_SHA-fresh-install" "$RELEASE_SHA" "$OPERATION_TIMEOUT_SECONDS" <<'REMOTE'
+          ssh "${ssh_args[@]}" "$RU_TARGET" bash -s -- "$RU_RELEASE_ROOT/$RELEASE_SHA-fresh-install" "$RELEASE_SHA" "$OPERATION_TIMEOUT_SECONDS" "$CONTROL_SHA" <<'REMOTE'
           set -euo pipefail
-          stage=$1; release_sha=$2; operation_timeout=$3
+          stage=$1; release_sha=$2; operation_timeout=$3; control_sha=$4
           unit_base="pork-production-fresh-install-${release_sha:0:12}"
           intended="$unit_base.service"
           guard=pork-production-fresh-install-ingress-guard.service
@@ -245,7 +270,7 @@ jobs:
             test -f "$unit_path" && test ! -L "$unit_path"
             unit=${unit_path##*/}
             case "$unit" in
-              "$intended") grep -Fqx "ExecStart=/bin/bash $stage/fresh_install_runner.sh $stage $release_sha $seed_sha256 $unit_base $operation_timeout $credential" "$unit_path" ;;
+              "$intended") grep -Fqx "ExecStart=/bin/bash $stage/fresh_install_runner.sh $stage $release_sha $seed_sha256 $unit_base $operation_timeout $credential $control_sha" "$unit_path" ;;
               "$guard") grep -Fqx "ExecStart=/bin/bash $stage/fresh_install_boot_guard.sh $stage $release_sha" "$unit_path" ;;
               *) echo 'incompatible production fresh-install recovery unit is installed; STOP' >&2; exit 2 ;;
             esac
@@ -352,7 +377,7 @@ jobs:
           ssh "${ssh_args[@]}" "$US_TARGET" 'set -euo pipefail
             stop() { echo "$1; STOP" >&2; exit 2; }
             test "$(id -u)" -eq 0
-            command -v docker >/dev/null && command -v curl >/dev/null && command -v python3 >/dev/null
+            command -v docker >/dev/null && command -v curl >/dev/null && command -v python3 >/dev/null && command -v timeout >/dev/null && command -v env >/dev/null
             test -f /opt/b2b/.env.gateway && test ! -L /opt/b2b/.env.gateway
             test -f /opt/b2b/docker-compose.gateway.yml && test ! -L /opt/b2b/docker-compose.gateway.yml
             gateway_ids=$(docker ps -aq --filter label=com.docker.compose.service=gateway_api)
@@ -381,7 +406,22 @@ jobs:
             printf "%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n" "$id" "$project" "$image" "$prior_commit" "$config_image" "$config_files" "$working_dir" "$environment_file" "$commit_count"' > .release/preflight/us-topology.txt
           mapfile -t us < .release/preflight/us-topology.txt
           test "${#us[@]}" -eq 9
-          gateway_candidate=$(python3 -c "import json,re,sys; value=json.load(open(sys.argv[1],encoding='utf-8')); digest=value['images'][sys.argv[2]]['config_digest']; (isinstance(digest,str) and re.fullmatch(r'sha256:[0-9a-f]{64}',digest)) or sys.exit(2); print(digest)" ".release/deploy/release-manifest-$RELEASE_SHA.json" "gateway-api-$RELEASE_SHA.oci.tar")
+          mapfile -t gateway_candidate_ids < <(python3 - ".release/deploy/release-manifest-$RELEASE_SHA.json" "gateway-api-$RELEASE_SHA.oci.tar" <<'PY'
+          import json, re, sys
+          value = json.load(open(sys.argv[1], encoding="utf-8"))["images"][sys.argv[2]]
+          allowed = sorted({value.get("oci_digest"), value.get("config_digest")})
+          if not 1 <= len(allowed) <= 2 or any(not isinstance(item, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", item) is None for item in allowed):
+              raise SystemExit("Gateway release image identities are invalid; STOP")
+          print(*allowed, sep="\n")
+          PY
+          )
+          gateway_candidate_matches() {
+            local observed=$1 expected
+            for expected in "${gateway_candidate_ids[@]}"; do
+              if test "$observed" = "$expected"; then return 0; fi
+            done
+            return 1
+          }
           prior_state=$(ssh "${ssh_args[@]}" "$US_TARGET" "set -euo pipefail; receipt='$US_RELEASE_ROOT/$RELEASE_SHA-fresh-install/prior-gateway.json'; if test -e \"\$receipt\" || test -L \"\$receipt\"; then echo present; else echo absent; fi")
           case "$prior_state" in
             present)
@@ -407,7 +447,7 @@ jobs:
                   test "${us[7]}" = /opt/b2b/.env.gateway
                   test "${us[8]}" -eq 1
                 fi
-              elif test "${us[2]}" = "$gateway_candidate"; then
+              elif gateway_candidate_matches "${us[2]}"; then
                 test "${us[3]}" = "$RELEASE_SHA"
                 test "${us[4]}" = "b2b-gateway-api:$RELEASE_SHA"
                 test "${us[5]}" = "$US_RELEASE_ROOT/$RELEASE_SHA-fresh-install/docker-compose.gateway.yml"
@@ -438,6 +478,7 @@ jobs:
         shell: bash
         env:
           RELEASE_SHA: ${{ needs.trusted-main.outputs.release_sha }}
+          CONTROL_SHA: ${{ needs.trusted-main.outputs.control_sha }}
           RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
           US_TARGET: ${{ secrets.US_DEPLOY_TARGET }}
           RU_STAGE: ${{ steps.preflight.outputs.ru_stage }}
@@ -472,18 +513,33 @@ jobs:
           credential="/etc/pork/fresh-install-credentials/$RELEASE_SHA.database-identity.sha256"
           printf '%s\n' "$DATABASE_IDENTITY_SHA256" | ssh "${ssh_args[@]}" "$RU_TARGET" "set -euo pipefail; install -d -m 700 -o root -g root /etc/pork/fresh-install-credentials; temporary='$credential.tmp'; test ! -e \"\$temporary\" && test ! -L \"\$temporary\"; IFS= read -r value; printf '%s\n' \"\$value\" | grep -Eq '^[0-9a-f]{64}$'; printf '%s\n' \"\$value\" > \"\$temporary\"; chmod 600 \"\$temporary\"; sync -f \"\$temporary\"; if test -e '$credential' || test -L '$credential'; then test -f '$credential' && test ! -L '$credential' && cmp -s \"\$temporary\" '$credential'; unlink \"\$temporary\"; else mv -T \"\$temporary\" '$credential'; fi; sync -f '$credential'; sync -f /etc/pork/fresh-install-credentials"
           cp .release/seed/company-public-h2-seed-bundle-e7478a2fba9aaca17829c3d99e89e8d83d4b3188.tgz .release/preflight/
+          control_runner=.release/control/deploy/product_api/fresh_install_runner.sh
+          runner_sha256=$(sha256sum "$control_runner" | cut -d' ' -f1)
+          [[ "$CONTROL_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$runner_sha256" =~ ^[0-9a-f]{64}$ ]]
+          CONTROL_SHA="$CONTROL_SHA" RELEASE_SHA="$RELEASE_SHA" RUNNER_SHA256="$runner_sha256" python - <<'PY'
+          import json, os
+          value = {
+              'control_sha': os.environ['CONTROL_SHA'],
+              'release_sha': os.environ['RELEASE_SHA'],
+              'runner_sha256': os.environ['RUNNER_SHA256'],
+              'schema_version': 'production_fresh_install_control_v1',
+          }
+          open('.release/preflight/deployment-control.json', 'w', encoding='utf-8', newline='\n').write(json.dumps(value, separators=(',', ':'), sort_keys=True) + '\n')
+          PY
           cd .release/preflight
           mapfile -t ru < ru-topology.txt
           printf '%s\n' "${ru[2]}" > prior-product-compose-project
           printf '%s\n' "${ru[3]}" > prior-provider-state
           cp ../../deploy/product_api/fresh_install_database.py .
           cp ../../deploy/product_api/fresh_install_candidate.py .
-          cp ../../deploy/product_api/fresh_install_runner.sh .
+          cp ../control/deploy/product_api/fresh_install_runner.sh .
           cp ../../deploy/product_api/fresh_install_boot_guard.sh .
           cp ../../deploy/nginx/company_public_h2_release.py ../../deploy/nginx/company_public_h2_seed.py ../../deploy/nginx/install_company_public_h2_assets.sh ../../deploy/nginx/seed_company_public_h2_assets.sh ../../deploy/nginx/product_api_legacy_0015_h2_bootstrap.conf ../../deploy/nginx/product_api.conf ../../deploy/web_ui/install_web_ui_release.sh ../../docker-compose.product.yml .
-          sha256sum database-preflight.json prior-product-compose-project prior-provider-state fresh_install_database.py fresh_install_candidate.py fresh_install_runner.sh fresh_install_boot_guard.sh company_public_h2_release.py company_public_h2_seed.py install_company_public_h2_assets.sh seed_company_public_h2_assets.sh product_api_legacy_0015_h2_bootstrap.conf product_api.conf install_web_ui_release.sh docker-compose.product.yml > "fresh-install-tools-$RELEASE_SHA.sha256"
+          sha256sum deployment-control.json database-preflight.json prior-product-compose-project prior-provider-state fresh_install_database.py fresh_install_candidate.py fresh_install_runner.sh fresh_install_boot_guard.sh company_public_h2_release.py company_public_h2_seed.py install_company_public_h2_assets.sh seed_company_public_h2_assets.sh product_api_legacy_0015_h2_bootstrap.conf product_api.conf install_web_ui_release.sh docker-compose.product.yml > "fresh-install-tools-$RELEASE_SHA.sha256"
           cd ../..
-          scp "${ssh_args[@]}" .release/deploy/product-api-$RELEASE_SHA.oci.tar .release/deploy/company-public-h2-$RELEASE_SHA.tgz .release/deploy/web-ui-$RELEASE_SHA.tgz .release/deploy/release-manifest-$RELEASE_SHA.json .release/deploy/checksums-$RELEASE_SHA.txt .release/preflight/database-preflight.json .release/preflight/prior-product-compose-project .release/preflight/prior-provider-state .release/preflight/fresh_install_database.py .release/preflight/fresh_install_candidate.py .release/preflight/fresh_install_runner.sh .release/preflight/fresh_install_boot_guard.sh .release/preflight/company_public_h2_release.py .release/preflight/company_public_h2_seed.py .release/preflight/install_company_public_h2_assets.sh .release/preflight/seed_company_public_h2_assets.sh .release/preflight/product_api_legacy_0015_h2_bootstrap.conf .release/preflight/product_api.conf .release/preflight/install_web_ui_release.sh .release/preflight/docker-compose.product.yml .release/preflight/fresh-install-tools-$RELEASE_SHA.sha256 .release/preflight/company-public-h2-seed-bundle-e7478a2fba9aaca17829c3d99e89e8d83d4b3188.tgz "$RU_TARGET:$RU_STAGE/"
+          scp "${ssh_args[@]}" .release/deploy/product-api-$RELEASE_SHA.oci.tar .release/deploy/company-public-h2-$RELEASE_SHA.tgz .release/deploy/web-ui-$RELEASE_SHA.tgz .release/deploy/release-manifest-$RELEASE_SHA.json .release/deploy/checksums-$RELEASE_SHA.txt .release/preflight/deployment-control.json .release/preflight/database-preflight.json .release/preflight/prior-product-compose-project .release/preflight/prior-provider-state .release/preflight/fresh_install_database.py .release/preflight/fresh_install_candidate.py .release/preflight/fresh_install_runner.sh .release/preflight/fresh_install_boot_guard.sh .release/preflight/company_public_h2_release.py .release/preflight/company_public_h2_seed.py .release/preflight/install_company_public_h2_assets.sh .release/preflight/seed_company_public_h2_assets.sh .release/preflight/product_api_legacy_0015_h2_bootstrap.conf .release/preflight/product_api.conf .release/preflight/install_web_ui_release.sh .release/preflight/docker-compose.product.yml .release/preflight/fresh-install-tools-$RELEASE_SHA.sha256 .release/preflight/company-public-h2-seed-bundle-e7478a2fba9aaca17829c3d99e89e8d83d4b3188.tgz "$RU_TARGET:$RU_STAGE/"
           scp "${ssh_args[@]}" .release/deploy/gateway-api-$RELEASE_SHA.oci.tar .release/deploy/release-manifest-$RELEASE_SHA.json .release/deploy/checksums-$RELEASE_SHA.txt deploy/us/compose/docker-compose.gateway.yml deploy/product_api/fresh_install_gateway_receipt.py "$US_TARGET:$US_STAGE/"
           gateway_receipt_sha=$(sha256sum deploy/product_api/fresh_install_gateway_receipt.py | cut -d' ' -f1)
           test "$(ssh "${ssh_args[@]}" "$US_TARGET" "set -euo pipefail; test -f '$US_STAGE/fresh_install_gateway_receipt.py' && test ! -L '$US_STAGE/fresh_install_gateway_receipt.py'; chmod 640 '$US_STAGE/fresh_install_gateway_receipt.py'; sha256sum '$US_STAGE/fresh_install_gateway_receipt.py' | cut -d' ' -f1")" = "$gateway_receipt_sha"
@@ -504,7 +560,22 @@ jobs:
           stage=$1; release_sha=$2
           cd "$stage"
           test -f fresh_install_gateway_receipt.py && test ! -L fresh_install_gateway_receipt.py
-          expected=$(python3 -c "import json,re,sys; value=json.load(open(sys.argv[1],encoding='utf-8')); digest=value['images'][sys.argv[2]]['config_digest']; (isinstance(digest,str) and re.fullmatch(r'sha256:[0-9a-f]{64}',digest)) or sys.exit(2); print(digest)" "release-manifest-$release_sha.json" "gateway-api-$release_sha.oci.tar")
+          mapfile -t allowed_gateway_image_ids < <(python3 - "release-manifest-$release_sha.json" "gateway-api-$release_sha.oci.tar" <<'PY'
+          import json, re, sys
+          value = json.load(open(sys.argv[1], encoding='utf-8'))['images'][sys.argv[2]]
+          allowed = sorted({value.get('oci_digest'), value.get('config_digest')})
+          if not 1 <= len(allowed) <= 2 or any(not isinstance(item, str) or re.fullmatch(r'sha256:[0-9a-f]{64}', item) is None for item in allowed):
+              raise SystemExit('signed Gateway image identities are invalid; STOP')
+          print(*allowed, sep='\n')
+          PY
+          )
+          gateway_image_allowed() {
+            local observed=$1 expected
+            for expected in "${allowed_gateway_image_ids[@]}"; do
+              test "$observed" != "$expected" || return 0
+            done
+            return 1
+          }
           gateway_ids=$(docker ps -aq --filter label=com.docker.compose.service=gateway_api)
           mapfile -t ids < <(printf '%s' "$gateway_ids")
           test "${#ids[@]}" -eq 1 || stop "Gateway container cardinality changed before arming rollback"
@@ -538,7 +609,7 @@ jobs:
             test "$current_environment_file" = /opt/b2b/.env.gateway || stop "legacy Gateway Compose environment file changed before arming rollback"
             test "$current_commit" = - || stop "legacy Gateway unexpectedly exposes GATEWAY_RELEASE_COMMIT before arming rollback"
             test "$commit_count" -eq 0 || stop "legacy Gateway unexpectedly defines GATEWAY_RELEASE_COMMIT before arming rollback"
-            test "$current_image" != "$expected"
+            ! gateway_image_allowed "$current_image" || stop "legacy Gateway unexpectedly uses the candidate image before arming rollback"
             if docker image inspect "$tag" >/dev/null 2>&1; then
               test "$(docker image inspect --format '{{.Id}}' "$tag")" = "$current_image"
             else
@@ -566,7 +637,7 @@ jobs:
               test "$current_environment_file" = /opt/b2b/.env.gateway
               test "$commit_count" -eq 1
             fi
-          elif test "$current_image" = "$expected"; then
+          elif gateway_image_allowed "$current_image"; then
             test "$current_commit" = "$release_sha"
             test "$current_config_image" = "b2b-gateway-api:$release_sha"
             test "$current_config_files" = "$stage/docker-compose.gateway.yml"
@@ -594,39 +665,102 @@ jobs:
           ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/fresh-install-ssh/known_hosts")
           gateway_image_id=$(ssh "${ssh_args[@]}" "$US_TARGET" bash -s -- "$US_STAGE" "$RELEASE_SHA" <<'REMOTE'
           set -euo pipefail
+          stop() { echo "$1; STOP" >&2; exit 2; }
           stage=$1; release_sha=$2
           cd "$stage"
           prior_payload=$(python3 fresh_install_gateway_receipt.py read "$stage/prior-gateway.json" "$release_sha")
           mapfile -t prior <<< "$prior_payload"
-          test "${#prior[@]}" -eq 3
+          test "${#prior[@]}" -eq 3 || stop "prior Gateway receipt cardinality changed"
           project=${prior[0]}
-          test "$(docker image inspect --format '{{.Id}}' "b2b-gateway-api:fresh-install-prior-$release_sha")" = "${prior[1]}"
-          sha256sum --strict --ignore-missing --check "checksums-$release_sha.txt" >/dev/null
-          docker load --input "gateway-api-$release_sha.oci.tar" >/dev/null
-          expected=$(python3 -c "import json,re,sys; value=json.load(open(sys.argv[1],encoding='utf-8')); digest=value['images'][sys.argv[2]]['config_digest']; (isinstance(digest,str) and re.fullmatch(r'sha256:[0-9a-f]{64}',digest)) or sys.exit(2); print(digest)" "release-manifest-$release_sha.json" "gateway-api-$release_sha.oci.tar")
-          candidate=$(docker image inspect --format '{{.Id}}' "b2b-gateway-api:$release_sha")
-          test "$candidate" = "$expected"
+          test "$(docker image inspect --format '{{.Id}}' "b2b-gateway-api:fresh-install-prior-$release_sha")" = "${prior[1]}" || stop "prior Gateway rollback image identity changed"
+          sha256sum --strict --ignore-missing --check "checksums-$release_sha.txt" >/dev/null || stop "Gateway release checksums failed"
+          mapfile -t allowed_gateway_image_ids < <(python3 - "release-manifest-$release_sha.json" "gateway-api-$release_sha.oci.tar" <<'PY'
+          import json, re, sys
+          value = json.load(open(sys.argv[1], encoding='utf-8'))['images'][sys.argv[2]]
+          allowed = sorted({value.get('oci_digest'), value.get('config_digest')})
+          if not 1 <= len(allowed) <= 2 or any(not isinstance(item, str) or re.fullmatch(r'sha256:[0-9a-f]{64}', item) is None for item in allowed):
+              raise SystemExit('signed Gateway image identities are invalid; STOP')
+          print(*allowed, sep='\n')
+          PY
+          )
+          gateway_image_allowed() {
+            local observed=$1 expected
+            for expected in "${allowed_gateway_image_ids[@]}"; do
+              test "$observed" != "$expected" || return 0
+            done
+            return 1
+          }
+          docker load --input "gateway-api-$release_sha.oci.tar" >/dev/null || stop "candidate Gateway archive load failed"
+          candidate=$(docker image inspect --format '{{.Id}}' "b2b-gateway-api:$release_sha") || stop "candidate Gateway image is absent after load"
+          gateway_image_allowed "$candidate" || stop "candidate Gateway image identity is outside the signed Gateway image identity pair"
           cd /opt/b2b
-          GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="$release_sha" GATEWAY_RELEASE_COMMIT="$release_sha" docker compose -p "$project" -f "$stage/docker-compose.gateway.yml" --env-file .env.gateway up -d --no-build --force-recreate gateway_api >/dev/null
-          id=$(GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="$release_sha" GATEWAY_RELEASE_COMMIT="$release_sha" docker compose -p "$project" -f "$stage/docker-compose.gateway.yml" --env-file .env.gateway ps -q gateway_api)
-          test -n "$id"
-          test "$(docker ps -q --filter label=com.docker.compose.service=gateway_api | wc -l)" -eq 1
-          test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$id")" = "$project"
-          test "$(docker inspect --format '{{.Config.Image}}' "$id")" = "b2b-gateway-api:$release_sha"
-          test "$(docker inspect --format '{{.Image}}' "$id")" = "$candidate"
-          test "$(docker inspect --format '{{.State.Running}}' "$id")" = true
-          test "$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "$id")" = unless-stopped
-          test "$(docker port "$id" 8001/tcp)" = 127.0.0.1:8001
-          docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id" | grep -Fx "GATEWAY_RELEASE_COMMIT=$release_sha" >/dev/null
-          curl --fail --silent --show-error http://127.0.0.1:8001/health >/dev/null
+          GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="$release_sha" GATEWAY_RELEASE_COMMIT="$release_sha" docker compose -p "$project" -f "$stage/docker-compose.gateway.yml" --env-file .env.gateway up -d --no-build --force-recreate gateway_api >/dev/null || stop "candidate Gateway container recreation failed"
+          id=$(GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="$release_sha" GATEWAY_RELEASE_COMMIT="$release_sha" docker compose -p "$project" -f "$stage/docker-compose.gateway.yml" --env-file .env.gateway ps -q --all gateway_api)
+          test -n "$id" || stop "candidate Gateway container id is absent"
+          test "$(docker ps -aq --filter label=com.docker.compose.service=gateway_api | wc -l)" -eq 1 || stop "candidate Gateway container cardinality changed"
+          test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$id")" = "$project" || stop "candidate Gateway container project changed"
+          test "$(docker inspect --format '{{.Config.Image}}' "$id")" = "b2b-gateway-api:$release_sha" || stop "candidate Gateway container tag changed"
+          test "$(docker inspect --format '{{.Image}}' "$id")" = "$candidate" || stop "candidate Gateway container image changed"
+          test "$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "$id")" = unless-stopped || stop "candidate Gateway container restart policy changed"
+          test "$(docker port "$id" 8001/tcp)" = 127.0.0.1:8001 || stop "candidate Gateway container port changed"
+          docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id" | grep -Fx "GATEWAY_RELEASE_COMMIT=$release_sha" >/dev/null || stop "candidate Gateway release identity changed"
+          readiness_run() {
+            local deadline=$1
+            shift
+            local remaining=$((deadline - SECONDS))
+            test "$remaining" -gt 0 || return 124
+            timeout --foreground --signal=TERM --kill-after=1 "${remaining}s" "$@"
+          }
+          wait_gateway_ready() {
+            local expected_id=$1 expected_image=$2 deadline=$((SECONDS + 30))
+            local current_id current_image current_config_image current_running current_env
+            # Any identity drift is a fail-closed STOP, not a retry condition.
+            while (( SECONDS < deadline )); do
+              if ! current_id=$(readiness_run "$deadline" env GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="$release_sha" GATEWAY_RELEASE_COMMIT="$release_sha" docker compose -p "$project" -f "$stage/docker-compose.gateway.yml" --env-file .env.gateway ps -q --all gateway_api); then
+                stop "candidate Gateway container lookup failed or exceeded its shared readiness deadline"
+              fi
+              test "$current_id" = "$expected_id" || stop "candidate readiness no longer targets the same Gateway container"
+              if ! current_image=$(readiness_run "$deadline" docker inspect --format '{{.Image}}' "$current_id") || \
+                ! current_config_image=$(readiness_run "$deadline" docker inspect --format '{{.Config.Image}}' "$current_id") || \
+                ! current_running=$(readiness_run "$deadline" docker inspect --format '{{.State.Running}}' "$current_id") || \
+                ! current_env=$(readiness_run "$deadline" docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$current_id"); then
+                stop "candidate Gateway identity inspection failed or exceeded its shared readiness deadline"
+              fi
+              test "$current_image" = "$expected_image" || stop "candidate Gateway container image changed during readiness"
+              test "$current_config_image" = "b2b-gateway-api:$release_sha" || stop "candidate Gateway container tag changed during readiness"
+              printf '%s\n' "$current_env" | grep -Fx "GATEWAY_RELEASE_COMMIT=$release_sha" >/dev/null || stop "candidate Gateway release identity changed during readiness"
+              if test "$current_running" = true && readiness_run "$deadline" curl --connect-timeout 1 --max-time 2 --fail --silent --show-error http://127.0.0.1:8001/health >/dev/null; then
+                return 0
+              fi
+              if test "$SECONDS" -lt "$deadline"; then sleep 1; fi
+            done
+            stop "candidate Gateway readiness deadline expired"
+          }
+          wait_gateway_ready "$id" "$candidate"
           printf '%s\n' "$candidate"
           REMOTE
           )
           [[ "$gateway_image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          gateway_allowed_image_ids=$(python - ".release/deploy/release-manifest-$RELEASE_SHA.json" "gateway-api-$RELEASE_SHA.oci.tar" <<'PY'
+          import json, re, sys
+          value = json.load(open(sys.argv[1], encoding='utf-8'))['images'][sys.argv[2]]
+          allowed = sorted({value.get('oci_digest'), value.get('config_digest')})
+          if not 1 <= len(allowed) <= 2 or any(not isinstance(item, str) or re.fullmatch(r'sha256:[0-9a-f]{64}', item) is None for item in allowed):
+              raise SystemExit('signed Gateway image identities are invalid; STOP')
+          print(json.dumps(allowed, separators=(',', ':')))
+          PY
+          )
+          GATEWAY_IMAGE_ID="$gateway_image_id" GATEWAY_ALLOWED_IMAGE_IDS="$gateway_allowed_image_ids" python - <<'PY'
+          import json, os
+          allowed = json.loads(os.environ['GATEWAY_ALLOWED_IMAGE_IDS'])
+          if os.environ['GATEWAY_IMAGE_ID'] not in allowed:
+              raise SystemExit('candidate Gateway runtime identity is outside the signed Gateway image identity pair; STOP')
+          PY
           legacy_product_id=$(ssh "${ssh_args[@]}" "$RU_TARGET" "docker compose -f /opt/b2b/docker-compose.product.yml --env-file /opt/b2b/.env.product ps -q product_api")
           [[ "$legacy_product_id" =~ ^[0-9a-f]{12,64}$ ]]
           ssh "${ssh_args[@]}" "$RU_TARGET" "docker exec -i '$legacy_product_id' python - gateway --release-sha '$RELEASE_SHA'" < deploy/product_api/fresh_install_candidate.py
           echo "image_id=$gateway_image_id" >> "$GITHUB_OUTPUT"
+          echo "allowed_image_ids=$gateway_allowed_image_ids" >> "$GITHUB_OUTPUT"
           echo "complete=true" >> "$GITHUB_OUTPUT"
 
       - name: Bind exact Gateway success to RU durable stage
@@ -635,17 +769,24 @@ jobs:
         env:
           RELEASE_SHA: ${{ needs.trusted-main.outputs.release_sha }}
           GATEWAY_IMAGE_ID: ${{ steps.gateway.outputs.image_id }}
+          GATEWAY_ALLOWED_IMAGE_IDS: ${{ steps.gateway.outputs.allowed_image_ids }}
           RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
           RU_STAGE: ${{ steps.preflight.outputs.ru_stage }}
         run: |
           set -euo pipefail
           python - <<'PY'
-          import json, os
+          import json, os, re
+          allowed = json.loads(os.environ['GATEWAY_ALLOWED_IMAGE_IDS'])
+          if not 1 <= len(allowed) <= 2 or allowed != sorted(set(allowed)) or any(not isinstance(item, str) or re.fullmatch(r'sha256:[0-9a-f]{64}', item) is None for item in allowed):
+              raise SystemExit('signed Gateway image identity pair is invalid; STOP')
+          if os.environ['GATEWAY_IMAGE_ID'] not in allowed:
+              raise SystemExit('Gateway runtime identity is outside the signed Gateway image identity pair; STOP')
           value = {
+              'allowed_gateway_image_ids': allowed,
               'gateway_image_id': os.environ['GATEWAY_IMAGE_ID'],
               'phase': 'gateway-complete',
               'release_sha': os.environ['RELEASE_SHA'],
-              'schema_version': 'production_fresh_install_gateway_v1',
+              'schema_version': 'production_fresh_install_gateway_v2',
           }
           open('.release/preflight/gateway-complete', 'w', encoding='utf-8', newline='\n').write(json.dumps(value, separators=(',', ':'), sort_keys=True) + '\n')
           PY
@@ -658,6 +799,7 @@ jobs:
         shell: bash
         env:
           RELEASE_SHA: ${{ needs.trusted-main.outputs.release_sha }}
+          CONTROL_SHA: ${{ needs.trusted-main.outputs.control_sha }}
           RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
           RU_STAGE: ${{ steps.preflight.outputs.ru_stage }}
           SEED_SHA256: 708fb8d9a665e31854a15183328234b728cd996e276b6db1d74c887dedd28937
@@ -665,17 +807,25 @@ jobs:
         run: |
           set -euo pipefail
           unit="pork-production-fresh-install-${RELEASE_SHA:0:12}"
-          runner_sha="$(sha256sum deploy/product_api/fresh_install_runner.sh | cut -d' ' -f1)"
+          runner_sha="$(sha256sum .release/control/deploy/product_api/fresh_install_runner.sh | cut -d' ' -f1)"
           ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/fresh-install-ssh/known_hosts")
           credential="/etc/pork/fresh-install-credentials/$RELEASE_SHA.database-identity.sha256"
-          ssh "${ssh_args[@]}" "$RU_TARGET" bash -s -- "$unit" "$RU_STAGE" "$runner_sha" "$RELEASE_SHA" "$SEED_SHA256" "$OPERATION_TIMEOUT_SECONDS" "$credential" <<'REMOTE'
+          ssh "${ssh_args[@]}" "$RU_TARGET" bash -s -- "$unit" "$RU_STAGE" "$runner_sha" "$RELEASE_SHA" "$SEED_SHA256" "$OPERATION_TIMEOUT_SECONDS" "$credential" "$CONTROL_SHA" <<'REMOTE'
           set -euo pipefail
-          unit=$1; stage=$2; runner_sha=$3; release_sha=$4; seed_sha256=$5; operation_timeout=$6; credential=$7
+          unit=$1; stage=$2; runner_sha=$3; release_sha=$4; seed_sha256=$5; operation_timeout=$6; credential=$7; control_sha=$8
           test "$(stat -c '%u:%a' -- "$stage")" = 0:750
           test "$(sha256sum "$stage/fresh_install_runner.sh" | cut -d' ' -f1)" = "$runner_sha"
           test -f "$credential" && test ! -L "$credential" && test "$(stat -c '%u:%g:%a' -- "$credential")" = 0:0:600
           cd "$stage"
           sha256sum --strict --check "fresh-install-tools-$release_sha.sha256"
+          python3 - deployment-control.json "$control_sha" "$release_sha" "$runner_sha" <<'PY'
+          import json, sys
+          path, control_sha, release_sha, runner_sha = sys.argv[1:]
+          raw = open(path, encoding='utf-8', newline='').read()
+          expected = {'control_sha': control_sha, 'release_sha': release_sha, 'runner_sha256': runner_sha, 'schema_version': 'production_fresh_install_control_v1'}
+          if json.loads(raw) != expected or raw != json.dumps(expected, separators=(',', ':'), sort_keys=True) + '\n':
+              raise SystemExit('deployment control receipt mismatch; STOP')
+          PY
           for file in *; do test -f "$file" && test ! -L "$file"; chmod 640 "$file"; sync -f "$file"; done
           chmod 750 fresh_install_runner.sh fresh_install_boot_guard.sh
           unit_path="/etc/systemd/system/$unit.service"
@@ -683,7 +833,7 @@ jobs:
           test ! -e "$temporary" && test ! -L "$temporary"
           {
             printf '%s\n' '[Unit]' 'Description=One-time destructive exact-SHA production fresh install' 'After=docker.service network-online.target' 'Wants=docker.service network-online.target' 'StartLimitIntervalSec=0' '' '[Service]' 'Type=exec' 'User=root' 'Group=www-data' "WorkingDirectory=$stage" 'UMask=0027' 'Restart=on-failure' 'RestartSec=30' 'KillMode=control-group' 'KillSignal=SIGTERM' 'RuntimeMaxSec=7200' 'TimeoutStopSec=900' 'SendSIGKILL=yes' 'NoNewPrivileges=yes' 'PrivateTmp=yes' 'StandardOutput=journal' 'StandardError=journal'
-            printf 'ExecStart=/bin/bash %s %s %s %s %s %s %s\n' "$stage/fresh_install_runner.sh" "$stage" "$release_sha" "$seed_sha256" "$unit" "$operation_timeout" "$credential"
+            printf 'ExecStart=/bin/bash %s %s %s %s %s %s %s %s\n' "$stage/fresh_install_runner.sh" "$stage" "$release_sha" "$seed_sha256" "$unit" "$operation_timeout" "$credential" "$control_sha"
             printf '%s\n' '' '[Install]' 'WantedBy=multi-user.target'
           } > "$temporary"
           chmod 640 "$temporary"; sync -f "$temporary"
@@ -766,6 +916,7 @@ jobs:
         shell: bash
         env:
           RELEASE_SHA: ${{ needs.trusted-main.outputs.release_sha }}
+          CONTROL_SHA: ${{ needs.trusted-main.outputs.control_sha }}
           RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
           RU_STAGE: ${{ steps.preflight.outputs.ru_stage }}
           US_TARGET: ${{ secrets.US_DEPLOY_TARGET }}
@@ -780,28 +931,61 @@ jobs:
           restore_prior_gateway() {
             ssh "${ssh_args[@]}" "$US_TARGET" bash -s -- "$US_STAGE" "$RELEASE_SHA" <<'REMOTE'
           set -euo pipefail
+          stop() { echo "$1; STOP" >&2; exit 2; }
           stage=$1; release_sha=$2
           cd "$stage"
           prior_payload=$(python3 fresh_install_gateway_receipt.py read "$stage/prior-gateway.json" "$release_sha")
           mapfile -t prior <<< "$prior_payload"
           test "${#prior[@]}" -eq 3
           project=${prior[0]}; old_image=${prior[1]}; prior_commit=${prior[2]}
-          test "$(docker image inspect --format '{{.Id}}' "b2b-gateway-api:fresh-install-prior-$release_sha")" = "$old_image"
+          test "$(docker image inspect --format '{{.Id}}' "b2b-gateway-api:fresh-install-prior-$release_sha")" = "$old_image" || stop "prior Gateway rollback image identity changed"
           commit_value=$prior_commit
           if test "$prior_commit" = -; then commit_value=; fi
           cd /opt/b2b
-          GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="fresh-install-prior-$release_sha" GATEWAY_RELEASE_COMMIT="$commit_value" docker compose -p "$project" -f "$stage/docker-compose.gateway.yml" --env-file .env.gateway up -d --no-build --force-recreate gateway_api >/dev/null
-          id=$(GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="fresh-install-prior-$release_sha" GATEWAY_RELEASE_COMMIT="$commit_value" docker compose -p "$project" -f "$stage/docker-compose.gateway.yml" --env-file .env.gateway ps -q gateway_api)
-          test -n "$id"
-          test "$(docker inspect --format '{{.Image}}' "$id")" = "$old_image"
-          test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$id")" = "$project"
-          docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id" | grep -Fx "GATEWAY_RELEASE_COMMIT=$commit_value" >/dev/null
-          curl --fail --silent --show-error http://127.0.0.1:8001/health >/dev/null
+          GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="fresh-install-prior-$release_sha" GATEWAY_RELEASE_COMMIT="$commit_value" docker compose -p "$project" -f "$stage/docker-compose.gateway.yml" --env-file .env.gateway up -d --no-build --force-recreate gateway_api >/dev/null || stop "prior Gateway container recreation failed"
+          id=$(GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="fresh-install-prior-$release_sha" GATEWAY_RELEASE_COMMIT="$commit_value" docker compose -p "$project" -f "$stage/docker-compose.gateway.yml" --env-file .env.gateway ps -q --all gateway_api)
+          test -n "$id" || stop "prior Gateway container id is absent"
+          test "$(docker inspect --format '{{.Image}}' "$id")" = "$old_image" || stop "prior Gateway container image changed"
+          test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$id")" = "$project" || stop "prior Gateway container project changed"
+          docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id" | grep -Fx "GATEWAY_RELEASE_COMMIT=$commit_value" >/dev/null || stop "prior Gateway release identity changed"
+          readiness_run() {
+            local deadline=$1
+            shift
+            local remaining=$((deadline - SECONDS))
+            test "$remaining" -gt 0 || return 124
+            timeout --foreground --signal=TERM --kill-after=1 "${remaining}s" "$@"
+          }
+          wait_gateway_ready() {
+            local expected_id=$1 expected_image=$2 deadline=$((SECONDS + 30))
+            local current_id current_image current_config_image current_running current_env
+            # Any identity drift is a fail-closed STOP, not a retry condition.
+            while (( SECONDS < deadline )); do
+              if ! current_id=$(readiness_run "$deadline" env GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="fresh-install-prior-$release_sha" GATEWAY_RELEASE_COMMIT="$commit_value" docker compose -p "$project" -f "$stage/docker-compose.gateway.yml" --env-file .env.gateway ps -q --all gateway_api); then
+                stop "prior Gateway container lookup failed or exceeded its shared readiness deadline"
+              fi
+              test "$current_id" = "$expected_id" || stop "rollback readiness no longer targets the same Gateway container"
+              if ! current_image=$(readiness_run "$deadline" docker inspect --format '{{.Image}}' "$current_id") || \
+                ! current_config_image=$(readiness_run "$deadline" docker inspect --format '{{.Config.Image}}' "$current_id") || \
+                ! current_running=$(readiness_run "$deadline" docker inspect --format '{{.State.Running}}' "$current_id") || \
+                ! current_env=$(readiness_run "$deadline" docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$current_id"); then
+                stop "prior Gateway identity inspection failed or exceeded its shared readiness deadline"
+              fi
+              test "$current_image" = "$expected_image" || stop "prior Gateway container image changed during readiness"
+              test "$current_config_image" = "b2b-gateway-api:fresh-install-prior-$release_sha" || stop "prior Gateway container tag changed during readiness"
+              printf '%s\n' "$current_env" | grep -Fx "GATEWAY_RELEASE_COMMIT=$commit_value" >/dev/null || stop "prior Gateway release identity changed during readiness"
+              if test "$current_running" = true && readiness_run "$deadline" curl --connect-timeout 1 --max-time 2 --fail --silent --show-error http://127.0.0.1:8001/health >/dev/null; then
+                return 0
+              fi
+              if test "$SECONDS" -lt "$deadline"; then sleep 1; fi
+            done
+            stop "prior Gateway readiness deadline expired"
+          }
+          wait_gateway_ready "$id" "$old_image"
           REMOTE
           }
-          handoff=$(ssh "${ssh_args[@]}" "$RU_TARGET" bash -s -- "$unit" "$RU_STAGE" "$RELEASE_SHA" "$SEED_SHA256" "$OPERATION_TIMEOUT_SECONDS" "$credential" <<'REMOTE'
+          handoff=$(ssh "${ssh_args[@]}" "$RU_TARGET" bash -s -- "$unit" "$RU_STAGE" "$RELEASE_SHA" "$SEED_SHA256" "$OPERATION_TIMEOUT_SECONDS" "$credential" "$CONTROL_SHA" <<'REMOTE'
           set -euo pipefail
-          unit=$1; stage=$2; release_sha=$3; seed_sha256=$4; operation_timeout=$5; credential=$6
+          unit=$1; stage=$2; release_sha=$3; seed_sha256=$4; operation_timeout=$5; credential=$6; control_sha=$7
           state_root=/var/lib/pork/deploy-state
           validate_global_receipt() {
             local path=$1 phase=$2
@@ -826,7 +1010,7 @@ jobs:
           unit_path="/etc/systemd/system/$unit.service"
           if test -e "$unit_path" || test -L "$unit_path"; then
             test -f "$unit_path" && test ! -L "$unit_path"
-            grep -Fqx "ExecStart=/bin/bash $stage/fresh_install_runner.sh $stage $release_sha $seed_sha256 $unit $operation_timeout $credential" "$unit_path"
+            grep -Fqx "ExecStart=/bin/bash $stage/fresh_install_runner.sh $stage $release_sha $seed_sha256 $unit $operation_timeout $credential $control_sha" "$unit_path"
             active_state=$(systemctl show --property=ActiveState --value "$unit.service")
             if enabled_state=$(systemctl is-enabled "$unit.service" 2>/dev/null); then
               enabled_status=0
