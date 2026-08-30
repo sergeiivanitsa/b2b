@@ -11,7 +11,7 @@ import sys
 from typing import Any
 
 
-EXPECTED_HEAD = "0019_company_card_v2_rollout_control"
+EXPECTED_HEAD = "0020_company_card_narrative_quota_mode"
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -25,19 +25,27 @@ def _validate_release_sha(value: str) -> str:
     return value
 
 
-def _settings_contract(settings: Any, release_sha: str, provider_state: str) -> None:
+def _settings_contract(
+    settings: Any,
+    release_sha: str,
+    provider_state: str,
+    company_card_mode: str,
+) -> None:
     admin = settings.superadmin_email or ""
     provider = "enabled" if settings.datanewton_enabled else "disabled"
     key_ok = provider != "enabled" or bool((settings.datanewton_api_key or "").strip())
-    checks = (
+    common = (
         os.environ.get("PRODUCT_RELEASE_COMMIT") == release_sha,
         provider_state in {"enabled", "disabled"},
         provider == provider_state,
         key_ok,
         bool(admin) and admin == admin.strip() and len(admin) <= 320,
         settings.claims_upload_dir == "/data/claims_uploads",
+    )
+    default_off = (
         not settings.company_card_v2_presentations_enabled,
         not settings.company_card_v2_writer_enabled,
+        not settings.company_card_v2_direct_launch_enabled,
         settings.company_card_v2_rollout_generation == 0,
         settings.company_card_v2_allowlist_inns == [],
         settings.company_card_v2_percentage_basis_points == 0,
@@ -46,20 +54,48 @@ def _settings_contract(settings: Any, release_sha: str, provider_state: str) -> 
         settings.company_card_v2_arbitration_mask_keyring_json is None,
         not settings.company_card_v2_narrative_enabled,
         settings.company_card_v2_narrative_kill_switch,
+        settings.company_card_v2_narrative_quota_mode == "bounded",
         settings.company_card_v2_narrative_daily_limit == 0,
         settings.company_card_v2_narrative_monthly_limit == 0,
         settings.company_card_v2_narrative_concurrency == 0,
     )
-    if not all(checks):
+    direct_h2 = (
+        settings.company_card_v2_presentations_enabled,
+        settings.company_card_v2_writer_enabled,
+        settings.company_card_v2_direct_launch_enabled,
+        settings.company_card_v2_rollout_generation == 1,
+        settings.company_card_v2_allowlist_inns == [],
+        settings.company_card_v2_percentage_basis_points == 10000,
+        settings.company_card_v2_arbitration_collection_enabled,
+        bool(settings.company_card_v2_arbitration_mask_active_key_id),
+        settings.company_card_v2_arbitration_mask_keyring_json is not None,
+        settings.company_card_v2_narrative_enabled,
+        not settings.company_card_v2_narrative_kill_switch,
+        settings.company_card_v2_narrative_quota_mode == "unlimited",
+        settings.company_card_v2_narrative_daily_limit == 0,
+        settings.company_card_v2_narrative_monthly_limit == 0,
+        settings.company_card_v2_narrative_concurrency == 1,
+    )
+    if company_card_mode == "default-off":
+        company_card_ok = all(default_off)
+    elif company_card_mode == "default-off-or-direct-h2":
+        company_card_ok = all(default_off) or all(direct_h2)
+    else:
+        raise CandidateCheckError("candidate Company Card mode is invalid; STOP")
+    if not (all(common) and company_card_ok):
         raise CandidateCheckError("candidate settings contract mismatch; STOP")
 
 
-def _validate_settings(release_sha: str, provider_state: str) -> None:
+def _validate_settings(
+    release_sha: str,
+    provider_state: str,
+    company_card_mode: str,
+) -> None:
     try:
         from product_api.settings import get_settings
 
         settings = get_settings()
-        _settings_contract(settings, release_sha, provider_state)
+        _settings_contract(settings, release_sha, provider_state, company_card_mode)
     except CandidateCheckError:
         raise
     except Exception:
@@ -73,7 +109,7 @@ def _validate_alembic_graph() -> None:
 
         script = ScriptDirectory.from_config(Config("/app/alembic.ini"))
         if tuple(script.get_heads()) != (EXPECTED_HEAD,):
-            raise CandidateCheckError("candidate Alembic graph is not exact sole 0019; STOP")
+            raise CandidateCheckError("candidate Alembic graph is not exact sole 0020; STOP")
     except CandidateCheckError:
         raise
     except Exception:
@@ -153,14 +189,24 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("--release-sha", required=True)
     parser.add_argument("--provider-state", choices=("enabled", "disabled"))
+    parser.add_argument(
+        "--company-card-mode",
+        choices=("default-off", "default-off-or-direct-h2"),
+    )
     args = parser.parse_args(argv[1:])
     try:
         release_sha = _validate_release_sha(args.release_sha)
         result: str | None = None
         if args.command == "settings":
-            if args.provider_state is None:
-                raise CandidateCheckError("provider state is required; STOP")
-            _validate_settings(release_sha, args.provider_state)
+            if args.provider_state is None or args.company_card_mode is None:
+                raise CandidateCheckError(
+                    "provider state and Company Card mode are required; STOP"
+                )
+            _validate_settings(
+                release_sha,
+                args.provider_state,
+                args.company_card_mode,
+            )
         elif args.command == "alembic":
             _validate_alembic_graph()
         elif args.command == "gateway":

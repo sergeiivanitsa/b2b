@@ -220,6 +220,102 @@ async def resolve_public_h2(session: AsyncSession, *, inn: str) -> CompanyPublic
     return await _legacy_preview(session, record, inn)
 
 
+async def resolve_direct_public_h2(
+    session: AsyncSession,
+    *,
+    inn: str,
+    rollout_generation: int,
+) -> CompanyPublicH2Response:
+    """Resolve only the current direct-launch H2 head and its saved result.
+
+    The generic H2 reader deliberately supports assignment, staged preview and
+    legacy H1 fallback.  Direct launch must not expose any of those older
+    lineages while a new global H2 report is being created, so bind the read to
+    the durable lifecycle head for the configured generation first.
+    """
+    if type(rollout_generation) is not int or rollout_generation <= 0:
+        raise PublicH2Invalid("company card v2 rollout generation is invalid")
+    subject = await session.scalar(
+        select(CompanyReportSubject).where(
+            CompanyReportSubject.normalized_identifier == inn
+        )
+    )
+    if subject is None:
+        raise PublicH2NotFound("company card v2 was not found")
+    head = await session.get(CompanyReportH2LifecycleHead, subject.id)
+    if head is None:
+        raise PublicH2NotFound("company card v2 was not found")
+    if (
+        head.subject_id != subject.id
+        or head.presentation_contract != H2_PRESENTATION_CONTRACT
+    ):
+        raise PublicH2Invalid("company card v2 direct head is invalid")
+    if head.rollout_generation != rollout_generation:
+        # A head from an older rollout is not the direct-launch document.  A
+        # plain request must fall back to the SPA so POST can create the new
+        # generation instead of rendering the stale staged report.
+        raise PublicH2NotFound("company card v2 was not found")
+    presentation = await session.get(
+        CompanyReportPresentation,
+        head.presentation_id,
+    )
+    record = await session.get(CompanyReportRecord, head.report_id)
+    if (
+        presentation is None
+        or record is None
+        or presentation.subject_id != subject.id
+        or presentation.report_id != head.report_id
+        or presentation.presentation_contract != H2_PRESENTATION_CONTRACT
+        or presentation.rollout_generation != rollout_generation
+        or record.subject_id != subject.id
+        or record.writer_profile != H2_WRITER_PROFILE
+        or record.presentation_contract != H2_PRESENTATION_CONTRACT
+        or record.report_version != "3"
+        or record.rollout_generation != rollout_generation
+    ):
+        raise PublicH2Invalid("company card v2 direct binding is invalid")
+    if record.lifecycle_status == "pending":
+        raise PublicH2Pending("report_pending")
+    if record.lifecycle_status == "failed":
+        raise PublicH2Failed("report_failed")
+    staged = await session.scalar(
+        select(CompanyReportPresentationStagedPointer).where(
+            CompanyReportPresentationStagedPointer.subject_id == subject.id,
+            CompanyReportPresentationStagedPointer.presentation_contract
+            == H2_PRESENTATION_CONTRACT,
+        )
+    )
+    if staged is None:
+        # The writer has finished, but the narrative worker has not yet
+        # appended and staged the exact saved-result binding.
+        raise PublicH2Pending("report_pending")
+    pin = await session.scalar(
+        select(CompanyReportPresentationPin).where(
+            CompanyReportPresentationPin.subject_id == subject.id,
+            CompanyReportPresentationPin.presentation_contract
+            == H2_PRESENTATION_CONTRACT,
+            CompanyReportPresentationPin.generation == staged.generation,
+        )
+    )
+    if pin is None:
+        raise PublicH2Invalid("company card v2 staged binding is invalid")
+    if pin.report_id != record.id:
+        # A valid staged pointer from a previous H2 report may remain while the
+        # current narrative is being built.  Direct launch waits for the exact
+        # lifecycle head rather than allowing an old assignment or staged
+        # document to displace it.
+        raise PublicH2Pending("report_pending")
+    if not _is_staged_pin_shape(pin):
+        raise PublicH2Invalid("company card v2 staged binding is invalid")
+    return await _resolve_exact_v3(
+        session,
+        record,
+        pin=pin,
+        expected_subject_id=subject.id,
+        expected_inn=inn,
+    )
+
+
 async def _resolve_exact_v3(
     session: AsyncSession,
     record: CompanyReportRecord | None,
@@ -1049,5 +1145,6 @@ __all__ = [
     "PublicH2Pending",
     "build_active_public_h2_for_pin",
     "h2_cohort_selected",
+    "resolve_direct_public_h2",
     "resolve_public_h2",
 ]

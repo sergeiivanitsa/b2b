@@ -152,12 +152,22 @@ def _response(text: str | None = None, **overrides: object) -> ChatResponse:
     return ChatResponse.model_validate(values)
 
 
-def test_narrative_limits_are_default_closed_and_require_all_positive_controls() -> None:
+def test_narrative_limits_are_default_closed_and_support_explicit_unlimited_mode() -> None:
     assert not NarrativeLimits().permits_dispatch()
     assert not NarrativeLimits(enabled=True, kill_switch=True, daily_limit=1, monthly_limit=1, concurrency=1).permits_dispatch()
     assert NarrativeLimits(enabled=True, kill_switch=False, daily_limit=1, monthly_limit=1, concurrency=1).permits_dispatch()
+    assert NarrativeLimits(
+        enabled=True,
+        kill_switch=False,
+        quota_mode="unlimited",
+        daily_limit=0,
+        monthly_limit=0,
+        concurrency=1,
+    ).permits_dispatch()
     with pytest.raises(ValueError, match="non-negative"):
         NarrativeLimits(daily_limit=-1)
+    with pytest.raises(ValueError, match="zero daily and monthly"):
+        NarrativeLimits(quota_mode="unlimited", daily_limit=1)
 
 
 @pytest.mark.asyncio

@@ -26,6 +26,15 @@ from uuid import uuid4
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from deploy.product_api.release_image_identity import (  # noqa: E402
+    ReleaseImageIdentityError,
+    verify_observed_image_identity,
+)
+
+
 WORKER_DRAIN = REPO_ROOT / "deploy/product_api/worker_drain.py"
 WORKER_RECOVERY = REPO_ROOT / "deploy/product_api/worker_runtime_recovery.py"
 WORKER_IDENTITY = REPO_ROOT / "deploy/product_api/worker_runtime_identity.py"
@@ -305,7 +314,6 @@ def _verify_release_images(
     result: list[str] = []
     for service in ("product", "gateway"):
         archive = f"{service}-api-{release_sha}.oci.tar"
-        digest = manifest.get("images", {}).get(archive, {}).get("config_digest")
         actual = _run(
             (
                 "docker",
@@ -317,8 +325,14 @@ def _verify_release_images(
             ),
             label="candidate image inspection",
         )
-        if not isinstance(digest, str) or _IMAGE.fullmatch(digest) is None or actual != digest:
-            raise RehearsalError("candidate image/manifest identity mismatch; STOP")
+        try:
+            verify_observed_image_identity(
+                manifest_path, release_sha, archive, actual
+            )
+        except ReleaseImageIdentityError as exc:
+            raise RehearsalError(
+                "candidate image/manifest identity mismatch; STOP"
+            ) from exc
         result.append(actual)
     return result[0], result[1]
 

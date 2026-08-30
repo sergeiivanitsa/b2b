@@ -36,6 +36,17 @@ async def test_company_card_v2_foundation_tables_and_legacy_defaults(engine) -> 
         constraints = set((await connection.execute(text("SELECT conname FROM pg_constraint WHERE conrelid='company_report_presentation_pins'::regclass"))).scalars())
         assert "pk_company_report_presentation_pins" in constraints
         assert "fk_company_report_presentation_pins_report_subject" in constraints
+        runtime_columns = set(
+            (
+                await connection.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name='company_card_narrative_runtime_control'"
+                    )
+                )
+            ).scalars()
+        )
+        assert "quota_mode" in runtime_columns
 
 
 def test_company_card_v2_clean_0015_head_refuses_lossy_downgrade(monkeypatch) -> None:
@@ -77,10 +88,10 @@ def test_company_card_v2_clean_0015_head_refuses_lossy_downgrade(monkeypatch) ->
         assert asyncio.run(_read_h1_import(rendered_target)) == expected
         assert asyncio.run(_read_legacy_job_cohort(rendered_target)) == legacy_job_snapshot
         assert asyncio.run(_read_migrated_job_cohort(rendered_target)) == expected_migrated_jobs
-        assert asyncio.run(_revision(rendered_target)) == "0019_company_card_v2_rollout_control"
+        assert asyncio.run(_revision(rendered_target)) == "0020_company_card_narrative_quota_mode"
         with pytest.raises(RuntimeError, match="refuse to discard narrative data"):
             command.downgrade(config, "0015_claims_company_report_handoff")
-        assert asyncio.run(_revision(rendered_target)) == "0019_company_card_v2_rollout_control"
+        assert asyncio.run(_revision(rendered_target)) == "0020_company_card_narrative_quota_mode"
         assert not asyncio.run(
             _table_absent(rendered_target, "company_report_presentation_pins")
         )
@@ -96,7 +107,7 @@ def test_company_card_v2_clean_0015_head_refuses_lossy_downgrade(monkeypatch) ->
         assert asyncio.run(_read_h1_import(rendered_target)) == expected
         assert asyncio.run(_read_legacy_job_cohort(rendered_target)) == legacy_job_snapshot
         assert asyncio.run(_read_migrated_job_cohort(rendered_target)) == expected_migrated_jobs
-        assert asyncio.run(_revision(rendered_target)) == "0019_company_card_v2_rollout_control"
+        assert asyncio.run(_revision(rendered_target)) == "0020_company_card_narrative_quota_mode"
     finally:
         asyncio.run(_drop_database(rendered_admin, database_name))
 

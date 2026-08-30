@@ -54,6 +54,7 @@ class CompanyReportStatusResponse(StrictPublicModel):
     generated_at: datetime | None = None
     finished_at: datetime | None = None
     fresh_until: datetime | None = None
+    public_document_path: str | None = None
 
 
 class CompanyReportSafeFailureResponse(StrictPublicModel):

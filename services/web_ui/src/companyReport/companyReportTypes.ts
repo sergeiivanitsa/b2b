@@ -8,6 +8,7 @@ export type CompanyReportLifecycle = {
   generated_at?: string | null
   finished_at?: string | null
   fresh_until?: string | null
+  public_document_path?: string | null
 }
 
 export type PublicBlockId =

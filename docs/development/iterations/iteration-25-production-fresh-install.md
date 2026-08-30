@@ -16,7 +16,7 @@ Owner decision: существующие данные production можно по
 ## Цель
 
 Одним защищённым exact-SHA workflow перевести проверенный legacy production с
-Alembic `0015` на чистую schema `0019`, установить Product, report/narrative
+Alembic `0015` на чистую schema `0020`, установить Product, report/narrative
 workers, тот же exact Gateway, H2/Web/nginx и оставить Company Card v2 строго
 default-off. После успеха отдельным шагом остаётся H1 rollback anchor для
 `7707079463`, затем отдельно авторизуемый H2 canary.
@@ -57,7 +57,7 @@ default-off. После успеха отдельным шагом остаёт�
    CURRENT_USER`, `REVOKE ALL FROM PUBLIC`, затем выдаёт runtime role только
    `USAGE,CREATE`. DB-side marker связывает reset с exact SHA/identity.
 9. Exact candidate image выполняет `alembic upgrade head`; принимается только
-   sole `0019_company_card_v2_rollout_control`, пустые application tables и
+   sole `0020_company_card_narrative_quota_mode`, пустые application tables и
    точные default-off singleton rows. Interrupted empty Alembic stub допускается
    только по exact structural catalog contract и полному raw `pg_depend`
    closure; неожиданный trigger, policy, collation или иной dependent object —
@@ -99,7 +99,7 @@ default-off. После успеха отдельным шагом остаёт�
 - после DROP никогда не запускается legacy Product; reboot/retry продолжает
   exact-SHA roll-forward, а nginx boot guard не допускает regular config при
   incomplete/invalid recovery;
-- migration заканчивается exact `0019`, default-off singleton rows точны,
+- migration заканчивается exact `0020`, default-off singleton rows точны,
   остальные tables пусты до startup;
 - startup создаёт ровно одного server-configured active superadmin;
 - normal deploy требует canonical global fresh success и не выполняет writes

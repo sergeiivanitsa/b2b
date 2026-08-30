@@ -483,28 +483,15 @@ jobs:
           web_archive="$PWD/.release/verified/web-ui-$RELEASE_SHA.tgz"
           web_archive_sha="$(sha256sum "$web_archive")"
           python deploy/web_ui/install_web_ui_release.sh verify "$web_archive" "$RELEASE_SHA" "${web_archive_sha%% *}"
-          mapfile -t expected_images < <(python - <<'PY'
-          import json, os, re
-          from pathlib import Path
-          release_sha = os.environ["RELEASE_SHA"]
-          manifest = json.loads((Path(".release/verified") / f"release-manifest-{release_sha}.json").read_text(encoding="utf-8"))
-          if manifest.get("release_sha") != release_sha:
-              raise SystemExit("release manifest SHA mismatch")
-          for name in (
-              f"product-api-{release_sha}.oci.tar",
-              f"gateway-api-{release_sha}.oci.tar",
-          ):
-              digest = manifest.get("images", {}).get(name, {}).get("config_digest")
-              if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
-                  raise SystemExit("release image config digest is invalid")
-              print(digest)
-          PY
-          )
-          test "${#expected_images[@]}" -eq 2
           docker load --input ".release/verified/product-api-$RELEASE_SHA.oci.tar"
           docker load --input ".release/verified/gateway-api-$RELEASE_SHA.oci.tar"
-          test "$(docker image inspect --format '{{.Id}}' "b2b-product-api:$RELEASE_SHA")" = "${expected_images[0]}"
-          test "$(docker image inspect --format '{{.Id}}' "b2b-gateway-api:$RELEASE_SHA")" = "${expected_images[1]}"
+          for service in product gateway; do
+            archive="$service-api-$RELEASE_SHA.oci.tar"
+            image_id="$(docker image inspect --format '{{.Id}}' "b2b-$service-api:$RELEASE_SHA")"
+            python deploy/product_api/release_image_identity.py \
+              ".release/verified/release-manifest-$RELEASE_SHA.json" \
+              "$RELEASE_SHA" "$archive" "$image_id" >/dev/null
+          done
           docker run --rm --network=none --env-file .github/ci/release-import-smoke.vars --entrypoint python "b2b-product-api:$RELEASE_SHA" -c "import product_api.main; import product_api.company_reports.worker; import product_api.company_reports.company_card_v2.narrative.worker"
           docker run --rm --network=none --env-file .github/ci/release-import-smoke.vars --entrypoint python "b2b-gateway-api:$RELEASE_SHA" -c "import gateway_api.main"
           mkdir -p services/web_ui/dist-company-public-h2

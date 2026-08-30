@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 QA = ROOT / ".github/workflows/qa.yml"
 DEPLOY = ROOT / ".github/workflows/deploy_prod.yml"
 DEPLOY_PREFLIGHT = ROOT / ".github/workflows/deploy_prod_preflight.yml"
+ACTIVATE_COMPANY_CARD_V2 = ROOT / ".github/workflows/activate_company_card_v2.yml"
 PRODUCTION_PREFLIGHT = ROOT / "deploy/production_runtime_preflight.sh"
 LEGACY_BOOTSTRAP = ROOT / ".github/workflows/deploy_prod_legacy_0015_bootstrap.yml"
 LEGACY_BOOTSTRAP_RUNNER = ROOT / "deploy/product_api/legacy_0015_bootstrap_runner.sh"
@@ -392,16 +393,12 @@ def test_release_contract_loads_exact_archives_without_rebuild() -> None:
     assert contract.index(load_lines[1]) < contract.index(
         'docker run --rm --network=none --env-file '
     )
-    assert "mapfile -t expected_images" in contract
-    assert 'get("config_digest")' in contract
-    assert 're.fullmatch(r"sha256:[0-9a-f]{64}", digest)' in contract
-    assert 'test "${#expected_images[@]}" -eq 2' in contract
+    assert "mapfile -t expected_images" not in contract
+    assert "release_image_identity.py" in contract
+    assert 'for service in product gateway; do' in contract
+    assert 'archive="$service-api-$RELEASE_SHA.oci.tar"' in contract
     assert (
-        "docker image inspect --format '{{.Id}}' \"b2b-product-api:$RELEASE_SHA\""
-        in contract
-    )
-    assert (
-        "docker image inspect --format '{{.Id}}' \"b2b-gateway-api:$RELEASE_SHA\""
+        "docker image inspect --format '{{.Id}}' \"b2b-$service-api:$RELEASE_SHA\""
         in contract
     )
 
@@ -731,8 +728,10 @@ def test_deploy_is_manual_current_main_protected_qa_consumer_in_exact_order() ->
     assert "worker-drain-result.json" in text
     assert "database_target_sha256" in text
     assert 'test \\"\\$candidate_db_sha\\" = \\"\\$drained_db_sha\\"' in text
-    assert text.count("['images'][sys.argv[2]]['config_digest']") == 3
-    assert text.count('test \\"\\$candidate_image\\" = \\"\\$expected_image\\"') == 3
+    assert text.count("python3 release_image_identity.py") == 3
+    assert text.count("deploy/product_api/release_image_identity.py") == 2
+    assert "['images'][sys.argv[2]]['config_digest']" not in text
+    assert 'test \\"\\$candidate_image\\" = \\"\\$expected_image\\"' not in text
     assert text.count("docker inspect --format '{{.Image}}'") >= 4
     assert "sha256sum --strict --ignore-missing --check" in text
     assert "com.docker.compose.project" in text
@@ -750,6 +749,7 @@ def test_deploy_is_manual_current_main_protected_qa_consumer_in_exact_order() ->
     assert "steps.web_guard.outputs.armed == 'true'" in text
     assert "fresh_install_candidate.py" in text
     assert "python - settings --release-sha '$RELEASE_SHA'" in text
+    assert text.count("--company-card-mode default-off-or-direct-h2") == 2
     assert "python - gateway --release-sha '$RELEASE_SHA'" in text
     assert "settings.company_card_v2_allowlist_inns == []" in candidate
     assert "settings.company_card_v2_narrative_daily_limit == 0" in candidate
@@ -1421,3 +1421,136 @@ def test_seed_bundle_is_manual_fixed_three_release_non_production_artifact() -> 
     assert "seed-bundle-checksums.txt" in text
     assert "seed release asset graph mismatch" in text
     assert "seed release asset bytes mismatch" in text
+
+
+def test_company_card_v2_activation_is_manual_exact_sha_and_protected() -> None:
+    text = ACTIVATE_COMPANY_CARD_V2.read_text(encoding="utf-8")
+    for token in (
+        "workflow_dispatch:",
+        "environment: production",
+        "group: prod-deploy",
+        "cancel-in-progress: false",
+        "refs/heads/main",
+        "git merge-base --is-ancestor",
+        "ACTIVATE-GLOBAL-H2-WITH-OPENAI",
+        "PROTECTED_REPOSITORY",
+        "RU_DEPLOY_TARGET",
+        "US_DEPLOY_TARGET",
+        "RU_SSH_KNOWN_HOSTS",
+        "US_SSH_KNOWN_HOSTS",
+    ):
+        assert token in text
+    assert "push:" not in text
+    assert "pull_request:" not in text
+    assert "ubuntu-latest" not in text
+    assert "persist-credentials: false" in text
+    assert "ssh-agent -k >/dev/null 2>&1 || true" in text
+    assert "StrictHostKeyChecking=yes" in text
+
+
+def test_company_card_v2_activation_has_no_comparison_or_cohort_ladder() -> None:
+    text = ACTIVATE_COMPANY_CARD_V2.read_text(encoding="utf-8").lower()
+    for forbidden in (
+        "canary",
+        "h1/h2",
+        "rollback anchor",
+        "observation window",
+        "build-decisions",
+        "company_card_v2_allowlist_inns=7707079463",
+    ):
+        assert forbidden not in text
+    assert "global h2" in text
+
+
+def test_company_card_v2_activation_proves_live_release_schema_and_openai_before_mutation() -> None:
+    text = ACTIVATE_COMPANY_CARD_V2.read_text(encoding="utf-8")
+    preflight = text.split(
+        "Prove exact live SHA, schema 0020, topology and OpenAI credential before mutation", 1
+    )[1].split("Provision durable Product arbitration mask identity", 1)[0]
+    for token in (
+        "b2b-product-api:$release_sha",
+        "PRODUCT_RELEASE_COMMIT=$release_sha",
+        "b2b-gateway-api:$release_sha",
+        "GATEWAY_RELEASE_COMMIT=$release_sha",
+        "schema-head --expected 0020_company_card_narrative_quota_mode",
+        "release_image_identity.py",
+        "release-manifest-$release_sha.json",
+        "product-api-$release_sha.oci.tar",
+        "gateway-api-$release_sha.oci.tar",
+        "preflight --role product --environment-file /opt/b2b/.env.product",
+        "preflight --role gateway --environment-file /opt/b2b/.env.gateway",
+    ):
+        assert token in preflight
+    assert text.index("Prove exact live SHA") < text.index("apply --role gateway")
+    assert text.index("Prove exact live SHA") < text.index("prepare-mask")
+    assert text.index("prepare-mask") < text.index("apply --role gateway")
+    assert text.index("apply --role gateway") < text.index("apply --role product")
+    assert "${{ secrets.OPENAI_API_KEY }}" not in text
+    assert "cat /opt/b2b/.env" not in text
+
+
+def test_company_card_v2_activation_is_atomic_verified_and_reversible() -> None:
+    workflow = ACTIVATE_COMPANY_CARD_V2.read_text(encoding="utf-8")
+    helper = (ROOT / "deploy/product_api/company_card_v2_activation.py").read_text(encoding="utf-8")
+    for token in (
+        "company_card_v2_activation.py\" apply --role gateway",
+        "company_card_v2_activation.py\" apply --role product",
+        "--backup-file \"$stage/env.gateway.before\"",
+        "--backup-file \"$stage/env.product.before\"",
+        "--receipt-file \"$stage/env.gateway.activation.json\"",
+        "--receipt-file \"$stage/env.product.activation.json\"",
+        "id: activation_success",
+        "if: always()",
+        'ROLLBACK_REQUIRED: ${{ failure() || cancelled() }}',
+        'test "$ROLLBACK_REQUIRED" = true',
+        "ssh-agent -k >/dev/null 2>&1 || true",
+        "restore --role product",
+        "restore --role gateway",
+        "--force-recreate gateway_api",
+        "--force-recreate product_api company_report_worker company_card_narrative_worker",
+        "in-process-verify --role gateway",
+        "in-process-verify --role product",
+        "python - gateway --release-sha",
+        "prepare-mask --environment-file /opt/b2b/.env.product",
+        "--durable-mask-file /opt/b2b/.company-card-v2-arbitration-mask-v1.json",
+    ):
+        assert token in workflow
+    assert workflow.index("restore --role product") < workflow.index("restore --role gateway")
+    assert workflow.rfind('ssh-agent -k >/dev/null 2>&1 || true') < workflow.rfind('exit "$rollback_status"')
+    assert workflow.count("rollback_status=1") == 2
+    assert 'exit "$rollback_status"' in workflow
+    assert "os.O_EXCL" in helper
+    assert "os.replace(temporary, path)" in helper
+    apply_body = helper.split("def apply(", 1)[1].split("def verify(", 1)[0]
+    assert apply_body.index("_write_receipt(") < apply_body.index("_atomic_replace(environment_file, updated, info)")
+    assert "automatic restore refused" in helper
+    assert workflow.index("Provision durable Product arbitration mask identity") < workflow.index(
+        "apply --role product"
+    )
+    rollback = workflow.split("Finalize rollback and local activation credentials", 1)[1]
+    assert "unlink /opt/b2b/.company-card-v2-arbitration-mask-v1.json" not in rollback
+
+
+def test_company_card_v2_activation_enables_global_h2_charts_and_unlimited_narrative() -> None:
+    helper = (ROOT / "deploy/product_api/company_card_v2_activation.py").read_text(encoding="utf-8")
+    for token in (
+        '"COMPANY_CARD_V2_PRESENTATIONS_ENABLED": "true"',
+        '"COMPANY_CARD_V2_WRITER_ENABLED": "true"',
+        '"COMPANY_CARD_V2_DIRECT_LAUNCH_ENABLED": "true"',
+        '"COMPANY_CARD_V2_ROLLOUT_GENERATION": "1"',
+        '"COMPANY_CARD_V2_ALLOWLIST_INNS": ""',
+        '"COMPANY_CARD_V2_PERCENTAGE_BASIS_POINTS": "10000"',
+        '"COMPANY_CARD_V2_ARBITRATION_COLLECTION_ENABLED": "true"',
+        '"COMPANY_CARD_AI_NARRATIVE_ENABLED": "true"',
+        '"COMPANY_CARD_AI_NARRATIVE_KILL_SWITCH": "false"',
+        '"COMPANY_CARD_AI_NARRATIVE_QUOTA_MODE": "unlimited"',
+        '"COMPANY_CARD_AI_NARRATIVE_DAILY_DISPATCH_CREDITS": "0"',
+        '"COMPANY_CARD_AI_NARRATIVE_MONTHLY_DISPATCH_CREDITS": "0"',
+        '"COMPANY_CARD_AI_NARRATIVE_WORKER_CONCURRENCY": "1"',
+        '"COMPANY_CARD_NARRATIVE_GATEWAY_ENABLED": "true"',
+        '"COMPANY_CARD_NARRATIVE_MODEL": "gpt-5-nano"',
+        "secrets.token_bytes(32)",
+    ):
+        assert token in helper
+    assert "print(values" not in helper
+    assert "print(environment" not in helper

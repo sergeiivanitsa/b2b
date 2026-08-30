@@ -20,6 +20,7 @@ import {
 import type { CompanyPublicH1Response } from '../companyReport/companyReportTypes'
 import { CompanyReportContent, type CompanyReportView } from '../components/company-report/CompanyReportContent'
 import { ApiHttpError } from '../lib/api'
+import { navigateToCompany } from './companyLandingNavigation'
 
 const PENDING_TITLES = [
   'Проверяем компанию',
@@ -439,6 +440,25 @@ export function CompanyReportPage() {
           } else {
             enterPending(route, false, status.started_at)
           }
+          return
+        }
+        if (status.public_document_path != null) {
+          if (status.public_document_path !== `/company/${route.inn}`) {
+            showError(
+              route,
+              new CompanyReportContractError(),
+              'status',
+              false,
+              mode,
+              false,
+            )
+            return
+          }
+          retryRef.current = null
+          pendingTimelineRef.current = null
+          setView({ kind: 'loading_h1' })
+          setCompanySafeTitle('Открываем отчёт')
+          navigateToCompany(route.inn)
           return
         }
         await loadH1(route, false, mode, false)

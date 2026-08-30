@@ -202,15 +202,16 @@ default branch.
 
 The owner-approved first transition from the verified legacy `0015` server is
 the one-time `.github/workflows/deploy_prod_fresh_install.yml`. It deletes only
-PostgreSQL schema `public`, recreates a clean exact-`0019` schema and deploys
+PostgreSQL schema `public`, recreates a clean exact-`0020` schema and deploys
 the exact QA Product/Gateway/H2/Web release under maintenance. Claims upload
 files are outside that destructive scope and Product now requires their
 persistent host bind. The older backup/bootstrap workflow is superseded and
 must not be used for this transition. After DROP, recovery is maintenance plus
 same-SHA roll-forward, never the legacy image. All H2 writer/presentation/
 arbitration/rollout and paid-AI controls remain off/zero. After success, create
-the retained H1 anchor for `7707079463`; assigning H2 still requires a separate
-explicit owner decision. Percentage/GA rollout remains out of scope.
+the retained H1 anchor for `7707079463`. The later owner decision supersedes
+that canary path: direct global H2 and OpenAI activation are now performed by
+the separate protected `activate_company_card_v2.yml` workflow.
 
 ## SMTP requirements (product_api)
 Set these env vars before production deploy:
@@ -303,18 +304,24 @@ Default local values are documented in:
 - `services/product_api/.env.example`
 - `docker-compose.yml`
 
-## Company Card v2 AI narrative (default off)
+## Company Card v2 AI narrative
 
 Iteration 21 adds a separate durable narrative worker. It is not started by
 the default Compose profile and all dispatch controls fail closed: the Product
 feature flag is false, the kill switch is true, daily/monthly/concurrency
-limits are zero, the Gateway profile is disabled, and no model is selected.
+limits are zero, and the Gateway profile is disabled. The configured default
+model is `gpt-5-nano`, but it cannot be called while the profile is disabled or
+without a server-local `OPENAI_API_KEY`.
 
 For an explicitly approved non-production environment, configure both
 `services/product_api/.env` and `services/gateway_api/.env`, then start the
-worker with the `company-card-narrative` Compose profile. Enabling requires an
-open kill switch and positive daily, monthly, and concurrency limits. The
-Gateway additionally requires an explicitly configured narrative model.
+worker with the `company-card-narrative` Compose profile. Enabling always
+requires an open kill switch and positive worker concurrency. In
+`COMPANY_CARD_AI_NARRATIVE_QUOTA_MODE=bounded`, both daily and monthly limits
+must be positive. In explicitly approved `unlimited` mode, both limits must be
+exactly `0`; concurrency remains technical backpressure and is not a spend
+cap. The Gateway additionally requires its enabled narrative profile, model
+and server-local OpenAI credential.
 
 ```bash
 docker compose --profile company-card-narrative up -d company_card_narrative_worker

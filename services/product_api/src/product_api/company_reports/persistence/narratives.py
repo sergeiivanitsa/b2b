@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from typing import Literal
 from zoneinfo import ZoneInfo
 from uuid import UUID, uuid4
 
@@ -171,10 +172,24 @@ async def synchronize_narrative_runtime_control(
     monthly_limit: int,
     concurrency_limit: int,
     now: datetime,
+    quota_mode: Literal["bounded", "unlimited"] = "bounded",
 ) -> CompanyCardNarrativeRuntimeControl:
     if min(daily_limit, monthly_limit, concurrency_limit) < 0:
         raise ValueError("narrative runtime limits must be non-negative")
-    if enabled and (kill_switch or not all((daily_limit, monthly_limit, concurrency_limit))):
+    if quota_mode not in {"bounded", "unlimited"}:
+        raise ValueError("narrative quota mode is invalid")
+    if quota_mode == "unlimited" and (daily_limit != 0 or monthly_limit != 0):
+        raise ValueError(
+            "unlimited narrative runtime requires zero daily and monthly limits"
+        )
+    if enabled and (
+        kill_switch
+        or concurrency_limit <= 0
+        or (
+            quota_mode == "bounded"
+            and (daily_limit <= 0 or monthly_limit <= 0)
+        )
+    ):
         raise ValueError("enabled narrative runtime must be fully open")
     row = await session.get(CompanyCardNarrativeRuntimeControl, 1, with_for_update=True)
     if row is None:
@@ -190,12 +205,28 @@ async def synchronize_narrative_runtime_control(
         )
     row.enabled = enabled
     row.kill_switch = kill_switch
+    row.quota_mode = quota_mode
     row.daily_limit = daily_limit
     row.monthly_limit = monthly_limit
     row.concurrency_limit = concurrency_limit
     row.updated_at = _aware_utc(now)
     await session.flush()
     return row
+
+
+def _runtime_open(control: CompanyCardNarrativeRuntimeControl | None) -> bool:
+    if (
+        control is None
+        or not control.enabled
+        or control.kill_switch
+        or control.concurrency_limit <= 0
+    ):
+        return False
+    if control.quota_mode == "unlimited":
+        return control.daily_limit == 0 and control.monthly_limit == 0
+    if control.quota_mode == "bounded":
+        return control.daily_limit > 0 and control.monthly_limit > 0
+    return False
 
 
 async def resolve_exact_narrative_binding(
@@ -310,9 +341,7 @@ async def reserve_or_rereserve_dispatch_credit(
     """Reserve one credit under the singleton lock and both Moscow windows."""
     now = _aware_utc(now)
     control = await session.get(CompanyCardNarrativeRuntimeControl, 1, with_for_update=True)
-    if control is None or not control.enabled or control.kill_switch:
-        raise NarrativeBudgetUnavailable("narrative_runtime_closed")
-    if not all((control.daily_limit, control.monthly_limit, control.concurrency_limit)):
+    if not _runtime_open(control):
         raise NarrativeBudgetUnavailable("narrative_runtime_closed")
     reservation = await session.get(
         CompanyCardNarrativeBudgetReservation,
@@ -334,10 +363,11 @@ async def reserve_or_rereserve_dispatch_credit(
         raise NarrativePersistenceError("narrative job is not reservable")
 
     daily, monthly = await _window_rows(session, now=now)
-    if daily.reserved_count + daily.consumed_count >= control.daily_limit:
-        raise NarrativeBudgetUnavailable("daily_budget_exhausted")
-    if monthly.reserved_count + monthly.consumed_count >= control.monthly_limit:
-        raise NarrativeBudgetUnavailable("monthly_budget_exhausted")
+    if control.quota_mode == "bounded":
+        if daily.reserved_count + daily.consumed_count >= control.daily_limit:
+            raise NarrativeBudgetUnavailable("daily_budget_exhausted")
+        if monthly.reserved_count + monthly.consumed_count >= control.monthly_limit:
+            raise NarrativeBudgetUnavailable("monthly_budget_exhausted")
     daily.reserved_count += 1
     monthly.reserved_count += 1
     if reservation is None:
@@ -395,10 +425,7 @@ async def claim_narrative_job(
         raise ValueError("narrative job lease must be positive")
     control = await session.get(CompanyCardNarrativeRuntimeControl, 1, with_for_update=True)
     if (
-        control is None
-        or not control.enabled
-        or control.kill_switch
-        or not all((control.daily_limit, control.monthly_limit, control.concurrency_limit))
+        not _runtime_open(control)
         or control.leased_count >= control.concurrency_limit
     ):
         return None
@@ -507,12 +534,7 @@ async def mark_dispatching(
     now = _aware_utc(now)
     control = await session.get(CompanyCardNarrativeRuntimeControl, 1, with_for_update=True)
     if (
-        control is None
-        or not control.enabled
-        or control.kill_switch
-        or not all(
-            (control.daily_limit, control.monthly_limit, control.concurrency_limit)
-        )
+        not _runtime_open(control)
         or control.leased_count <= 0
         or control.leased_count > control.concurrency_limit
     ):

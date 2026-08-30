@@ -1,6 +1,6 @@
 import re
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -175,6 +175,10 @@ class Settings(BaseSettings):
     )
     company_card_v2_presentations_enabled: bool = Field(default=False, validation_alias="COMPANY_CARD_V2_PRESENTATIONS_ENABLED")
     company_card_v2_writer_enabled: bool = Field(default=False, validation_alias="COMPANY_CARD_V2_WRITER_ENABLED")
+    company_card_v2_direct_launch_enabled: bool = Field(
+        default=False,
+        validation_alias="COMPANY_CARD_V2_DIRECT_LAUNCH_ENABLED",
+    )
     company_card_v2_rollout_generation: int = Field(default=0, validation_alias="COMPANY_CARD_V2_ROLLOUT_GENERATION")
     company_card_v2_allowlist_inns: Annotated[list[str], NoDecode] = Field(default=[], validation_alias="COMPANY_CARD_V2_ALLOWLIST_INNS")
     company_card_v2_percentage_basis_points: int = Field(default=0, validation_alias="COMPANY_CARD_V2_PERCENTAGE_BASIS_POINTS")
@@ -192,6 +196,10 @@ class Settings(BaseSettings):
     )
     company_card_v2_narrative_enabled: bool = Field(default=False, validation_alias="COMPANY_CARD_AI_NARRATIVE_ENABLED")
     company_card_v2_narrative_kill_switch: bool = Field(default=True, validation_alias="COMPANY_CARD_AI_NARRATIVE_KILL_SWITCH")
+    company_card_v2_narrative_quota_mode: Literal["bounded", "unlimited"] = Field(
+        default="bounded",
+        validation_alias="COMPANY_CARD_AI_NARRATIVE_QUOTA_MODE",
+    )
     company_card_v2_narrative_daily_limit: int = Field(default=0, validation_alias="COMPANY_CARD_AI_NARRATIVE_DAILY_DISPATCH_CREDITS")
     company_card_v2_narrative_monthly_limit: int = Field(default=0, validation_alias="COMPANY_CARD_AI_NARRATIVE_MONTHLY_DISPATCH_CREDITS")
     company_card_v2_narrative_concurrency: int = Field(default=0, validation_alias="COMPANY_CARD_AI_NARRATIVE_WORKER_CONCURRENCY")
@@ -238,6 +246,14 @@ class Settings(BaseSettings):
             raise ValueError("COMPANY_CARD_V2_PERCENTAGE_BASIS_POINTS must be in 0..10000")
         if (self.company_card_v2_presentations_enabled or self.company_card_v2_writer_enabled) and self.company_card_v2_rollout_generation <= 0:
             raise ValueError("enabled Company Card v2 requires positive rollout generation")
+        if self.company_card_v2_direct_launch_enabled and (
+            not self.company_card_v2_presentations_enabled
+            or not self.company_card_v2_writer_enabled
+            or self.company_card_v2_percentage_basis_points != 10000
+        ):
+            raise ValueError(
+                "direct Company Card v2 launch requires presentations, writer and 10000 basis points"
+            )
         for inn in self.company_card_v2_allowlist_inns:
             if not isinstance(inn, str) or not inn.isascii() or not inn.isdigit() or len(inn) not in {10, 12}:
                 raise ValueError("COMPANY_CARD_V2_ALLOWLIST_INNS must contain INNs only")
@@ -245,11 +261,30 @@ class Settings(BaseSettings):
             raise ValueError("COMPANY_CARD_V2_ALLOWLIST_INNS must be sorted and unique")
         if min(self.company_card_v2_narrative_daily_limit, self.company_card_v2_narrative_monthly_limit, self.company_card_v2_narrative_concurrency) < 0:
             raise ValueError("Company Card narrative limits must be non-negative")
+        if self.company_card_v2_narrative_quota_mode == "unlimited" and (
+            self.company_card_v2_narrative_daily_limit != 0
+            or self.company_card_v2_narrative_monthly_limit != 0
+        ):
+            raise ValueError(
+                "unlimited Company Card narrative requires zero daily and monthly limits"
+            )
         if self.company_card_v2_narrative_enabled and (
             self.company_card_v2_narrative_kill_switch
-            or not all((self.company_card_v2_narrative_daily_limit, self.company_card_v2_narrative_monthly_limit, self.company_card_v2_narrative_concurrency))
+            or self.company_card_v2_narrative_concurrency <= 0
+            or (
+                self.company_card_v2_narrative_quota_mode == "bounded"
+                and not all(
+                    (
+                        self.company_card_v2_narrative_daily_limit,
+                        self.company_card_v2_narrative_monthly_limit,
+                    )
+                )
+            )
         ):
-            raise ValueError("enabled Company Card narrative requires open kill switch and positive limits")
+            raise ValueError(
+                "enabled Company Card narrative requires open kill switch, positive "
+                "concurrency and valid quota controls"
+            )
         if not 1 <= self.company_card_v2_narrative_gateway_timeout_seconds <= 20 or not 1 <= self.company_card_v2_narrative_max_output_tokens <= 600:
             raise ValueError("Company Card narrative gateway options are out of bounds")
         return self

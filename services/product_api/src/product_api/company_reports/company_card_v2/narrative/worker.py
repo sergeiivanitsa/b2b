@@ -84,6 +84,7 @@ def _limits(settings: Settings) -> NarrativeLimits:
     return NarrativeLimits(
         enabled=settings.company_card_v2_narrative_enabled,
         kill_switch=settings.company_card_v2_narrative_kill_switch,
+        quota_mode=settings.company_card_v2_narrative_quota_mode,
         daily_limit=settings.company_card_v2_narrative_daily_limit,
         monthly_limit=settings.company_card_v2_narrative_monthly_limit,
         concurrency=settings.company_card_v2_narrative_concurrency,
@@ -183,6 +184,7 @@ async def run_once(
                 session,
                 enabled=limits.enabled,
                 kill_switch=limits.kill_switch,
+                quota_mode=limits.quota_mode,
                 daily_limit=limits.daily_limit,
                 monthly_limit=limits.monthly_limit,
                 concurrency_limit=limits.concurrency,

@@ -21,6 +21,8 @@ SPEC.loader.exec_module(rehearsal)
 RELEASE_SHA = "1" * 40
 PRODUCT_IMAGE = f"sha256:{'a' * 64}"
 GATEWAY_IMAGE = f"sha256:{'b' * 64}"
+PRODUCT_CONFIG_IMAGE = f"sha256:{'d' * 64}"
+GATEWAY_CONFIG_IMAGE = f"sha256:{'e' * 64}"
 POSTGRES_IMAGE = "postgres:16.9-alpine@sha256:" + "c" * 64
 
 
@@ -31,8 +33,14 @@ def _release_root(tmp_path: Path) -> Path:
         "release_sha": RELEASE_SHA,
         "pins": {"postgres_image": POSTGRES_IMAGE},
         "images": {
-            f"product-api-{RELEASE_SHA}.oci.tar": {"config_digest": PRODUCT_IMAGE},
-            f"gateway-api-{RELEASE_SHA}.oci.tar": {"config_digest": GATEWAY_IMAGE},
+            f"product-api-{RELEASE_SHA}.oci.tar": {
+                "oci_digest": PRODUCT_IMAGE,
+                "config_digest": PRODUCT_CONFIG_IMAGE,
+            },
+            f"gateway-api-{RELEASE_SHA}.oci.tar": {
+                "oci_digest": GATEWAY_IMAGE,
+                "config_digest": GATEWAY_CONFIG_IMAGE,
+            },
         },
     }
     (root / f"release-manifest-{RELEASE_SHA}.json").write_text(
@@ -58,6 +66,26 @@ def test_release_image_verification_binds_both_loaded_images_to_manifest(
     assert rehearsal._verify_release_images(root, RELEASE_SHA, POSTGRES_IMAGE) == (
         PRODUCT_IMAGE,
         GATEWAY_IMAGE,
+    )
+
+
+def test_release_image_verification_accepts_classic_config_store_identities(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _release_root(tmp_path)
+
+    def run(arguments, **kwargs):
+        tag = tuple(arguments)[-1]
+        return {
+            f"b2b-product-api:{RELEASE_SHA}": PRODUCT_CONFIG_IMAGE,
+            f"b2b-gateway-api:{RELEASE_SHA}": GATEWAY_CONFIG_IMAGE,
+        }[tag]
+
+    monkeypatch.setattr(rehearsal, "_run", run)
+    assert rehearsal._verify_release_images(root, RELEASE_SHA, POSTGRES_IMAGE) == (
+        PRODUCT_CONFIG_IMAGE,
+        GATEWAY_CONFIG_IMAGE,
     )
 
 

@@ -180,6 +180,139 @@ def test_public_page_serves_ssr_and_rejects_query_without_writes(monkeypatch):
         app.dependency_overrides.pop(get_session, None)
 
 
+def test_direct_launch_ssr_renders_staged_h2_without_assignment(monkeypatch):
+    dto = SimpleNamespace(
+        canonical_path="/company/0000000000-direct-h2",
+        indexable=False,
+    )
+    calls = []
+
+    async def fake_h2_resolve(_session, *, inn, rollout_generation):
+        calls.append(inn)
+        assert rollout_generation == 7
+        return dto
+
+    async def forbidden_assignment_resolver(*_args, **_kwargs):
+        raise AssertionError("direct H2 must not require a public assignment")
+
+    async def fake_session():
+        yield object()
+
+    monkeypatch.setattr(
+        public_routes,
+        "get_settings",
+        lambda: SimpleNamespace(
+            company_card_v2_direct_launch_enabled=True,
+            company_card_v2_rollout_generation=7,
+        ),
+    )
+    monkeypatch.setattr(
+        public_routes,
+        "resolve_direct_public_h2",
+        fake_h2_resolve,
+    )
+    monkeypatch.setattr(
+        public_routes,
+        "resolve_public_document",
+        forbidden_assignment_resolver,
+    )
+    monkeypatch.setattr(public_routes, "_public_h2_asset_manifest", lambda: object())
+    monkeypatch.setattr(
+        public_routes,
+        "render_public_h2_document",
+        lambda resolved, _manifest, _nonce, _robots: (
+            "<html><body>direct-h2</body></html>"
+            if resolved is dto
+            else (_ for _ in ()).throw(AssertionError("wrong DTO"))
+        ),
+    )
+    monkeypatch.setattr(
+        public_routes,
+        "public_h2_security_headers",
+        lambda _nonce, robots: {
+            "Cache-Control": "no-store",
+            "X-Robots-Tag": robots,
+        },
+    )
+    app.dependency_overrides[get_session] = fake_session
+    try:
+        with TestClient(app) as client:
+            response = client.get(dto.canonical_path)
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+    assert response.status_code == 200
+    assert response.text == "<html><body>direct-h2</body></html>"
+    assert response.headers["x-robots-tag"] == "noindex,follow"
+    assert calls == ["0000000000"]
+
+
+def test_direct_launch_pending_plain_path_remains_spa_fallback(monkeypatch):
+    async def pending(*_args, **_kwargs):
+        raise public_routes.PublicH2Pending("report_pending")
+
+    async def fake_session():
+        yield object()
+
+    monkeypatch.setattr(
+        public_routes,
+        "get_settings",
+        lambda: SimpleNamespace(
+            company_card_v2_direct_launch_enabled=True,
+            company_card_v2_rollout_generation=7,
+        ),
+    )
+    monkeypatch.setattr(public_routes, "resolve_direct_public_h2", pending)
+    app.dependency_overrides[get_session] = fake_session
+    try:
+        with TestClient(app) as client:
+            response = client.get("/company/0000000000")
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+    assert response.status_code == 404
+    assert response.headers["x-robots-tag"] == "noindex,follow"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        public_routes.PublicH2NotFound("company card v2 was not found"),
+        public_routes.PublicH2Pending("report_pending"),
+    ],
+)
+def test_direct_launch_old_canonical_slug_redirects_to_plain_spa_boundary(
+    monkeypatch,
+    failure,
+):
+    async def unavailable(*_args, **_kwargs):
+        raise failure
+
+    async def fake_session():
+        yield object()
+
+    monkeypatch.setattr(
+        public_routes,
+        "get_settings",
+        lambda: SimpleNamespace(
+            company_card_v2_direct_launch_enabled=True,
+            company_card_v2_rollout_generation=7,
+        ),
+    )
+    monkeypatch.setattr(public_routes, "resolve_direct_public_h2", unavailable)
+    app.dependency_overrides[get_session] = fake_session
+    try:
+        with TestClient(app, follow_redirects=False) as client:
+            response = client.get("/company/0000000000-old-h1-slug")
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/company/0000000000"
+    assert response.headers["x-robots-tag"] == "noindex,follow"
+    assert response.headers["cache-control"] == "no-store"
+
+
 def test_api_and_ssr_have_complete_deterministic_escaped_partial_dto_parity(
     monkeypatch,
 ):
