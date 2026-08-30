@@ -859,7 +859,7 @@ def test_normal_deploy_preflights_exact_drain_sql_and_recovers_after_drain_or_ca
     ):
         assert token in rollback
     product = text.split(product_name, 1)[1].split(
-        "Arm Gateway recovery before candidate mutation", 1
+        "Arm Gateway recovery before the mutable phase", 1
     )[0]
     for token in (
         "worker_runtime_identity.py",
@@ -1554,3 +1554,145 @@ def test_company_card_v2_activation_enables_global_h2_charts_and_unlimited_narra
         assert token in helper
     assert "print(values" not in helper
     assert "print(environment" not in helper
+
+
+def test_normal_deploy_recreate_health_checks_are_bounded_and_identity_bound() -> None:
+    workflow = DEPLOY.read_text(encoding="utf-8")
+    product_candidate = workflow.split(
+        "Upgrade additive schema and recreate exact Product/workers", 1
+    )[1].split("Arm Gateway recovery before the mutable phase", 1)[0]
+    gateway_candidate = workflow.split("Recreate and verify exact Gateway", 1)[1].split(
+        "Arm Web recovery before the mutable phase", 1
+    )[0]
+    product_rollback = workflow.split(
+        "Fail-closed restore of prior Product and workers after Product phase starts", 1
+    )[1].split("Fail-closed restore of prior Gateway after Gateway phase starts", 1)[0]
+    gateway_rollback = workflow.split(
+        "Fail-closed restore of prior Gateway after Gateway phase starts", 1
+    )[1].split("Fail-closed restore of prior Web pointer", 1)[0]
+
+    def assert_wait(block: str, *, service: str, port: int, release_key: str) -> None:
+        normalized = block.replace("\\$", "$").replace('\\"', '"')
+        assert normalized.count("readiness_run()") == 1
+        assert "deadline=$((SECONDS + 30))" in normalized
+        assert 'timeout --foreground --signal=TERM --kill-after=1 "${remaining}s" "$@"' in normalized
+        assert normalized.count(f"ps -q --all {service}") >= 2
+        assert 'test "$current_id" = "$expected_id"' in normalized
+        for field in ("{{.Image}}", "{{.Config.Image}}", "{{.State.Running}}"):
+            assert f"readiness_run \"$deadline\" docker inspect --format '{field}'" in normalized
+        assert f'docker port "$current_id" {port}/tcp' in normalized
+        assert "{{range .Config.Env}}{{println .}}{{end}}" in normalized
+        assert f"/^{release_key}=/p" in normalized
+        assert f"s/^{release_key}=//p" in normalized
+        health = (
+            f"curl --connect-timeout 1 --max-time 2 --fail --silent --show-error "
+            f"http://127.0.0.1:{port}/health"
+        )
+        assert normalized.count(health) == 1
+        assert (
+            f"curl --fail --silent --show-error http://127.0.0.1:{port}/health"
+            not in normalized
+        )
+        assert 'if test "$current_running" = true && readiness_run "$deadline"' in normalized
+        assert "then sleep 1" in normalized
+        assert "identity changed during readiness" in normalized
+        assert "; STOP" in normalized
+        assert normalized.index("--force-recreate") < normalized.index("wait_")
+
+    assert_wait(
+        product_candidate,
+        service="product_api",
+        port=8000,
+        release_key="PRODUCT_RELEASE_COMMIT",
+    )
+    assert_wait(
+        gateway_candidate,
+        service="gateway_api",
+        port=8001,
+        release_key="GATEWAY_RELEASE_COMMIT",
+    )
+    assert_wait(
+        product_rollback,
+        service="product_api",
+        port=8000,
+        release_key="PRODUCT_RELEASE_COMMIT",
+    )
+    assert_wait(
+        gateway_rollback,
+        service="gateway_api",
+        port=8001,
+        release_key="GATEWAY_RELEASE_COMMIT",
+    )
+    assert workflow.count(
+        "curl --fail --silent --show-error http://127.0.0.1:8001/health >/dev/null"
+    ) == 2
+
+
+def test_company_card_activation_recreate_health_checks_are_bounded_and_identity_bound() -> None:
+    workflow = ACTIVATE_COMPANY_CARD_V2.read_text(encoding="utf-8")
+    gateway_activate = workflow.split(
+        "Enable exact-SHA Gateway narrative with gpt-5-nano", 1
+    )[1].split("Enable global H2, all chart data and unlimited AI on Product", 1)[0]
+    product_activate = workflow.split(
+        "Enable global H2, all chart data and unlimited AI on Product", 1
+    )[1].split("Publish exact activation success receipts", 1)[0]
+    finalizer = workflow.split("Finalize rollback and local activation credentials", 1)[1]
+    product_rollback = finalizer.split(
+        'if test "$ROLLBACK_REQUIRED" = true && test -n "$RU_STAGE"', 1
+    )[1].split('if test "$ROLLBACK_REQUIRED" = true && test -n "$US_STAGE"', 1)[0]
+    gateway_rollback = finalizer.split(
+        'if test "$ROLLBACK_REQUIRED" = true && test -n "$US_STAGE"', 1
+    )[1].split('exit "$rollback_status"', 1)[0]
+
+    def assert_wait(block: str, *, service: str, port: int, release_key: str) -> None:
+        assert block.count("readiness_run()") == 1
+        assert "deadline=$((SECONDS + 30))" in block
+        assert 'timeout --foreground --signal=TERM --kill-after=1 "${remaining}s" "$@"' in block
+        assert block.count(f"ps -q --all {service}") >= 2
+        assert 'test "$current_id" = "$expected_id"' in block
+        for field in ("{{.Image}}", "{{.Config.Image}}", "{{.State.Running}}"):
+            assert f"readiness_run \"$deadline\" docker inspect --format '{field}'" in block
+        assert f'docker port "$current_id" {port}/tcp' in block
+        assert "{{range .Config.Env}}{{println .}}{{end}}" in block
+        assert f"/^{release_key}=/p" in block
+        assert f"s/^{release_key}=//p" in block
+        health = (
+            f"curl --connect-timeout 1 --max-time 2 --fail --silent --show-error "
+            f"http://127.0.0.1:{port}/health"
+        )
+        assert block.count(health) == 1
+        assert (
+            f"curl --fail --silent --show-error http://127.0.0.1:{port}/health"
+            not in block
+        )
+        assert 'if test "$current_running" = true && readiness_run "$deadline"' in block
+        assert "then sleep 1" in block
+        assert "readiness identity changed; STOP" in block
+        assert block.index("--force-recreate") < block.index("wait_")
+
+    assert_wait(
+        gateway_activate,
+        service="gateway_api",
+        port=8001,
+        release_key="GATEWAY_RELEASE_COMMIT",
+    )
+    assert_wait(
+        product_activate,
+        service="product_api",
+        port=8000,
+        release_key="PRODUCT_RELEASE_COMMIT",
+    )
+    assert_wait(
+        product_rollback,
+        service="product_api",
+        port=8000,
+        release_key="PRODUCT_RELEASE_COMMIT",
+    )
+    assert_wait(
+        gateway_rollback,
+        service="gateway_api",
+        port=8001,
+        release_key="GATEWAY_RELEASE_COMMIT",
+    )
+    assert "curl --fail --silent --show-error http://127.0.0.1:8000/health" not in workflow
+    assert "curl --fail --silent --show-error http://127.0.0.1:8001/health" not in workflow
