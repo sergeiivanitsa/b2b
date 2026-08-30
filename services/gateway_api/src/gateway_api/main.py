@@ -131,7 +131,7 @@ async def _narrative_chat(payload: ChatRequest, request: Request):
         raise HTTPException(status_code=400, detail="unsupported narrative schema")
     logger.info("narrative structured request model_profile=%s", payload.model_profile)
     try:
-        text, usage = await create_chat_completion(settings, settings.company_card_narrative_model, [msg.model_dump() for msg in payload.messages], payload.timeout, response_format=payload.response_format.model_dump(by_alias=True), max_output_tokens=payload.max_output_tokens)
+        text, usage = await create_chat_completion(settings, settings.company_card_narrative_model, [msg.model_dump() for msg in payload.messages], payload.timeout, response_format=payload.response_format.model_dump(by_alias=True), max_output_tokens=payload.max_output_tokens, reasoning_effort="minimal", require_complete_output=True)
     except OpenAIError as exc:
         return JSONResponse(status_code=exc.status_code, content={"error": {"type": exc.err_type, "code": exc.code, "message": exc.message, "retryable": exc.retryable}})
     if len(text.encode("utf-8")) > COMPANY_CARD_NARRATIVE_MAX_RESPONSE_BYTES:

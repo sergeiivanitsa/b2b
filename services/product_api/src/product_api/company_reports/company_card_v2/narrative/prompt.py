@@ -19,17 +19,52 @@ def narrative_json_schema() -> dict[str, object]:
             "type": "object", "additionalProperties": False,
             "required": ["output_schema_version", "description_plan", "chart_comments"],
             "properties": {
-                "output_schema_version": {"const": OUTPUT_SCHEMA_VERSION},
+                "output_schema_version": {
+                    "type": "string",
+                    "enum": [OUTPUT_SCHEMA_VERSION],
+                },
                 "description_plan": {
                     "type": "object", "additionalProperties": False,
                     "required": ["intro_template_id", "statement_ids", "connector_ids"],
                     "properties": {
-                        "intro_template_id": {"const": "intro_snapshot_scope_v1"},
-                        "statement_ids": {"type": "array", "minItems": 3, "maxItems": 3, "prefixItems": [{"const": "statement_primary_activity_v1"}, {"const": "statement_missing_is_unknown_v1"}, {"const": "statement_neutrality_and_immutability_v1"}], "items": False},
-                        "connector_ids": {"type": "array", "minItems": 3, "maxItems": 3, "prefixItems": [{"const": "connector_intro_activity_v1"}, {"const": "connector_activity_missing_v1"}, {"const": "connector_missing_neutrality_v1"}], "items": False},
+                        "intro_template_id": {
+                            "type": "string",
+                            "enum": ["intro_snapshot_scope_v1"],
+                        },
+                        "statement_ids": {
+                            "type": "array",
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "items": {
+                                "type": "string",
+                                "enum": [
+                                    "statement_primary_activity_v1",
+                                    "statement_missing_is_unknown_v1",
+                                    "statement_neutrality_and_immutability_v1",
+                                ],
+                            },
+                        },
+                        "connector_ids": {
+                            "type": "array",
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "items": {
+                                "type": "string",
+                                "enum": [
+                                    "connector_intro_activity_v1",
+                                    "connector_activity_missing_v1",
+                                    "connector_missing_neutrality_v1",
+                                ],
+                            },
+                        },
                     },
                 },
-                "chart_comments": {"type": "array", "minItems": 0, "maxItems": 0},
+                "chart_comments": {
+                    "type": "array",
+                    "minItems": 0,
+                    "maxItems": 0,
+                    "items": {"type": "string"},
+                },
             },
         },
     }
