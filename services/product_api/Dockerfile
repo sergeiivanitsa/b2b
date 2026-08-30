@@ -35,6 +35,7 @@ RUN --mount=type=bind,source=.github/ci/release-import-smoke.vars,target=/run/re
     && . /run/release-import-smoke.vars \
     && set +a \
     && python -c "import product_api.main; import product_api.company_reports.worker; import product_api.company_reports.company_card_v2.narrative.worker" \
+    && python -m alembic -c /app/alembic.ini ensure_version --sql >/dev/null \
     && rm -rf /wheelhouse /locks
 
 EXPOSE 8000

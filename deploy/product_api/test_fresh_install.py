@@ -177,6 +177,11 @@ def test_preflight_is_read_only_and_binds_legacy_topology_database_and_uploads()
     assert 'stat -c "%u:%g:%a" -- "$claims_root"' in preflight
     assert 'realpath -e -- "$claims_parent"' in preflight
     assert "test -d /var/lib/pork && test ! -L /var/lib/pork" in preflight
+    assert "test -L /etc/nginx/sites-enabled/pork.su" in preflight
+    assert (
+        'readlink -- /etc/nginx/sites-enabled/pork.su)" = '
+        "/etc/nginx/sites-available/pork.su.conf"
+    ) in preflight
     assert "fresh-install-active.json" in preflight
     assert "incompatible production fresh-install recovery unit is installed; STOP" in preflight
     assert "an incompatible legacy bootstrap recovery unit is installed; STOP" in preflight
@@ -507,7 +512,11 @@ def test_systemd_boot_guard_keeps_incomplete_release_fail_closed() -> None:
     )
     assert "nginx -t" in guard
     assert "systemctl" not in guard
-    assert "reload-or-restart nginx" in runner
+    assert "test -L /etc/nginx/sites-enabled/pork.su" in guard
+    assert "readlink -- /etc/nginx/sites-enabled/pork.su" in guard
+    assert "/etc/nginx/sites-available/pork.su.conf" in guard
+    assert runner.count("systemctl restart nginx") == 2
+    assert "reload-or-restart nginx" not in runner
     assert "systemctl reload nginx" not in runner
     retry = runner.split("global_receipt active", 1)[1].split(
         'cd "$stage"', 1
@@ -517,6 +526,80 @@ def test_systemd_boot_guard_keeps_incomplete_release_fail_closed() -> None:
     finish = runner.split("finish() {", 1)[1].split("trap finish EXIT", 1)[0]
     assert 'path_present "$stage/ingress-armed"' in finish
     assert "systemctl stop nginx" in finish
+
+
+def test_workflow_wait_uses_supported_systemd_active_state_contract() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    wait = workflow.split(
+        "- name: Wait for durable exact-SHA fresh-install success", 1
+    )[1].split("- name: Restore prior Gateway", 1)[0]
+    assert "systemctl is-activating" not in wait
+    assert (
+        'systemctl show --property=ActiveState --value "$unit.service"'
+        in wait
+    )
+    assert "active|activating|reloading|deactivating" in wait
+    assert wait.index("active_state=") < wait.index("echo running")
+    assert wait.index("echo running") < wait.index("roll-forward-required")
+
+
+def test_runner_waits_for_semantic_nginx_worker_cutovers() -> None:
+    runner = RUNNER.read_text(encoding="utf-8")
+    helper = runner.split("wait_ingress_status() {", 1)[1].split("\n}", 1)[0]
+    for token in (
+        "deadline=$((SECONDS + 30))",
+        '[[ "$expected_status" =~ ^[1-5][0-9]{2}$ ]] || return 2',
+        'readiness_run "$deadline" curl',
+        "--connect-timeout 1 --max-time 2",
+        "https://pork.su/api/internal/whoami",
+        "sleep 1",
+        "nginx ingress readiness deadline exceeded",
+    ):
+        assert token in helper
+
+    maintenance = runner.split("force_maintenance_ingress() {", 1)[1].split(
+        "\n}", 1
+    )[0]
+    assert maintenance.index("systemctl restart nginx") < maintenance.index(
+        "wait_ingress_status 503"
+    )
+    for command in (
+        "test -L /etc/nginx/sites-enabled/pork.su",
+        "terminal_bounded install -m 640",
+        "terminal_bounded nginx -t",
+        "terminal_bounded systemctl restart nginx",
+        "wait_ingress_status 503",
+    ):
+        command_start = maintenance.index(command)
+        assert "|| return 2" in maintenance[command_start : command_start + 300]
+    final = runner[runner.rindex("marker_once ingress-armed") :]
+    assert final.index("systemctl restart nginx") < final.index(
+        "wait_ingress_status 401"
+    )
+    assert final.index("wait_ingress_status 401") < final.index(
+        "https://pork.su/ >/dev/null"
+    )
+    for block in (maintenance, final):
+        assert "test -L /etc/nginx/sites-enabled/pork.su" in block
+        assert "readlink -- /etc/nginx/sites-enabled/pork.su" in block
+
+
+def test_runner_uses_full_container_ids_and_accessible_runuser_cwd() -> None:
+    runner = RUNNER.read_text(encoding="utf-8")
+    access = runner.split("verify_tree_access() {", 1)[1].split("\n}", 1)[0]
+    assert "local inaccessible" in access
+    assert "if ! inaccessible=$(" in access
+    assert access.index("cd /") < access.index(
+        "runuser --user www-data --group www-data -- find"
+    )
+    assert "nginx worker release-tree access check failed; STOP" in access
+    assert 'test -z "$inaccessible"' in access
+
+    runtime = runner[runner.rindex("signed_gateway_smoke_container") :]
+    assert "docker ps --no-trunc -q" in runtime
+    assert runtime.index("docker ps --no-trunc -q") < runtime.index(
+        'test "$id" = "$product_id"'
+    )
 
 
 def test_runner_phase_order_is_fail_closed_and_regular_ingress_is_last() -> None:

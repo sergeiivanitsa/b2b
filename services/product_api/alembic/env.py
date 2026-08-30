@@ -21,8 +21,21 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-sys.path.append(str(BASE_DIR / "src"))
-sys.path.append(str(BASE_DIR.parents[1]))
+SOURCE_ROOT = BASE_DIR / "src"
+if SOURCE_ROOT.is_dir():
+    sys.path.append(str(SOURCE_ROOT))
+
+SHARED_ROOT = next(
+    (
+        candidate
+        for candidate in (BASE_DIR, *BASE_DIR.parents)
+        if (candidate / "shared" / "__init__.py").is_file()
+    ),
+    None,
+)
+if SHARED_ROOT is None:
+    raise RuntimeError("unable to locate shared package root")
+sys.path.append(str(SHARED_ROOT))
 
 from product_api.db.base import Base  # noqa: E402
 from product_api import models  # noqa: F401,E402

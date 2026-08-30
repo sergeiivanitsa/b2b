@@ -294,10 +294,12 @@ jobs:
           ssh "${ssh_args[@]}" "$RU_TARGET" 'set -euo pipefail
             stop() { echo "$1; STOP" >&2; exit 2; }
             test "$(id -u)" -eq 0
-            for tool in docker python3 curl sha256sum getent nginx systemctl flock timeout find chmod sync; do command -v "$tool" >/dev/null; done
+            for tool in docker python3 curl sha256sum getent nginx systemctl flock timeout find chmod sync readlink; do command -v "$tool" >/dev/null; done
             test -f /opt/b2b/.env.product && test ! -L /opt/b2b/.env.product
             test -f /opt/b2b/docker-compose.product.yml && test ! -L /opt/b2b/docker-compose.product.yml
             test -f /etc/nginx/sites-available/pork.su.conf && test ! -L /etc/nginx/sites-available/pork.su.conf
+            test -L /etc/nginx/sites-enabled/pork.su || stop "production nginx site is not an exact symbolic link"
+            test "$(readlink -- /etc/nginx/sites-enabled/pork.su)" = /etc/nginx/sites-available/pork.su.conf || stop "production nginx site target changed"
             test -f /opt/b2b/services/web_ui/dist/index.html
             test ! -e /var/lib/pork/company-public-h2 && test ! -L /var/lib/pork/company-public-h2
             test ! -e /var/lib/pork/web-ui && test ! -L /var/lib/pork/web-ui
@@ -892,12 +894,18 @@ jobs:
           raise SystemExit(0 if data == expected else 2)
           PY
             echo success
-          elif systemctl is-active --quiet "$unit.service" || systemctl is-activating --quiet "$unit.service"; then
-            echo running
-          elif test -f "$stage/roll-forward-required"; then
-            echo roll-forward-required
           else
-            echo failed
+            active_state=$(systemctl show --property=ActiveState --value "$unit.service" 2>/dev/null || true)
+            case "$active_state" in
+              active|activating|reloading|deactivating) echo running ;;
+              *)
+                if test -f "$stage/roll-forward-required"; then
+                  echo roll-forward-required
+                else
+                  echo failed
+                fi
+                ;;
+            esac
           fi
           REMOTE
           )
