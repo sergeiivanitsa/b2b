@@ -228,12 +228,43 @@ jobs:
           python3 "$stage/company_card_v2_activation.py" apply --role gateway --environment-file /opt/b2b/.env.gateway --backup-file "$stage/env.gateway.before" --receipt-file "$stage/env.gateway.activation.json" --release-sha "$release_sha"
           cd "$working_dir"
           GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="$release_sha" GATEWAY_RELEASE_COMMIT="$release_sha" docker compose -p "$project" -f "$config_file" --env-file /opt/b2b/.env.gateway up -d --no-build --force-recreate gateway_api
-          id=$(GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="$release_sha" GATEWAY_RELEASE_COMMIT="$release_sha" docker compose -p "$project" -f "$config_file" --env-file /opt/b2b/.env.gateway ps -q gateway_api)
+          id=$(GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="$release_sha" GATEWAY_RELEASE_COMMIT="$release_sha" docker compose -p "$project" -f "$config_file" --env-file /opt/b2b/.env.gateway ps -q --all gateway_api)
           test -n "$id"
           test "$(docker inspect --format '{{.Config.Image}}' "$id")" = "b2b-gateway-api:$release_sha"
           test "$(docker inspect --format '{{.Image}}' "$id")" = "$image_id"
-          test "$(docker inspect --format '{{.State.Running}}' "$id")" = true
-          curl --fail --silent --show-error http://127.0.0.1:8001/health >/dev/null
+          readiness_run() {
+            local deadline=$1
+            shift
+            local remaining=$((deadline - SECONDS))
+            test "$remaining" -gt 0 || return 124
+            timeout --foreground --signal=TERM --kill-after=1 "${remaining}s" "$@"
+          }
+          wait_gateway_ready() {
+            local expected_id=$1 expected_image=$2 deadline=$((SECONDS + 30))
+            local current_id current_image current_config_image current_running current_port current_env release_count release_value
+            while (( SECONDS < deadline )); do
+              current_id=$(readiness_run "$deadline" env GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="$release_sha" GATEWAY_RELEASE_COMMIT="$release_sha" docker compose -p "$project" -f "$config_file" --env-file /opt/b2b/.env.gateway ps -q --all gateway_api) || { echo 'Gateway activation readiness container lookup failed or exceeded its shared deadline; STOP' >&2; return 2; }
+              test "$current_id" = "$expected_id" || { echo 'Gateway activation readiness no longer targets the same container; STOP' >&2; return 2; }
+              current_image=$(readiness_run "$deadline" docker inspect --format '{{.Image}}' "$current_id") || { echo 'Gateway activation image inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+              current_config_image=$(readiness_run "$deadline" docker inspect --format '{{.Config.Image}}' "$current_id") || { echo 'Gateway activation config-image inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+              current_running=$(readiness_run "$deadline" docker inspect --format '{{.State.Running}}' "$current_id") || { echo 'Gateway activation state inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+              current_port=$(readiness_run "$deadline" docker port "$current_id" 8001/tcp) || { echo 'Gateway activation port inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+              current_env=$(readiness_run "$deadline" docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$current_id") || { echo 'Gateway activation release inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+              release_count=$(printf '%s\n' "$current_env" | sed -n '/^GATEWAY_RELEASE_COMMIT=/p' | wc -l)
+              release_value=$(printf '%s\n' "$current_env" | sed -n 's/^GATEWAY_RELEASE_COMMIT=//p')
+              if test "$current_image" != "$expected_image" || test "$current_config_image" != "b2b-gateway-api:$release_sha" || test "$current_port" != 127.0.0.1:8001 || test "$release_count" -ne 1 || test "$release_value" != "$release_sha"; then
+                echo 'Gateway activation readiness identity changed; STOP' >&2
+                return 2
+              fi
+              if test "$current_running" = true && readiness_run "$deadline" curl --connect-timeout 1 --max-time 2 --fail --silent --show-error http://127.0.0.1:8001/health >/dev/null 2>&1; then
+                return 0
+              fi
+              if test "$SECONDS" -lt "$deadline"; then sleep 1; fi
+            done
+            echo 'Gateway activation readiness deadline exceeded; STOP' >&2
+            return 2
+          }
+          wait_gateway_ready "$id" "$image_id"
           docker exec -i "$id" python - in-process-verify --role gateway --release-sha "$release_sha" < "$stage/company_card_v2_activation.py"
           python3 "$stage/company_card_v2_activation.py" verify --role gateway --environment-file /opt/b2b/.env.gateway
           printf '%s\n' "$release_sha" > "$stage/gateway-activated"
@@ -268,8 +299,40 @@ jobs:
             test "$(docker inspect --format '{{.Image}}' "$id")" = "$image_id"
             test "$(docker inspect --format '{{.State.Running}}' "$id")" = true
           done
-          product_id=$(PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" docker compose -p "$project" --profile company-card-narrative -f "$config_file" --env-file /opt/b2b/.env.product ps -q product_api)
-          curl --fail --silent --show-error http://127.0.0.1:8000/health >/dev/null
+          product_id=$(PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" docker compose -p "$project" --profile company-card-narrative -f "$config_file" --env-file /opt/b2b/.env.product ps -q --all product_api)
+          readiness_run() {
+            local deadline=$1
+            shift
+            local remaining=$((deadline - SECONDS))
+            test "$remaining" -gt 0 || return 124
+            timeout --foreground --signal=TERM --kill-after=1 "${remaining}s" "$@"
+          }
+          wait_product_ready() {
+            local expected_id=$1 expected_image=$2 deadline=$((SECONDS + 30))
+            local current_id current_image current_config_image current_running current_port current_env release_count release_value
+            while (( SECONDS < deadline )); do
+              current_id=$(readiness_run "$deadline" env PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" docker compose -p "$project" --profile company-card-narrative -f "$config_file" --env-file /opt/b2b/.env.product ps -q --all product_api) || { echo 'Product activation readiness container lookup failed or exceeded its shared deadline; STOP' >&2; return 2; }
+              test "$current_id" = "$expected_id" || { echo 'Product activation readiness no longer targets the same container; STOP' >&2; return 2; }
+              current_image=$(readiness_run "$deadline" docker inspect --format '{{.Image}}' "$current_id") || { echo 'Product activation image inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+              current_config_image=$(readiness_run "$deadline" docker inspect --format '{{.Config.Image}}' "$current_id") || { echo 'Product activation config-image inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+              current_running=$(readiness_run "$deadline" docker inspect --format '{{.State.Running}}' "$current_id") || { echo 'Product activation state inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+              current_port=$(readiness_run "$deadline" docker port "$current_id" 8000/tcp) || { echo 'Product activation port inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+              current_env=$(readiness_run "$deadline" docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$current_id") || { echo 'Product activation release inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+              release_count=$(printf '%s\n' "$current_env" | sed -n '/^PRODUCT_RELEASE_COMMIT=/p' | wc -l)
+              release_value=$(printf '%s\n' "$current_env" | sed -n 's/^PRODUCT_RELEASE_COMMIT=//p')
+              if test "$current_image" != "$expected_image" || test "$current_config_image" != "b2b-product-api:$release_sha" || test "$current_port" != 127.0.0.1:8000 || test "$release_count" -ne 1 || test "$release_value" != "$release_sha"; then
+                echo 'Product activation readiness identity changed; STOP' >&2
+                return 2
+              fi
+              if test "$current_running" = true && readiness_run "$deadline" curl --connect-timeout 1 --max-time 2 --fail --silent --show-error http://127.0.0.1:8000/health >/dev/null 2>&1; then
+                return 0
+              fi
+              if test "$SECONDS" -lt "$deadline"; then sleep 1; fi
+            done
+            echo 'Product activation readiness deadline exceeded; STOP' >&2
+            return 2
+          }
+          wait_product_ready "$product_id" "$image_id"
           docker exec -i "$product_id" python - schema-head --expected 0020_company_card_narrative_quota_mode < "$stage/company_card_v2_activation.py"
           docker exec -i "$product_id" python - in-process-verify --role product --release-sha "$release_sha" < "$stage/company_card_v2_activation.py"
           docker exec -i "$product_id" python - gateway --release-sha "$release_sha" < "$stage/fresh_install_candidate.py"
@@ -319,9 +382,44 @@ jobs:
             project=$(cat "$stage/product-project")
             config_file=$(cat "$stage/product-config")
             working_dir=$(cat "$stage/product-working-dir")
+            image_id=$(cat "$stage/product-image-id")
             cd "$working_dir"
             PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" docker compose -p "$project" --profile company-card-narrative -f "$config_file" --env-file /opt/b2b/.env.product up -d --no-build --force-recreate product_api company_report_worker company_card_narrative_worker
-            curl --fail --silent --show-error http://127.0.0.1:8000/health >/dev/null
+            product_id=$(PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" docker compose -p "$project" --profile company-card-narrative -f "$config_file" --env-file /opt/b2b/.env.product ps -q --all product_api)
+            test -n "$product_id"
+            readiness_run() {
+              local deadline=$1
+              shift
+              local remaining=$((deadline - SECONDS))
+              test "$remaining" -gt 0 || return 124
+              timeout --foreground --signal=TERM --kill-after=1 "${remaining}s" "$@"
+            }
+            wait_product_ready() {
+              local expected_id=$1 expected_image=$2 deadline=$((SECONDS + 30))
+              local current_id current_image current_config_image current_running current_port current_env release_count release_value
+              while (( SECONDS < deadline )); do
+                current_id=$(readiness_run "$deadline" env PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" docker compose -p "$project" --profile company-card-narrative -f "$config_file" --env-file /opt/b2b/.env.product ps -q --all product_api) || { echo 'Product rollback readiness container lookup failed or exceeded its shared deadline; STOP' >&2; return 2; }
+                test "$current_id" = "$expected_id" || { echo 'Product rollback readiness no longer targets the same container; STOP' >&2; return 2; }
+                current_image=$(readiness_run "$deadline" docker inspect --format '{{.Image}}' "$current_id") || { echo 'Product rollback image inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+                current_config_image=$(readiness_run "$deadline" docker inspect --format '{{.Config.Image}}' "$current_id") || { echo 'Product rollback config-image inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+                current_running=$(readiness_run "$deadline" docker inspect --format '{{.State.Running}}' "$current_id") || { echo 'Product rollback state inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+                current_port=$(readiness_run "$deadline" docker port "$current_id" 8000/tcp) || { echo 'Product rollback port inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+                current_env=$(readiness_run "$deadline" docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$current_id") || { echo 'Product rollback release inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+                release_count=$(printf '%s\n' "$current_env" | sed -n '/^PRODUCT_RELEASE_COMMIT=/p' | wc -l)
+                release_value=$(printf '%s\n' "$current_env" | sed -n 's/^PRODUCT_RELEASE_COMMIT=//p')
+                if test "$current_image" != "$expected_image" || test "$current_config_image" != "b2b-product-api:$release_sha" || test "$current_port" != 127.0.0.1:8000 || test "$release_count" -ne 1 || test "$release_value" != "$release_sha"; then
+                  echo 'Product rollback readiness identity changed; STOP' >&2
+                  return 2
+                fi
+                if test "$current_running" = true && readiness_run "$deadline" curl --connect-timeout 1 --max-time 2 --fail --silent --show-error http://127.0.0.1:8000/health >/dev/null 2>&1; then
+                  return 0
+                fi
+                if test "$SECONDS" -lt "$deadline"; then sleep 1; fi
+              done
+              echo 'Product rollback readiness deadline exceeded; STOP' >&2
+              return 2
+            }
+            wait_product_ready "$product_id" "$image_id"
           fi
           REMOTE
             then
@@ -338,9 +436,44 @@ jobs:
             project=$(cat "$stage/gateway-project")
             config_file=$(cat "$stage/gateway-config")
             working_dir=$(cat "$stage/gateway-working-dir")
+            image_id=$(cat "$stage/gateway-image-id")
             cd "$working_dir"
             GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="$release_sha" GATEWAY_RELEASE_COMMIT="$release_sha" docker compose -p "$project" -f "$config_file" --env-file /opt/b2b/.env.gateway up -d --no-build --force-recreate gateway_api
-            curl --fail --silent --show-error http://127.0.0.1:8001/health >/dev/null
+            id=$(GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="$release_sha" GATEWAY_RELEASE_COMMIT="$release_sha" docker compose -p "$project" -f "$config_file" --env-file /opt/b2b/.env.gateway ps -q --all gateway_api)
+            test -n "$id"
+            readiness_run() {
+              local deadline=$1
+              shift
+              local remaining=$((deadline - SECONDS))
+              test "$remaining" -gt 0 || return 124
+              timeout --foreground --signal=TERM --kill-after=1 "${remaining}s" "$@"
+            }
+            wait_gateway_ready() {
+              local expected_id=$1 expected_image=$2 deadline=$((SECONDS + 30))
+              local current_id current_image current_config_image current_running current_port current_env release_count release_value
+              while (( SECONDS < deadline )); do
+                current_id=$(readiness_run "$deadline" env GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="$release_sha" GATEWAY_RELEASE_COMMIT="$release_sha" docker compose -p "$project" -f "$config_file" --env-file /opt/b2b/.env.gateway ps -q --all gateway_api) || { echo 'Gateway rollback readiness container lookup failed or exceeded its shared deadline; STOP' >&2; return 2; }
+                test "$current_id" = "$expected_id" || { echo 'Gateway rollback readiness no longer targets the same container; STOP' >&2; return 2; }
+                current_image=$(readiness_run "$deadline" docker inspect --format '{{.Image}}' "$current_id") || { echo 'Gateway rollback image inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+                current_config_image=$(readiness_run "$deadline" docker inspect --format '{{.Config.Image}}' "$current_id") || { echo 'Gateway rollback config-image inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+                current_running=$(readiness_run "$deadline" docker inspect --format '{{.State.Running}}' "$current_id") || { echo 'Gateway rollback state inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+                current_port=$(readiness_run "$deadline" docker port "$current_id" 8001/tcp) || { echo 'Gateway rollback port inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+                current_env=$(readiness_run "$deadline" docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$current_id") || { echo 'Gateway rollback release inspection failed or exceeded its shared deadline; STOP' >&2; return 2; }
+                release_count=$(printf '%s\n' "$current_env" | sed -n '/^GATEWAY_RELEASE_COMMIT=/p' | wc -l)
+                release_value=$(printf '%s\n' "$current_env" | sed -n 's/^GATEWAY_RELEASE_COMMIT=//p')
+                if test "$current_image" != "$expected_image" || test "$current_config_image" != "b2b-gateway-api:$release_sha" || test "$current_port" != 127.0.0.1:8001 || test "$release_count" -ne 1 || test "$release_value" != "$release_sha"; then
+                  echo 'Gateway rollback readiness identity changed; STOP' >&2
+                  return 2
+                fi
+                if test "$current_running" = true && readiness_run "$deadline" curl --connect-timeout 1 --max-time 2 --fail --silent --show-error http://127.0.0.1:8001/health >/dev/null 2>&1; then
+                  return 0
+                fi
+                if test "$SECONDS" -lt "$deadline"; then sleep 1; fi
+              done
+              echo 'Gateway rollback readiness deadline exceeded; STOP' >&2
+              return 2
+            }
+            wait_gateway_ready "$id" "$image_id"
           fi
           REMOTE
             then
