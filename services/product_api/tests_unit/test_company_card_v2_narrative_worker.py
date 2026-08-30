@@ -19,6 +19,7 @@ from product_api.company_reports.persistence.narratives import (
     NarrativePersistenceError,
     NarrativeStaleOwnership,
 )
+from product_api.gateway_client import GatewayError
 
 
 NOW = datetime(2026, 8, 24, 12, tzinfo=UTC)
@@ -42,6 +43,7 @@ def _settings() -> SimpleNamespace:
     return SimpleNamespace(
         company_card_v2_narrative_enabled=True,
         company_card_v2_narrative_kill_switch=False,
+        company_card_v2_narrative_quota_mode="bounded",
         company_card_v2_narrative_daily_limit=1,
         company_card_v2_narrative_monthly_limit=1,
         company_card_v2_narrative_concurrency=1,
@@ -190,6 +192,18 @@ async def test_local_pre_dispatch_failure_releases_credit_and_never_calls_gatewa
     ("failure", "code"),
     [
         (TimeoutError("timeout"), "ambiguous_timeout"),
+        (
+            GatewayError(
+                "insufficient quota",
+                status_code=429,
+                code="insufficient_quota",
+            ),
+            "gateway_error_after_dispatch",
+        ),
+        (
+            GatewayError("upstream unavailable", status_code=503, retryable=True),
+            "gateway_error_after_dispatch",
+        ),
         (RuntimeError("contract"), "gateway_contract_failure"),
     ],
 )
@@ -255,6 +269,48 @@ async def test_dispatch_echo_mismatch_is_terminal_fallback_and_never_validates(m
     assert calls == 1
     assert ("fallback", "gateway_dispatch_id_mismatch") in events
     assert not any(name in {"response_recorded", "validating", "artifact"} for name, _value in events)
+
+
+@pytest.mark.asyncio
+async def test_invalid_gateway_output_is_terminal_fallback_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _lease_value, _prepared_value, events = _install_common(monkeypatch)
+    calls = 0
+
+    async def gateway(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return _response()
+
+    def invalid(*_args, **_kwargs):
+        raise ValueError("invalid render plan")
+
+    monkeypatch.setattr(worker, "validate_gateway_artifact", invalid)
+    changed = await worker.run_once(
+        settings=_settings(),
+        session_factory=_Session,
+        gateway_sender=gateway,
+        clock=lambda: NOW,
+        dispatch_id_factory=lambda: DISPATCH_ID,
+    )
+
+    assert changed == 1
+    assert calls == 1
+    assert ("fallback", "invalid_output") in events
+    assert not any(name == "artifact" for name, _value in events)
+
+
+def test_worker_maps_explicit_unlimited_settings_to_dispatchable_limits() -> None:
+    settings = _settings()
+    settings.company_card_v2_narrative_quota_mode = "unlimited"
+    settings.company_card_v2_narrative_daily_limit = 0
+    settings.company_card_v2_narrative_monthly_limit = 0
+
+    limits = worker._limits(settings)
+
+    assert limits.quota_mode == "unlimited"
+    assert limits.permits_dispatch()
 
 
 @pytest.mark.asyncio

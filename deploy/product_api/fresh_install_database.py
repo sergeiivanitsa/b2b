@@ -23,7 +23,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 
-EXPECTED_HEAD = "0019_company_card_v2_rollout_control"
+EXPECTED_HEAD = "0020_company_card_narrative_quota_mode"
 _NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_$-]{0,62}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _SERVER = re.compile(r"^[0-9A-Fa-f:.]+:[1-9][0-9]{0,4}$")
@@ -291,13 +291,13 @@ async def _verify_fresh_head_defaults(
     narrative = (
         await connection.execute(
             text(
-                "SELECT singleton_id, enabled, kill_switch, daily_limit, "
+                "SELECT singleton_id, enabled, kill_switch, quota_mode, daily_limit, "
                 "monthly_limit, concurrency_limit, leased_count "
                 "FROM company_card_narrative_runtime_control"
             )
         )
     ).all()
-    if narrative != [(1, False, True, 0, 0, 0, 0)]:
+    if narrative != [(1, False, True, "bounded", 0, 0, 0, 0)]:
         raise FreshInstallDatabaseError("narrative control is not exact default-off; STOP")
     if allow_application_data:
         return
@@ -867,7 +867,7 @@ async def _run(command: str, release_sha: str) -> dict[str, Any]:
                 _assert_strict_schema_contract(observed)
                 revisions, inventory = await _schema_state(connection)
                 if revisions != (EXPECTED_HEAD,):
-                    raise FreshInstallDatabaseError("database is not at exact sole head 0019; STOP")
+                    raise FreshInstallDatabaseError("database is not at exact sole head 0020; STOP")
                 if await _read_schema_marker(connection) != _schema_marker(
                     release_sha, expected.identity_sha256
                 ):

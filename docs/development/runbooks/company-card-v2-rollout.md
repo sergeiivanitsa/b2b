@@ -253,7 +253,7 @@ mutation order is deliberate:
 7. atomically drop and recreate only schema `public`, install the strict ACL
    and DB-side exact-SHA marker;
 8. admit only an empty or exact structurally verified Alembic stub dependency
-   closure, migrate the exact Product image to sole `0019`, prove default-off
+   closure, migrate the exact Product image to sole `0020`, prove default-off
    singleton rows and otherwise empty application tables;
 9. recreate Product/report/narrative, prove the persistent Claims mount,
    initial superadmin, signed Gateway and exact image/restart identities;
@@ -278,7 +278,7 @@ missing active receipt cannot expose the staged regular configuration.
 `.github/workflows/deploy_prod.yml` is `workflow_dispatch` only, uses the
 protected `production` environment and serializes the whole operation with
 `prod-deploy` / `cancel-in-progress: false`. It remains strict and is usable
-only after the one-time fresh install established schema `0019`, versioned
+only after the one-time fresh install established schema `0020`, versioned
 H2/Web stores, persistent Claims bind and both current workers. Required
 evidence digests and approved drain values have no repository defaults.
 Before any remote write it requires the canonical global fresh-install success
@@ -324,6 +324,13 @@ create a second compose project. Preflight records the exact
 containers; replacement, verification and rollback all pass those validated
 project names explicitly.
 
+The release manifest signs both the OCI manifest digest and the image-config
+digest for each build-once archive. Docker with the classic image store exposes
+the config digest as `.Id`, while Docker with the containerd image store may
+expose the OCI manifest digest. QA, rehearsal and production accept only the
+observed value from that exact signed pair; a malformed pair or any third image
+identity stops before mutation.
+
 Every later Product compose invocation continues to consume the same
 server-local `CLAIMS_UPLOAD_ROOT=/var/lib/pork/claims-uploads/v1` and
 `CLAIMS_UPLOAD_DIR=/data/claims_uploads`. A release must not recreate Product
@@ -355,7 +362,94 @@ authorized setting change requires exact process recreation followed by a
 redacted in-process check. Do not print env files, URLs with credentials,
 identifiers, decision contents or row-level lifecycle data.
 
+## Owner-approved direct global H2 + OpenAI activation
+
+The current launch decision supersedes the H1/H2 comparison and percentage
+ladder below. Do not prepare an H1 rollback anchor, build canary decisions or
+advance a cohort percentage for this launch. First merge and deploy the exact
+release containing schema `0020_company_card_narrative_quota_mode`, the direct
+H2 lifecycle and the activation workflow. Then run only
+`.github/workflows/activate_company_card_v2.yml` from protected `main` with:
+
+- `release_sha`: the exact lowercase 40-hex commit already running on both RU
+  Product and US Gateway;
+- `confirmation`: exactly `ACTIVATE-GLOBAL-H2-WITH-OPENAI`;
+- approval from the protected GitHub `production` environment.
+
+Before the first activation, `/opt/b2b/.env.gateway` must already contain a
+nonblank server-local `OPENAI_API_KEY`. It remains only on the Gateway host;
+the workflow neither imports it from GitHub nor prints it. Both SSH targets,
+strict known-hosts records and the existing `production` environment secrets
+are the same as the normal deploy workflow.
+
+The RU Product environment must also have `DATANEWTON_ENABLED=true` and a
+nonblank server-local `DATANEWTON_API_KEY`. Activation refuses to open the
+public H2 lifecycle without the real provider needed to populate company,
+finance and arbitration data; neither provider credential is printed or moved
+through GitHub.
+
+The workflow stops before mutation unless the requested commit is in protected
+main history, all three RU processes and the US Gateway are running that exact
+release, their Compose graph belongs to its exact release directory, and the
+live database has the sole Alembic head
+`0020_company_card_narrative_quota_mode`. It then:
+
+1. atomically enables the Gateway narrative profile with model `gpt-5-nano`,
+   recreates the same exact-SHA Gateway and checks health plus effective
+   in-process configuration;
+2. before opening writes, creates or verifies the private durable mask identity
+   `/opt/b2b/.company-card-v2-arbitration-mask-v1.json` on the RU server. It is
+   mode `0600`, is never printed or transferred, survives rollback, and is
+   reused by retries. The workflow then atomically enables direct H2
+   presentations/writes for 10000 basis points,
+   generation `1`, an empty allowlist, and arbitration collection (all chart
+   datasets); if no valid arbitration mask key exists, it generates one only
+   inside the RU server and never emits it;
+3. enables paid AI with an open kill switch and
+   `COMPANY_CARD_AI_NARRATIVE_QUOTA_MODE=unlimited`; daily/monthly dispatch
+   caps stay `0`. Worker concurrency `1` is technical backpressure, not a
+   product spend limit;
+4. recreates Product, report worker and narrative worker from the same exact
+   image, checks schema/health/effective settings and performs an authenticated
+   Product-to-Gateway exact-release ping.
+
+AI timeout, Gateway/OpenAI error (including an upstream insufficient-funds
+response), invalid AI payload or unavailable AI produces the deterministic
+narrative fallback. It does not disable H2 or its charts.
+
+This activation is the owner-approved global **runtime** launch. Direct H2
+documents are served from the exact current staged saved-result pin, so they
+remain `noindex` and are not added to the sitemap. That does not affect the
+public H2 page, chart bundles, provider data or AI/fallback narrative. Search
+indexing requires a separate reviewed publication/rollback contract that does
+not reintroduce the superseded H1 comparison or canary ladder; do not assign an
+H1 solely to make this activation indexable.
+
+While direct launch is enabled, the legacy final H1 JSON read is intentionally
+superseded by the H2 lifecycle and fails closed instead of returning a stale H1
+document. Disabling the direct-launch flag restores the frozen legacy route
+behaviour.
+
+Each env mutation has a byte-for-byte private backup and a SHA-bound durable
+restore receipt written before the mutation boundary. Failure or cancellation
+restores Product first and Gateway second, recreates the prior runtime and
+requires both health checks. A post-mutation manual env edit makes automatic
+rollback stop instead of overwriting an unknown change. Secret-bearing env
+backups remain mode-preserving in the private per-run server stage and must not
+be downloaded or committed. Rollback intentionally does not delete the durable
+mask identity: rows may already reference that key ID during the activation
+window, so deletion/rotation remains the separate irreversible procedure below.
+
+Success is the pair of private `activation-success` receipts plus green
+workflow status. After success, validate with a new INN through the public UI:
+the request must reach the H2 page with charts, and the narrative must be an AI
+artifact or the explicit deterministic fallback. Do not rerun the workflow
+after a green activation merely to repeat validation.
+
 ## Exact canary for `7707079463`
+
+> Historical procedure only: the direct-global owner decision above supersedes
+> this canary path. Do not execute this section for the current launch.
 
 The clean database initially contains no CompanyReport, so the fresh-install
 workflow intentionally does not pretend that an H1 rollback target exists.
@@ -482,7 +576,7 @@ python -m product_api.company_reports.company_card_v2.rollout rollback --decisio
 
 On a later deploy-phase failure, the workflow restores the recorded compatible
 Product/Gateway images plus H2/Web/nginx pointers where safe and re-smokes them.
-Migration `0019` is additive and is never downgraded. A missing/changed rollback
+Migrations `0019` and `0020` are additive and are never downgraded. A missing/changed rollback
 identity is `STOP`, not permission to rebuild or select another release.
 
 Mask-key deletion is a separate irreversible decision. It requires zero

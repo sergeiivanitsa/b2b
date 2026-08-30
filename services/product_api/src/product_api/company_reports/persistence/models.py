@@ -854,10 +854,21 @@ class CompanyCardNarrativeRuntimeControl(Base):
             "AND leased_count >= 0 AND (concurrency_limit = 0 OR concurrency_limit >= leased_count)",
             name="company_card_narrative_runtime_nonnegative",
         ),
+        CheckConstraint(
+            "quota_mode IN ('bounded', 'unlimited') "
+            "AND (quota_mode = 'bounded' OR (daily_limit = 0 AND monthly_limit = 0)) "
+            "AND (NOT enabled OR (NOT kill_switch AND concurrency_limit > 0 "
+            "AND ((quota_mode = 'bounded' AND daily_limit > 0 AND monthly_limit > 0) "
+            "OR quota_mode = 'unlimited')))",
+            name="company_card_narrative_runtime_quota_shape",
+        ),
     )
     singleton_id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     kill_switch: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    quota_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="bounded", server_default="bounded"
+    )
     daily_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     monthly_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     concurrency_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

@@ -1,0 +1,350 @@
+name: Activate Company Card v2 H2 and AI in production
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact deployed lowercase commit already in protected main history
+        required: true
+        type: string
+      confirmation:
+        description: Must equal ACTIVATE-GLOBAL-H2-WITH-OPENAI
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+
+jobs:
+  trusted-main:
+    name: exact protected-main activation authority
+    runs-on: ubuntu-24.04
+    outputs:
+      release_sha: ${{ steps.identity.outputs.release_sha }}
+    steps:
+      - name: Check out current protected main with full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind activation to protected main and exact deployed release
+        id: identity
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          PROTECTED_REPOSITORY: ${{ vars.PROTECTED_REPOSITORY }}
+          ACTUAL_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRMATION" = ACTIVATE-GLOBAL-H2-WITH-OPENAI
+          test "$GITHUB_REF" = refs/heads/main
+          test -n "$PROTECTED_REPOSITORY"
+          test "$ACTUAL_REPOSITORY" = "$PROTECTED_REPOSITORY"
+          test "$WORKFLOW_REF" = "$ACTUAL_REPOSITORY/.github/workflows/activate_company_card_v2.yml@refs/heads/main"
+          protected_main="$(git rev-parse HEAD)"
+          test "$WORKFLOW_SHA" = "$protected_main"
+          test "$(git rev-parse "$WORKFLOW_SHA:.github/workflows/activate_company_card_v2.yml")" = "$(git rev-parse "$protected_main:.github/workflows/activate_company_card_v2.yml")"
+          git cat-file -e "$RELEASE_SHA^{commit}"
+          git merge-base --is-ancestor "$RELEASE_SHA" "$protected_main"
+          echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+
+  activate:
+    name: exact-SHA global H2 and OpenAI activation
+    needs: trusted-main
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - name: Check out exact trusted main-history release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.trusted-main.outputs.release_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Configure strict production SSH identities
+        shell: bash
+        env:
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          RU_SSH_KNOWN_HOSTS: ${{ secrets.RU_SSH_KNOWN_HOSTS }}
+          US_SSH_KNOWN_HOSTS: ${{ secrets.US_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$PROD_SSH_KEY"
+          test -n "$RU_SSH_KNOWN_HOSTS"
+          test -n "$US_SSH_KNOWN_HOSTS"
+          install -m 700 -d "$RUNNER_TEMP/company-card-v2-activation-ssh"
+          printf '%s\n%s\n' "$RU_SSH_KNOWN_HOSTS" "$US_SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/company-card-v2-activation-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/company-card-v2-activation-ssh/known_hosts"
+          eval "$(ssh-agent -s)"
+          printf '%s\n' "$PROD_SSH_KEY" | ssh-add - >/dev/null
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+      - name: Stage immutable activation helper
+        id: stage
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          US_TARGET: ${{ secrets.US_DEPLOY_TARGET }}
+          RU_RELEASE_ROOT: ${{ vars.RU_RELEASE_ROOT }}
+          US_RELEASE_ROOT: ${{ vars.US_RELEASE_ROOT }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          [[ "$RU_TARGET" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$ ]]
+          [[ "$US_TARGET" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$ ]]
+          [[ "$RU_RELEASE_ROOT" =~ ^/[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*){2,}$ ]]
+          [[ "$US_RELEASE_ROOT" =~ ^/[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*){2,}$ ]]
+          ru_stage="$RU_RELEASE_ROOT/$RELEASE_SHA-company-card-v2-activation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          us_stage="$US_RELEASE_ROOT/$RELEASE_SHA-company-card-v2-activation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/company-card-v2-activation-ssh/known_hosts")
+          for pair in "$RU_TARGET|$ru_stage" "$US_TARGET|$us_stage"; do
+            target="${pair%%|*}"
+            stage="${pair#*|}"
+            ssh "${ssh_args[@]}" "$target" "set -euo pipefail; umask 077; test ! -e '$stage' && test ! -L '$stage'; install -d -m 700 '$stage'; printf '%s\n' '$RELEASE_SHA:company-card-v2-direct-activation-v1' > '$stage/stage-identity'; chmod 600 '$stage/stage-identity'; sync -f '$stage/stage-identity'; sync -f '$stage'"
+            scp "${ssh_args[@]}" deploy/product_api/company_card_v2_activation.py "$target:$stage/"
+            ssh "${ssh_args[@]}" "$target" "set -euo pipefail; chmod 700 '$stage/company_card_v2_activation.py'; test \"\$(sha256sum '$stage/company_card_v2_activation.py' | cut -d' ' -f1)\" = '$(sha256sum deploy/product_api/company_card_v2_activation.py | cut -d' ' -f1)'"
+          done
+          scp "${ssh_args[@]}" deploy/product_api/fresh_install_candidate.py "$RU_TARGET:$ru_stage/"
+          ssh "${ssh_args[@]}" "$RU_TARGET" "chmod 600 '$ru_stage/fresh_install_candidate.py'"
+          echo "ru_stage=$ru_stage" >> "$GITHUB_OUTPUT"
+          echo "us_stage=$us_stage" >> "$GITHUB_OUTPUT"
+      - name: Prove exact live SHA, schema 0020, topology and OpenAI credential before mutation
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          US_TARGET: ${{ secrets.US_DEPLOY_TARGET }}
+          RU_RELEASE_ROOT: ${{ vars.RU_RELEASE_ROOT }}
+          US_RELEASE_ROOT: ${{ vars.US_RELEASE_ROOT }}
+          RU_STAGE: ${{ steps.stage.outputs.ru_stage }}
+          US_STAGE: ${{ steps.stage.outputs.us_stage }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/company-card-v2-activation-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" bash -s -- "$RU_STAGE" "$RU_RELEASE_ROOT" "$RELEASE_SHA" <<'REMOTE'
+          set -euo pipefail
+          stage=$1
+          release_root=$2
+          release_sha=$3
+          mapfile -t product_ids < <(docker ps -q --filter label=com.docker.compose.service=product_api)
+          test "${#product_ids[@]}" -eq 1
+          product_id=${product_ids[0]}
+          project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$product_id")
+          config_file=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$product_id")
+          working_dir=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$product_id")
+          printf '%s\n' "$project" | grep -Eq '^[a-z0-9][a-z0-9_-]*$'
+          test "$config_file" = "$release_root/$release_sha/docker-compose.product.yml"
+          test "$working_dir" = "$release_root/$release_sha"
+          test "$(docker inspect --format '{{.Config.Image}}' "$product_id")" = "b2b-product-api:$release_sha"
+          image_id=$(docker inspect --format '{{.Image}}' "$product_id")
+          python3 "$working_dir/release_image_identity.py" "$working_dir/release-manifest-$release_sha.json" "$release_sha" "$working_dir/product-api-$release_sha.oci.tar" "$image_id" >/dev/null
+          docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$product_id" | grep -Fx "PRODUCT_RELEASE_COMMIT=$release_sha" >/dev/null
+          for service in company_report_worker company_card_narrative_worker; do
+            mapfile -t ids < <(docker ps -q --filter "label=com.docker.compose.service=$service")
+            test "${#ids[@]}" -eq 1
+            test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${ids[0]}")" = "$project"
+            test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "${ids[0]}")" = "$config_file"
+            test "$(docker inspect --format '{{.Config.Image}}' "${ids[0]}")" = "b2b-product-api:$release_sha"
+            docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${ids[0]}" | grep -Fx "PRODUCT_RELEASE_COMMIT=$release_sha" >/dev/null
+          done
+          python3 "$stage/company_card_v2_activation.py" preflight --role product --environment-file /opt/b2b/.env.product
+          docker exec -i "$product_id" python - schema-head --expected 0020_company_card_narrative_quota_mode < "$stage/company_card_v2_activation.py"
+          printf '%s\n' "$project" > "$stage/product-project"
+          printf '%s\n' "$config_file" > "$stage/product-config"
+          printf '%s\n' "$working_dir" > "$stage/product-working-dir"
+          printf '%s\n' "$image_id" > "$stage/product-image-id"
+          chmod 600 "$stage/product-project" "$stage/product-config" "$stage/product-working-dir" "$stage/product-image-id"
+          sync -f "$stage/product-project"
+          sync -f "$stage/product-config"
+          sync -f "$stage/product-working-dir"
+          sync -f "$stage/product-image-id"
+          sync -f "$stage"
+          REMOTE
+          ssh "${ssh_args[@]}" "$US_TARGET" bash -s -- "$US_STAGE" "$US_RELEASE_ROOT" "$RELEASE_SHA" <<'REMOTE'
+          set -euo pipefail
+          stage=$1
+          release_root=$2
+          release_sha=$3
+          mapfile -t ids < <(docker ps -q --filter label=com.docker.compose.service=gateway_api)
+          test "${#ids[@]}" -eq 1
+          id=${ids[0]}
+          project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$id")
+          config_file=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$id")
+          working_dir=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$id")
+          printf '%s\n' "$project" | grep -Eq '^[a-z0-9][a-z0-9_-]*$'
+          test "$config_file" = "$release_root/$release_sha/docker-compose.gateway.yml"
+          test "$working_dir" = "$release_root/$release_sha"
+          test "$(docker inspect --format '{{.Config.Image}}' "$id")" = "b2b-gateway-api:$release_sha"
+          image_id=$(docker inspect --format '{{.Image}}' "$id")
+          python3 "$working_dir/release_image_identity.py" "$working_dir/release-manifest-$release_sha.json" "$release_sha" "$working_dir/gateway-api-$release_sha.oci.tar" "$image_id" >/dev/null
+          docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id" | grep -Fx "GATEWAY_RELEASE_COMMIT=$release_sha" >/dev/null
+          python3 "$stage/company_card_v2_activation.py" preflight --role gateway --environment-file /opt/b2b/.env.gateway
+          printf '%s\n' "$project" > "$stage/gateway-project"
+          printf '%s\n' "$config_file" > "$stage/gateway-config"
+          printf '%s\n' "$working_dir" > "$stage/gateway-working-dir"
+          printf '%s\n' "$image_id" > "$stage/gateway-image-id"
+          chmod 600 "$stage/gateway-project" "$stage/gateway-config" "$stage/gateway-working-dir" "$stage/gateway-image-id"
+          sync -f "$stage/gateway-project"
+          sync -f "$stage/gateway-config"
+          sync -f "$stage/gateway-working-dir"
+          sync -f "$stage/gateway-image-id"
+          sync -f "$stage"
+          REMOTE
+      - name: Provision durable Product arbitration mask identity
+        shell: bash
+        env:
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.stage.outputs.ru_stage }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/company-card-v2-activation-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" "set -euo pipefail; python3 '$RU_STAGE/company_card_v2_activation.py' prepare-mask --environment-file /opt/b2b/.env.product --durable-mask-file /opt/b2b/.company-card-v2-arbitration-mask-v1.json; test -f /opt/b2b/.company-card-v2-arbitration-mask-v1.json; test ! -L /opt/b2b/.company-card-v2-arbitration-mask-v1.json; test \"\$(stat -c '%a' /opt/b2b/.company-card-v2-arbitration-mask-v1.json)\" = 600"
+      - name: Enable exact-SHA Gateway narrative with gpt-5-nano
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main.outputs.release_sha }}
+          US_TARGET: ${{ secrets.US_DEPLOY_TARGET }}
+          US_STAGE: ${{ steps.stage.outputs.us_stage }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/company-card-v2-activation-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$US_TARGET" bash -s -- "$US_STAGE" "$RELEASE_SHA" <<'REMOTE'
+          set -euo pipefail
+          stage=$1
+          release_sha=$2
+          project=$(cat "$stage/gateway-project")
+          config_file=$(cat "$stage/gateway-config")
+          working_dir=$(cat "$stage/gateway-working-dir")
+          image_id=$(cat "$stage/gateway-image-id")
+          python3 "$stage/company_card_v2_activation.py" apply --role gateway --environment-file /opt/b2b/.env.gateway --backup-file "$stage/env.gateway.before" --receipt-file "$stage/env.gateway.activation.json" --release-sha "$release_sha"
+          cd "$working_dir"
+          GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="$release_sha" GATEWAY_RELEASE_COMMIT="$release_sha" docker compose -p "$project" -f "$config_file" --env-file /opt/b2b/.env.gateway up -d --no-build --force-recreate gateway_api
+          id=$(GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="$release_sha" GATEWAY_RELEASE_COMMIT="$release_sha" docker compose -p "$project" -f "$config_file" --env-file /opt/b2b/.env.gateway ps -q gateway_api)
+          test -n "$id"
+          test "$(docker inspect --format '{{.Config.Image}}' "$id")" = "b2b-gateway-api:$release_sha"
+          test "$(docker inspect --format '{{.Image}}' "$id")" = "$image_id"
+          test "$(docker inspect --format '{{.State.Running}}' "$id")" = true
+          curl --fail --silent --show-error http://127.0.0.1:8001/health >/dev/null
+          docker exec -i "$id" python - in-process-verify --role gateway --release-sha "$release_sha" < "$stage/company_card_v2_activation.py"
+          python3 "$stage/company_card_v2_activation.py" verify --role gateway --environment-file /opt/b2b/.env.gateway
+          printf '%s\n' "$release_sha" > "$stage/gateway-activated"
+          chmod 600 "$stage/gateway-activated"
+          sync -f "$stage/gateway-activated"
+          sync -f "$stage"
+          REMOTE
+      - name: Enable global H2, all chart data and unlimited AI on Product
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.stage.outputs.ru_stage }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/company-card-v2-activation-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" bash -s -- "$RU_STAGE" "$RELEASE_SHA" <<'REMOTE'
+          set -euo pipefail
+          stage=$1
+          release_sha=$2
+          project=$(cat "$stage/product-project")
+          config_file=$(cat "$stage/product-config")
+          working_dir=$(cat "$stage/product-working-dir")
+          image_id=$(cat "$stage/product-image-id")
+          python3 "$stage/company_card_v2_activation.py" apply --role product --environment-file /opt/b2b/.env.product --backup-file "$stage/env.product.before" --receipt-file "$stage/env.product.activation.json" --release-sha "$release_sha" --durable-mask-file /opt/b2b/.company-card-v2-arbitration-mask-v1.json
+          cd "$working_dir"
+          PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" docker compose -p "$project" --profile company-card-narrative -f "$config_file" --env-file /opt/b2b/.env.product up -d --no-build --force-recreate product_api company_report_worker company_card_narrative_worker
+          for service in product_api company_report_worker company_card_narrative_worker; do
+            id=$(PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" docker compose -p "$project" --profile company-card-narrative -f "$config_file" --env-file /opt/b2b/.env.product ps -q "$service")
+            test -n "$id"
+            test "$(docker inspect --format '{{.Config.Image}}' "$id")" = "b2b-product-api:$release_sha"
+            test "$(docker inspect --format '{{.Image}}' "$id")" = "$image_id"
+            test "$(docker inspect --format '{{.State.Running}}' "$id")" = true
+          done
+          product_id=$(PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" docker compose -p "$project" --profile company-card-narrative -f "$config_file" --env-file /opt/b2b/.env.product ps -q product_api)
+          curl --fail --silent --show-error http://127.0.0.1:8000/health >/dev/null
+          docker exec -i "$product_id" python - schema-head --expected 0020_company_card_narrative_quota_mode < "$stage/company_card_v2_activation.py"
+          docker exec -i "$product_id" python - in-process-verify --role product --release-sha "$release_sha" < "$stage/company_card_v2_activation.py"
+          docker exec -i "$product_id" python - gateway --release-sha "$release_sha" < "$stage/fresh_install_candidate.py"
+          python3 "$stage/company_card_v2_activation.py" verify --role product --environment-file /opt/b2b/.env.product
+          printf '%s\n' "$release_sha" > "$stage/product-activated"
+          chmod 600 "$stage/product-activated"
+          sync -f "$stage/product-activated"
+          sync -f "$stage"
+          REMOTE
+      - name: Publish exact activation success receipts
+        id: activation_success
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          US_TARGET: ${{ secrets.US_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.stage.outputs.ru_stage }}
+          US_STAGE: ${{ steps.stage.outputs.us_stage }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/company-card-v2-activation-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" "set -euo pipefail; test \"\$(cat '$RU_STAGE/product-activated')\" = '$RELEASE_SHA'; printf '%s\n' '$RELEASE_SHA:global-h2-openai-active-v1' > '$RU_STAGE/activation-success'; chmod 600 '$RU_STAGE/activation-success'; sync -f '$RU_STAGE/activation-success'; sync -f '$RU_STAGE'"
+          ssh "${ssh_args[@]}" "$US_TARGET" "set -euo pipefail; test \"\$(cat '$US_STAGE/gateway-activated')\" = '$RELEASE_SHA'; printf '%s\n' '$RELEASE_SHA:global-h2-openai-active-v1' > '$US_STAGE/activation-success'; chmod 600 '$US_STAGE/activation-success'; sync -f '$US_STAGE/activation-success'; sync -f '$US_STAGE'"
+          echo "complete=true" >> "$GITHUB_OUTPUT"
+      - name: Finalize rollback and local activation credentials
+        if: always()
+        shell: bash
+        env:
+          ROLLBACK_REQUIRED: ${{ failure() || cancelled() }}
+          RELEASE_SHA: ${{ needs.trusted-main.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          US_TARGET: ${{ secrets.US_DEPLOY_TARGET }}
+          RU_STAGE: ${{ steps.stage.outputs.ru_stage }}
+          US_STAGE: ${{ steps.stage.outputs.us_stage }}
+        run: |
+          set -euo pipefail
+          trap 'if test -n "${SSH_AGENT_PID:-}"; then ssh-agent -k >/dev/null 2>&1 || true; fi' EXIT
+          rollback_status=0
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/company-card-v2-activation-ssh/known_hosts")
+          if test "$ROLLBACK_REQUIRED" = true && test -n "$RU_STAGE"; then
+            if ! ssh "${ssh_args[@]}" "$RU_TARGET" bash -s -- "$RU_STAGE" "$RELEASE_SHA" <<'REMOTE'
+          set -euo pipefail
+          stage=$1
+          release_sha=$2
+          if test -f "$stage/env.product.activation.json" && test ! -L "$stage/env.product.activation.json"; then
+            python3 "$stage/company_card_v2_activation.py" restore --role product --environment-file /opt/b2b/.env.product --backup-file "$stage/env.product.before" --receipt-file "$stage/env.product.activation.json" --release-sha "$release_sha"
+            project=$(cat "$stage/product-project")
+            config_file=$(cat "$stage/product-config")
+            working_dir=$(cat "$stage/product-working-dir")
+            cd "$working_dir"
+            PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TAG="$release_sha" PRODUCT_RELEASE_COMMIT="$release_sha" docker compose -p "$project" --profile company-card-narrative -f "$config_file" --env-file /opt/b2b/.env.product up -d --no-build --force-recreate product_api company_report_worker company_card_narrative_worker
+            curl --fail --silent --show-error http://127.0.0.1:8000/health >/dev/null
+          fi
+          REMOTE
+            then
+              rollback_status=1
+            fi
+          fi
+          if test "$ROLLBACK_REQUIRED" = true && test -n "$US_STAGE"; then
+            if ! ssh "${ssh_args[@]}" "$US_TARGET" bash -s -- "$US_STAGE" "$RELEASE_SHA" <<'REMOTE'
+          set -euo pipefail
+          stage=$1
+          release_sha=$2
+          if test -f "$stage/env.gateway.activation.json" && test ! -L "$stage/env.gateway.activation.json"; then
+            python3 "$stage/company_card_v2_activation.py" restore --role gateway --environment-file /opt/b2b/.env.gateway --backup-file "$stage/env.gateway.before" --receipt-file "$stage/env.gateway.activation.json" --release-sha "$release_sha"
+            project=$(cat "$stage/gateway-project")
+            config_file=$(cat "$stage/gateway-config")
+            working_dir=$(cat "$stage/gateway-working-dir")
+            cd "$working_dir"
+            GATEWAY_ENV_FILE=/opt/b2b/.env.gateway GATEWAY_IMAGE_TAG="$release_sha" GATEWAY_RELEASE_COMMIT="$release_sha" docker compose -p "$project" -f "$config_file" --env-file /opt/b2b/.env.gateway up -d --no-build --force-recreate gateway_api
+            curl --fail --silent --show-error http://127.0.0.1:8001/health >/dev/null
+          fi
+          REMOTE
+            then
+              rollback_status=1
+            fi
+          fi
+          exit "$rollback_status"

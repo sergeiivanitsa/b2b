@@ -105,7 +105,7 @@ from product_api.company_reports.persistence.v3 import (
 from product_api.company_reports.seo import canonical_path as h1_canonical_path
 
 
-EXPECTED_HEAD = "0019_company_card_v2_rollout_control"
+EXPECTED_HEAD = "0020_company_card_narrative_quota_mode"
 REGISTRY_PATH = (
     REPO_ROOT
     / "services"

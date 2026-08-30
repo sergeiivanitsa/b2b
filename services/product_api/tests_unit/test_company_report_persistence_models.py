@@ -174,3 +174,16 @@ def test_narrative_orm_matches_resolved_pin_and_runtime_migration_shape():
     )
     assert "concurrency_limit = 0" in str(runtime_check.sqltext)
     assert "concurrency_limit >= leased_count" in str(runtime_check.sqltext)
+    runtime_quota = next(
+        constraint
+        for constraint in CompanyCardNarrativeRuntimeControl.__table__.constraints
+        if constraint.name.endswith("company_card_narrative_runtime_quota_shape")
+    )
+    assert isinstance(
+        CompanyCardNarrativeRuntimeControl.__table__.c.quota_mode.type,
+        String,
+    )
+    assert CompanyCardNarrativeRuntimeControl.__table__.c.quota_mode.type.length == 16
+    assert "quota_mode IN ('bounded', 'unlimited')" in str(runtime_quota.sqltext)
+    assert "daily_limit = 0 AND monthly_limit = 0" in str(runtime_quota.sqltext)
+    assert "concurrency_limit > 0" in str(runtime_quota.sqltext)

@@ -1,8 +1,4 @@
-"""Anonymous, read-only SSR endpoints for explicitly published H1 reports.
-
-The saved-result-only H2 resolver introduced in iteration 21 is deliberately
-not routed here: iteration 22 owns the public H2 page shell and SSR wiring.
-"""
+"""Anonymous, read-only SSR endpoints for persisted H1/H2 reports."""
 from __future__ import annotations
 
 import re
@@ -34,7 +30,14 @@ from product_api.company_reports.company_card_v2.public_h2_asset_manifest import
 from product_api.company_reports.company_card_v2.public_h2_document import (
     public_h2_security_headers, render_public_h2_document, render_public_h2_error_document,
 )
-from product_api.company_reports.company_card_v2.service import PublicH2Failed, PublicH2NotEligible, PublicH2Pending
+from product_api.company_reports.company_card_v2.service import (
+    PublicH2Failed,
+    PublicH2Invalid,
+    PublicH2NotEligible,
+    PublicH2NotFound,
+    PublicH2Pending,
+    resolve_direct_public_h2,
+)
 from product_api.company_reports.seo import render_sitemap, render_sitemap_index
 from product_api.db.session import get_session
 from product_api.settings import get_settings
@@ -66,6 +69,15 @@ def _not_found() -> Response:
     return PlainTextResponse("Not found", status_code=404, headers=_headers("noindex,follow"))
 
 
+def _direct_plain_redirect(inn: str) -> Response:
+    """Move an old canonical H1/H2 URL onto the SPA fallback boundary."""
+    return RedirectResponse(
+        f"/company/{inn}",
+        status_code=302,
+        headers=_headers("noindex,follow"),
+    )
+
+
 def _current_public_projection(page):
     """The same pure complete pin predicate used by API/SSR resolution."""
     try:
@@ -92,15 +104,28 @@ async def public_company_page(company_key: str, request: Request, session: Async
         return _not_found()
     try:
         inn = (match or plain).group("inn")
-        document = await resolve_public_document(session, inn=inn)
-        dto = document.dto
-        if document.kind is PublicDocumentKind.H1 and not document.assigned and dto.projection_scope != "published":
+        current = get_settings()
+        direct_h2 = current.company_card_v2_direct_launch_enabled
+        if direct_h2:
+            dto = await resolve_direct_public_h2(
+                session,
+                inn=inn,
+                rollout_generation=current.company_card_v2_rollout_generation,
+            )
+            document_kind = PublicDocumentKind.H2
+            document_assigned = False
+        else:
+            document = await resolve_public_document(session, inn=inn)
+            dto = document.dto
+            document_kind = document.kind
+            document_assigned = document.assigned
+        if document_kind is PublicDocumentKind.H1 and not document_assigned and dto.projection_scope != "published":
             # Preserve the historical unpublished H1 behaviour.  The plain
             # form is deliberately the only nginx SPA fallback boundary.
             return _not_found()
         if dto.canonical_path != f"/company/{company_key}":
             return RedirectResponse(dto.canonical_path, status_code=301, headers=_headers("noindex,follow"))
-        if document.kind is PublicDocumentKind.H1:
+        if document_kind is PublicDocumentKind.H1:
             robots = "index,follow" if dto.indexable else "noindex,follow"
             return HTMLResponse(render_public_h1_html(dto), headers=_headers(robots))
         nonce = token_urlsafe(18)
@@ -111,11 +136,27 @@ async def public_company_page(company_key: str, request: Request, session: Async
         )
     except (PublicH1NotFoundError, PublicH1PendingError, PublicH1FailedError, PublicH1NotEligibleError):
         return _not_found()
+    except PublicH2NotFound:
+        if get_settings().company_card_v2_direct_launch_enabled and match is not None:
+            return _direct_plain_redirect(inn)
+        return _not_found()
     except (PublicH2Pending, PublicH2Failed, PublicH2NotEligible):
+        if get_settings().company_card_v2_direct_launch_enabled:
+            if match is not None:
+                # Preserve old indexed/bookmarked H1 slugs across the direct
+                # switch.  The temporary redirect lands on the one nginx SPA
+                # fallback boundary, where the direct H2 lifecycle can start.
+                return _direct_plain_redirect(inn)
+            if plain is not None:
+                # The plain path remains the nginx SPA fallback while a direct
+                # H2 lifecycle is still pending.  Once ready, the same read
+                # resolves the staged saved-result and redirects to its
+                # canonical slug.
+                return _not_found()
         return _safe_error(409, "Отчёт пока недоступен", "Публичный документ ещё не готов.")
     except PublicH1UnavailableError:
         return PlainTextResponse("Unavailable", status_code=503, headers=_headers("noindex,follow"))
-    except (PublicProjectionInvalidError, PublicDocumentInvalid):
+    except (PublicProjectionInvalidError, PublicDocumentInvalid, PublicH2Invalid):
         return _safe_error(500, "Внутренняя ошибка", "Документ отчёта недоступен.")
     except SQLAlchemyError:
         return PlainTextResponse("Unavailable", status_code=503, headers=_headers("noindex,follow"))

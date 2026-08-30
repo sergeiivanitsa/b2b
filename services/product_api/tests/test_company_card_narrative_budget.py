@@ -31,6 +31,7 @@ from product_api.company_reports.persistence.narratives import (
     narrative_budget_windows,
     release_pre_dispatch_reservation,
     reserve_or_rereserve_dispatch_credit,
+    synchronize_narrative_runtime_control,
 )
 
 
@@ -102,10 +103,12 @@ async def _open(
     daily: int,
     monthly: int,
     concurrency: int,
+    quota_mode: str = "bounded",
 ) -> None:
     control = await session.get(CompanyCardNarrativeRuntimeControl, 1)
     assert control is not None
     control.enabled, control.kill_switch = True, False
+    control.quota_mode = quota_mode
     control.daily_limit = daily
     control.monthly_limit = monthly
     control.concurrency_limit = concurrency
@@ -143,6 +146,85 @@ async def test_daily_and_monthly_limits_fail_closed(engine, daily, monthly, expe
                 session, generation_key=second, now=_NOW
             )
         assert captured.value.code == expected
+
+
+@pytest.mark.asyncio
+async def test_unlimited_mode_records_usage_without_enforcing_calendar_caps(engine):
+    async with AsyncSession(bind=engine) as session:
+        keys = tuple(
+            [
+                await _job(
+                    session,
+                    inn=f"77012346{index:02d}",
+                    snapshot_hash=f"{index:x}" * 64,
+                )
+                for index in range(1, 4)
+            ]
+        )
+        await _open(
+            session,
+            daily=0,
+            monthly=0,
+            concurrency=1,
+            quota_mode="unlimited",
+        )
+        for generation_key in keys:
+            await reserve_or_rereserve_dispatch_credit(
+                session,
+                generation_key=generation_key,
+                now=_NOW,
+            )
+        await session.commit()
+
+    async with AsyncSession(bind=engine) as session:
+        windows = (
+            await session.scalars(select(CompanyCardNarrativeBudgetWindow))
+        ).all()
+        reservations = (
+            await session.scalars(select(CompanyCardNarrativeBudgetReservation))
+        ).all()
+        assert len(reservations) == 3
+        assert len(windows) == 2
+        assert all(window.reserved_count == 3 for window in windows)
+
+        first = await claim_narrative_job(session, now=_NOW, lease_seconds=60)
+        assert first is not None
+        second = await claim_narrative_job(session, now=_NOW, lease_seconds=60)
+        assert second is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_control_synchronizes_exact_unlimited_mode(engine):
+    async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+        async with session.begin():
+            control = await synchronize_narrative_runtime_control(
+                session,
+                enabled=True,
+                kill_switch=False,
+                quota_mode="unlimited",
+                daily_limit=0,
+                monthly_limit=0,
+                concurrency_limit=2,
+                now=_NOW,
+            )
+
+        assert control.quota_mode == "unlimited"
+        assert control.daily_limit == 0
+        assert control.monthly_limit == 0
+        assert control.concurrency_limit == 2
+
+    async with AsyncSession(bind=engine) as session:
+        with pytest.raises(ValueError, match="zero daily and monthly"):
+            await synchronize_narrative_runtime_control(
+                session,
+                enabled=True,
+                kill_switch=False,
+                quota_mode="unlimited",
+                daily_limit=1,
+                monthly_limit=0,
+                concurrency_limit=2,
+                now=_NOW,
+            )
 
 
 @pytest.mark.asyncio

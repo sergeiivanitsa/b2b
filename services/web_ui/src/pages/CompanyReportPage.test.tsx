@@ -37,16 +37,19 @@ import type {
 } from '../companyReport/companyReportTypes'
 import { ApiHttpError } from '../lib/api'
 import { CompanyReportPage } from './CompanyReportPage'
+import { navigateToCompany } from './companyLandingNavigation'
 
 vi.mock('../companyReport/companyReportApi', () => ({
   getCompanyPublicH1: vi.fn(),
   getCompanyReportStatus: vi.fn(),
   createCompanyReport: vi.fn(),
 }))
+vi.mock('./companyLandingNavigation', () => ({ navigateToCompany: vi.fn() }))
 
 const mockedGet = vi.mocked(getCompanyPublicH1)
 const mockedStatus = vi.mocked(getCompanyReportStatus)
 const mockedCreate = vi.mocked(createCompanyReport)
+const mockedNavigate = vi.mocked(navigateToCompany)
 const companyA = parseCompanyPublicH1(JSON.parse(publishedFixture))
 
 function companyDto(
@@ -444,6 +447,35 @@ describe('CompanyReportPage lifecycle', () => {
     expect(screen.getByTestId('location').textContent).toBe(
       `/claims?report_id=${finalDto.report_id}`,
     )
+  })
+
+  it('hands a ready direct H2 lifecycle to one full document navigation', async () => {
+    vi.useFakeTimers()
+    mockedGet.mockRejectedValueOnce(notFoundError())
+    mockedCreate.mockResolvedValueOnce({
+      report_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      status: 'pending',
+      reused: false,
+    })
+    mockedStatus.mockResolvedValueOnce({
+      report_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      status: 'complete',
+      started_at: '2026-08-30T00:00:00Z',
+      finished_at: '2026-08-30T00:00:05Z',
+      public_document_path: '/company/1234567890',
+    })
+
+    renderPage('/company/1234567890')
+    await flushPromises()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STATUS_POLL_INTERVAL_MS)
+    })
+
+    expect(mockedNavigate).toHaveBeenCalledOnce()
+    expect(mockedNavigate).toHaveBeenCalledWith('1234567890')
+    expect(mockedGet).toHaveBeenCalledTimes(1)
+    expect(mockedCreate).toHaveBeenCalledTimes(1)
+    expect(mockedStatus).toHaveBeenCalledTimes(1)
   })
 
   it('keeps at most one poll in flight and aborts it on unmount', async () => {

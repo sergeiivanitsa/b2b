@@ -27,8 +27,10 @@ def test_company_report_worker_settings_have_safe_defaults():
     assert settings.company_report_worker_lease_seconds == 60
     assert settings.company_report_worker_heartbeat_interval_seconds == 10
     assert settings.company_report_worker_shutdown_grace_seconds == 30
+    assert settings.company_card_v2_direct_launch_enabled is False
     assert settings.company_card_v2_narrative_enabled is False
     assert settings.company_card_v2_narrative_kill_switch is True
+    assert settings.company_card_v2_narrative_quota_mode == "bounded"
     assert settings.company_card_v2_narrative_daily_limit == 0
     assert settings.company_card_v2_narrative_monthly_limit == 0
     assert settings.company_card_v2_narrative_concurrency == 0
@@ -112,6 +114,86 @@ def test_company_report_worker_settings_reject_invalid_timing(override, message)
 def test_narrative_worker_controls_fail_closed(overrides: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         Settings.model_validate(_base_settings_payload(**overrides))
+
+
+def test_narrative_unlimited_mode_uses_zero_calendar_caps_and_positive_backpressure() -> None:
+    settings = Settings.model_validate(
+        _base_settings_payload(
+            COMPANY_CARD_AI_NARRATIVE_ENABLED=True,
+            COMPANY_CARD_AI_NARRATIVE_KILL_SWITCH=False,
+            COMPANY_CARD_AI_NARRATIVE_QUOTA_MODE="unlimited",
+            COMPANY_CARD_AI_NARRATIVE_DAILY_DISPATCH_CREDITS=0,
+            COMPANY_CARD_AI_NARRATIVE_MONTHLY_DISPATCH_CREDITS=0,
+            COMPANY_CARD_AI_NARRATIVE_WORKER_CONCURRENCY=2,
+        )
+    )
+
+    assert settings.company_card_v2_narrative_quota_mode == "unlimited"
+    assert settings.company_card_v2_narrative_daily_limit == 0
+    assert settings.company_card_v2_narrative_monthly_limit == 0
+    assert settings.company_card_v2_narrative_concurrency == 2
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {
+            "COMPANY_CARD_AI_NARRATIVE_ENABLED": True,
+            "COMPANY_CARD_AI_NARRATIVE_KILL_SWITCH": False,
+            "COMPANY_CARD_AI_NARRATIVE_QUOTA_MODE": "unlimited",
+            "COMPANY_CARD_AI_NARRATIVE_WORKER_CONCURRENCY": 0,
+        },
+        {
+            "COMPANY_CARD_AI_NARRATIVE_QUOTA_MODE": "unlimited",
+            "COMPANY_CARD_AI_NARRATIVE_DAILY_DISPATCH_CREDITS": 1,
+        },
+        {"COMPANY_CARD_AI_NARRATIVE_QUOTA_MODE": "unknown"},
+    ],
+)
+def test_narrative_unlimited_mode_rejects_ambiguous_or_closed_controls(
+    overrides: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate(_base_settings_payload(**overrides))
+
+
+def test_direct_h2_launch_requires_global_presentations_and_writer() -> None:
+    settings = Settings.model_validate(
+        _base_settings_payload(
+            COMPANY_CARD_V2_PRESENTATIONS_ENABLED=True,
+            COMPANY_CARD_V2_WRITER_ENABLED=True,
+            COMPANY_CARD_V2_DIRECT_LAUNCH_ENABLED=True,
+            COMPANY_CARD_V2_ROLLOUT_GENERATION=1,
+            COMPANY_CARD_V2_PERCENTAGE_BASIS_POINTS=10000,
+        )
+    )
+
+    assert settings.company_card_v2_direct_launch_enabled is True
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {},
+        {"COMPANY_CARD_V2_PRESENTATIONS_ENABLED": True},
+        {
+            "COMPANY_CARD_V2_PRESENTATIONS_ENABLED": True,
+            "COMPANY_CARD_V2_WRITER_ENABLED": True,
+            "COMPANY_CARD_V2_PERCENTAGE_BASIS_POINTS": 9999,
+        },
+    ],
+)
+def test_direct_h2_launch_rejects_partial_activation(
+    overrides: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError, match="direct Company Card v2 launch"):
+        Settings.model_validate(
+            _base_settings_payload(
+                COMPANY_CARD_V2_DIRECT_LAUNCH_ENABLED=True,
+                COMPANY_CARD_V2_ROLLOUT_GENERATION=1,
+                **overrides,
+            )
+        )
 
 
 @pytest.mark.parametrize(

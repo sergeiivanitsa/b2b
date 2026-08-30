@@ -32,7 +32,7 @@ async def test_exact_worker_drain_aggregate_sql_and_psql_adapter_on_migrated_pos
         revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
         raw = await connection.scalar(text(drain._AGGREGATE_SQL))
 
-    assert revision == "0019_company_card_v2_rollout_control"
+    assert revision == "0020_company_card_narrative_quota_mode"
     assert isinstance(raw, str)
     direct_snapshot = drain.AggregateSnapshot(**json.loads(raw))
     assert direct_snapshot.safe

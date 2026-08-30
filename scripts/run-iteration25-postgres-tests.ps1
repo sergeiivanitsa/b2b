@@ -32,7 +32,7 @@ $pgPassword = "i25p$runId"
 $guardDatabase = "i24_guard_$short"
 $roundtripDatabase = "i24_roundtrip_$short"
 $suiteDatabase = "i25_suite_$short"
-$expectedHead = "0019_company_card_v2_rollout_control"
+$expectedHead = "0020_company_card_narrative_quota_mode"
 $temporaryParent = Join-Path $repoRoot ".tmp"
 $temporaryRoot = Join-Path $temporaryParent "iteration25-postgres-$runId"
 $junit0018 = Join-Path $temporaryRoot "exact-0018.xml"
@@ -99,6 +99,7 @@ $environmentNames = @(
     "AI_EXPLANATION_ENABLED",
     "COMPANY_CARD_V2_PRESENTATIONS_ENABLED",
     "COMPANY_CARD_V2_WRITER_ENABLED",
+    "COMPANY_CARD_V2_DIRECT_LAUNCH_ENABLED",
     "COMPANY_CARD_V2_ROLLOUT_GENERATION",
     "COMPANY_CARD_V2_ALLOWLIST_INNS",
     "COMPANY_CARD_V2_PERCENTAGE_BASIS_POINTS",
@@ -107,10 +108,13 @@ $environmentNames = @(
     "COMPANY_CARD_V2_ARBITRATION_MASK_KEYRING_JSON",
     "COMPANY_CARD_AI_NARRATIVE_ENABLED",
     "COMPANY_CARD_AI_NARRATIVE_KILL_SWITCH",
+    "COMPANY_CARD_AI_NARRATIVE_QUOTA_MODE",
+    "COMPANY_CARD_AI_NARRATIVE_DAILY_DISPATCH_CREDITS",
+    "COMPANY_CARD_AI_NARRATIVE_MONTHLY_DISPATCH_CREDITS",
+    "COMPANY_CARD_AI_NARRATIVE_WORKER_CONCURRENCY",
     "COMPANY_CARD_NARRATIVE_GATEWAY_ENABLED",
-    "COMPANY_CARD_NARRATIVE_DAILY_CREDITS",
-    "COMPANY_CARD_NARRATIVE_MONTHLY_CREDITS",
-    "COMPANY_CARD_NARRATIVE_CONCURRENCY"
+    "COMPANY_CARD_NARRATIVE_MODEL_PROFILE",
+    "COMPANY_CARD_NARRATIVE_MODEL"
 ) | Select-Object -Unique
 
 $savedEnvironment = @{}
@@ -391,8 +395,8 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $repoRoot "AGENTS.md") -PathType Leaf)) {
         throw "Unable to resolve repository root"
     }
-    if (-not (Test-Path -LiteralPath (Join-Path $productRoot "alembic\versions\0019_company_card_v2_rollout_control.py") -PathType Leaf)) {
-        throw "Required iteration-25 migration is missing"
+    if (-not (Test-Path -LiteralPath (Join-Path $productRoot "alembic\versions\0020_company_card_narrative_quota_mode.py") -PathType Leaf)) {
+        throw "Required Company Card narrative quota migration is missing"
     }
     $requiredCommands = @("docker", "python")
     if ($Mode -eq "BrowserE2E") {
@@ -699,6 +703,7 @@ try {
     Set-ProcessEnvironment "AI_EXPLANATION_ENABLED" "false"
     Set-ProcessEnvironment "COMPANY_CARD_V2_PRESENTATIONS_ENABLED" "false"
     Set-ProcessEnvironment "COMPANY_CARD_V2_WRITER_ENABLED" "false"
+    Set-ProcessEnvironment "COMPANY_CARD_V2_DIRECT_LAUNCH_ENABLED" "false"
     Set-ProcessEnvironment "COMPANY_CARD_V2_ROLLOUT_GENERATION" "0"
     Set-ProcessEnvironment "COMPANY_CARD_V2_ALLOWLIST_INNS" ""
     Set-ProcessEnvironment "COMPANY_CARD_V2_PERCENTAGE_BASIS_POINTS" "0"
@@ -707,10 +712,13 @@ try {
     Set-ProcessEnvironment "COMPANY_CARD_V2_ARBITRATION_MASK_KEYRING_JSON" $null
     Set-ProcessEnvironment "COMPANY_CARD_AI_NARRATIVE_ENABLED" "false"
     Set-ProcessEnvironment "COMPANY_CARD_AI_NARRATIVE_KILL_SWITCH" "true"
+    Set-ProcessEnvironment "COMPANY_CARD_AI_NARRATIVE_QUOTA_MODE" "bounded"
+    Set-ProcessEnvironment "COMPANY_CARD_AI_NARRATIVE_DAILY_DISPATCH_CREDITS" "0"
+    Set-ProcessEnvironment "COMPANY_CARD_AI_NARRATIVE_MONTHLY_DISPATCH_CREDITS" "0"
+    Set-ProcessEnvironment "COMPANY_CARD_AI_NARRATIVE_WORKER_CONCURRENCY" "0"
     Set-ProcessEnvironment "COMPANY_CARD_NARRATIVE_GATEWAY_ENABLED" "false"
-    Set-ProcessEnvironment "COMPANY_CARD_NARRATIVE_DAILY_CREDITS" "0"
-    Set-ProcessEnvironment "COMPANY_CARD_NARRATIVE_MONTHLY_CREDITS" "0"
-    Set-ProcessEnvironment "COMPANY_CARD_NARRATIVE_CONCURRENCY" "0"
+    Set-ProcessEnvironment "COMPANY_CARD_NARRATIVE_MODEL_PROFILE" "company_card_narrative_structured_v1"
+    Set-ProcessEnvironment "COMPANY_CARD_NARRATIVE_MODEL" $null
     Set-ProcessEnvironment "TEST_POSTGRES_ADMIN_URL" $adminUrl
     Set-ProcessEnvironment "TEST_POSTGRES_GUARD_URL" $guardUrl
     Set-ProcessEnvironment "TEST_POSTGRES_ROUNDTRIP_URL" $roundtripUrl

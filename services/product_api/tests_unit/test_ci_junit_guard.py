@@ -162,7 +162,7 @@ def test_iteration25_runner_owns_forward_head_and_two_junit_phases() -> None:
     assert "i24_roundtrip_$short" in runner
     assert "i24u$short" in runner
     assert "i25_suite_$short" in runner
-    assert '"0019_company_card_v2_rollout_control"' in runner
+    assert '"0020_company_card_narrative_quota_mode"' in runner
     checks = tuple(
         line.strip()
         for line in runner.splitlines()

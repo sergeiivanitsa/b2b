@@ -395,7 +395,7 @@ def test_database_guard_sets_strict_acl_and_has_atomic_reset_reconciliation_mark
     assert "production_fresh_install_schema_marker_v1" in text
     assert "database changed outside the exact reset reconciliation states; STOP" in text
     assert "0015_claims_company_report_handoff" in text
-    assert "0019_company_card_v2_rollout_control" in text
+    assert "0020_company_card_narrative_quota_mode" in text
     assert text.index("DROP SCHEMA public CASCADE") < text.index(
         "COMMENT ON SCHEMA public"
     )
@@ -438,7 +438,8 @@ def test_database_guard_validates_exact_default_off_head_and_empty_application_d
     text = DATABASE.read_text(encoding="utf-8")
     assert "publication_sufficiency_v1" in text
     assert '(1, "paused", "publication_sufficiency_v1")' in text
-    assert "(1, False, True, 0, 0, 0, 0)" in text
+    assert 'SELECT singleton_id, enabled, kill_switch, quota_mode, daily_limit' in text
+    assert '(1, False, True, "bounded", 0, 0, 0, 0)' in text
     assert "fresh schema contains application data; STOP" in text
     assert '"alembic_version"' in text
     assert '"company_card_narrative_runtime_control"' in text
@@ -488,6 +489,22 @@ def test_runner_is_durable_resumable_and_never_restarts_legacy_after_drop() -> N
     assert "schema-reset-complete" in runner
     assert "legacy-0015-rollback" not in runner
     assert "prior-product-image" not in runner
+
+
+def test_global_receipts_are_root_owned_and_existing_metadata_is_fail_closed() -> None:
+    runner = RUNNER.read_text(encoding="utf-8")
+    helper = runner.split("global_receipt() {", 1)[1].split("\n}", 1)[0]
+
+    assert "os.stat(path, follow_symlinks=False)" in helper
+    assert "stat.S_ISREG(metadata.st_mode)" in helper
+    assert "stat.S_IMODE(metadata.st_mode) != 0o640" in helper
+    assert "metadata.st_uid != 0" in helper
+    assert "metadata.st_gid != 0" in helper
+    assert "global marker metadata mismatch; STOP" in helper
+    assert "os.fchown(handle.fileno(), 0, 0)" in helper
+    assert helper.index("os.fchown(handle.fileno(), 0, 0)") < helper.index(
+        "os.fchmod(handle.fileno(), 0o640)"
+    )
 
 
 def test_systemd_boot_guard_keeps_incomplete_release_fail_closed() -> None:
@@ -919,6 +936,8 @@ def test_database_and_candidate_helpers_fail_without_secret_echo(
                 "a" * 40,
                 "--provider-state",
                 "disabled",
+                "--company-card-mode",
+                "default-off",
             ]
         )
         == 2
@@ -957,6 +976,7 @@ def test_candidate_superadmin_length_is_bounded_before_drop(
         claims_upload_dir="/data/claims_uploads",
         company_card_v2_presentations_enabled=False,
         company_card_v2_writer_enabled=False,
+        company_card_v2_direct_launch_enabled=False,
         company_card_v2_rollout_generation=0,
         company_card_v2_allowlist_inns=[],
         company_card_v2_percentage_basis_points=0,
@@ -965,18 +985,82 @@ def test_candidate_superadmin_length_is_bounded_before_drop(
         company_card_v2_arbitration_mask_keyring_json=None,
         company_card_v2_narrative_enabled=False,
         company_card_v2_narrative_kill_switch=True,
+        company_card_v2_narrative_quota_mode="bounded",
         company_card_v2_narrative_daily_limit=0,
         company_card_v2_narrative_monthly_limit=0,
         company_card_v2_narrative_concurrency=0,
     )
-    candidate._settings_contract(settings, release_sha, "disabled")
+    candidate._settings_contract(settings, release_sha, "disabled", "default-off")
     with pytest.raises(candidate.CandidateCheckError) as error:
         candidate._settings_contract(
             SimpleNamespace(**{**vars(settings), "superadmin_email": "x" * 321}),
             release_sha,
             "disabled",
+            "default-off",
         )
     assert "x" * 321 not in str(error.value)
+
+
+def test_candidate_accepts_only_exact_direct_h2_activation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = _candidate_module()
+    release_sha = "a" * 40
+    monkeypatch.setenv("PRODUCT_RELEASE_COMMIT", release_sha)
+    settings = SimpleNamespace(
+        superadmin_email="owner@example.com",
+        datanewton_enabled=True,
+        datanewton_api_key="server-provider-secret",
+        claims_upload_dir="/data/claims_uploads",
+        company_card_v2_presentations_enabled=True,
+        company_card_v2_writer_enabled=True,
+        company_card_v2_direct_launch_enabled=True,
+        company_card_v2_rollout_generation=1,
+        company_card_v2_allowlist_inns=[],
+        company_card_v2_percentage_basis_points=10000,
+        company_card_v2_arbitration_collection_enabled=True,
+        company_card_v2_arbitration_mask_active_key_id="production_v1",
+        company_card_v2_arbitration_mask_keyring_json=object(),
+        company_card_v2_narrative_enabled=True,
+        company_card_v2_narrative_kill_switch=False,
+        company_card_v2_narrative_quota_mode="unlimited",
+        company_card_v2_narrative_daily_limit=0,
+        company_card_v2_narrative_monthly_limit=0,
+        company_card_v2_narrative_concurrency=1,
+    )
+    candidate._settings_contract(
+        settings,
+        release_sha,
+        "enabled",
+        "default-off-or-direct-h2",
+    )
+    with pytest.raises(candidate.CandidateCheckError):
+        candidate._settings_contract(
+            settings,
+            release_sha,
+            "enabled",
+            "default-off",
+        )
+    with pytest.raises(candidate.CandidateCheckError):
+        candidate._settings_contract(
+            SimpleNamespace(
+                **{
+                    **vars(settings),
+                    "company_card_v2_percentage_basis_points": 9999,
+                }
+            ),
+            release_sha,
+            "enabled",
+            "default-off-or-direct-h2",
+        )
+
+
+def test_fresh_installer_requires_default_off_but_normal_deploy_allows_direct_h2() -> None:
+    runner = RUNNER.read_text(encoding="utf-8")
+    deploy = (ROOT / ".github/workflows/deploy_prod.yml").read_text(encoding="utf-8")
+    assert runner.count("--company-card-mode default-off") == 2
+    assert "--company-card-mode default-off-or-direct-h2" not in runner
+    assert deploy.count("--company-card-mode default-off-or-direct-h2") == 2
 
 
 def test_reset_empty_state_inventory_uses_postgres_dependency_closure() -> None:

@@ -6,6 +6,7 @@ from datetime import datetime
 from hashlib import sha256
 import json
 import re
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import select
@@ -112,6 +113,7 @@ _REPORT_VALIDATION_ERRORS = (
 class NarrativeLimits:
     enabled: bool = False
     kill_switch: bool = True
+    quota_mode: Literal["bounded", "unlimited"] = "bounded"
     daily_limit: int = 0
     monthly_limit: int = 0
     concurrency: int = 0
@@ -119,14 +121,24 @@ class NarrativeLimits:
     def __post_init__(self) -> None:
         if min(self.daily_limit, self.monthly_limit, self.concurrency) < 0:
             raise ValueError("narrative limits must be non-negative")
+        if self.quota_mode not in {"bounded", "unlimited"}:
+            raise ValueError("narrative quota mode is invalid")
+        if self.quota_mode == "unlimited" and (
+            self.daily_limit != 0 or self.monthly_limit != 0
+        ):
+            raise ValueError(
+                "unlimited narrative requires zero daily and monthly limits"
+            )
 
     def permits_dispatch(self) -> bool:
         return (
             self.enabled
             and not self.kill_switch
-            and self.daily_limit > 0
-            and self.monthly_limit > 0
             and self.concurrency > 0
+            and (
+                self.quota_mode == "unlimited"
+                or (self.daily_limit > 0 and self.monthly_limit > 0)
+            )
         )
 
 

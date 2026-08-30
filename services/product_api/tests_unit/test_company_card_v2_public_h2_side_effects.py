@@ -132,6 +132,102 @@ async def test_unbound_v3_resolver_is_read_only_and_fails_closed() -> None:
     assert session.get_calls == 1
 
 
+@pytest.mark.asyncio
+async def test_direct_resolver_never_falls_back_to_an_existing_legacy_h1() -> None:
+    subject = type("Subject", (), {"id": "subject-id"})()
+    session = _ReadOnlySession((subject,))
+
+    with pytest.raises(service.PublicH2NotFound):
+        await service.resolve_direct_public_h2(
+            session,
+            inn="7701234567",
+            rollout_generation=7,
+        )
+
+    assert session.scalar_calls == 1
+    assert session.get_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_direct_resolver_uses_exact_current_staged_pin_not_old_assignment(
+    monkeypatch,
+) -> None:
+    subject_id = uuid4()
+    presentation_id = uuid4()
+    report_id = uuid4()
+    subject = SimpleNamespace(id=subject_id)
+    head = SimpleNamespace(
+        subject_id=subject_id,
+        presentation_id=presentation_id,
+        report_id=report_id,
+        presentation_contract="company_public_h2_v1",
+        rollout_generation=7,
+    )
+    presentation = SimpleNamespace(
+        subject_id=subject_id,
+        report_id=report_id,
+        presentation_contract="company_public_h2_v1",
+        rollout_generation=7,
+    )
+    record = SimpleNamespace(
+        id=report_id,
+        subject_id=subject_id,
+        writer_profile="company_card_v2_writer_v3",
+        presentation_contract="company_public_h2_v1",
+        report_version="3",
+        rollout_generation=7,
+        lifecycle_status="complete",
+    )
+    staged = SimpleNamespace(generation=19)
+    pin = SimpleNamespace(
+        subject_id=subject_id,
+        report_id=report_id,
+        presentation_contract="company_public_h2_v1",
+        generation=19,
+        projection_scope="staged_publication",
+        indexable=False,
+        canonical_path=None,
+        published_lastmod=None,
+    )
+    scalar_values = iter((subject, staged, pin))
+
+    class Session:
+        async def scalar(self, _statement):
+            return next(scalar_values)
+
+        async def get(self, model, _key):
+            return {
+                "CompanyReportH2LifecycleHead": head,
+                "CompanyReportPresentation": presentation,
+                "CompanyReportRecord": record,
+            }[model.__name__]
+
+    expected = SimpleNamespace(report_id=str(report_id))
+
+    async def exact(_session, selected, **kwargs):
+        assert selected is record
+        assert kwargs == {
+            "pin": pin,
+            "expected_subject_id": subject_id,
+            "expected_inn": "7701234567",
+        }
+        return expected
+
+    async def forbidden_generic(*_args, **_kwargs):
+        raise AssertionError("direct read must not consult an old H2 assignment")
+
+    monkeypatch.setattr(service, "_resolve_exact_v3", exact)
+    monkeypatch.setattr(service, "resolve_public_h2", forbidden_generic)
+
+    result = await service.resolve_direct_public_h2(
+        Session(),
+        inn="7701234567",
+        rollout_generation=7,
+    )
+
+    assert result is expected
+
+
 class _V3SelectOnlySession:
     def __init__(self, presentation, job, artifact):
         self.scalar_values = iter((presentation, job))

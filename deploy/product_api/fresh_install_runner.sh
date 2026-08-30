@@ -414,8 +414,18 @@ global_receipt() {
     test -f "$path" && test ! -L "$path"
     bounded python3 - "$path" "$phase" "$release_sha" "$stage" <<'PY'
 import json
+import os
+import stat
 import sys
 path, phase, release_sha, stage = sys.argv[1:]
+metadata = os.stat(path, follow_symlinks=False)
+if (
+    not stat.S_ISREG(metadata.st_mode)
+    or stat.S_IMODE(metadata.st_mode) != 0o640
+    or metadata.st_uid != 0
+    or metadata.st_gid != 0
+):
+    raise SystemExit("production fresh install global marker metadata mismatch; STOP")
 raw = open(path, encoding="utf-8", newline="").read()
 data = json.loads(raw)
 expected = {"phase": phase, "release_sha": release_sha, "schema_version": "production_fresh_install_global_v1", "stage": stage}
@@ -432,6 +442,7 @@ import sys
 path, phase, release_sha, stage = sys.argv[1:]
 value = {"phase": phase, "release_sha": release_sha, "schema_version": "production_fresh_install_global_v1", "stage": stage}
 with open(path, "xb") as handle:
+    os.fchown(handle.fileno(), 0, 0)
     os.fchmod(handle.fileno(), 0o640)
     handle.write((json.dumps(value, separators=(",", ":"), sort_keys=True) + "\n").encode())
     handle.flush()
@@ -557,7 +568,8 @@ project=$(cat "$stage/prior-product-compose-project")
 provider_state=$(cat "$stage/prior-provider-state")
 printf '%s\n' "$project" | grep -Eq '^[a-z0-9][a-z0-9_-]*$'
 test "$provider_state" = enabled -o "$provider_state" = disabled
-candidate_image_check none settings --provider-state "$provider_state"
+candidate_image_check none settings --provider-state "$provider_state" \
+  --company-card-mode default-off
 candidate_image_check none alembic
 candidate_image_check host gateway
 marker_once gateway-signed-prearm
@@ -779,6 +791,7 @@ product_id=$(bounded env PRODUCT_ENV_FILE=/opt/b2b/.env.product PRODUCT_IMAGE_TA
 wait_product_ready "$product_id"
 bounded docker exec -i "$product_id" python - settings \
   --release-sha "$release_sha" --provider-state "$provider_state" \
+  --company-card-mode default-off \
   < "$stage/fresh_install_candidate.py"
 signed_gateway_smoke_container "$product_id"
 for service in product_api company_report_worker company_card_narrative_worker; do
