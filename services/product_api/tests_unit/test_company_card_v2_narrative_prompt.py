@@ -74,16 +74,22 @@ def test_gateway_body_is_canonical_and_emits_closed_unavailability_relation():
     ]
 
 
-def test_render_plan_schema_remains_recursively_closed_and_positional():
+def test_render_plan_schema_remains_recursively_closed_and_openai_compatible():
     schema = narrative_json_schema()["schema"]
     assert schema["additionalProperties"] is False
+    assert schema["properties"]["output_schema_version"] == {
+        "type": "string",
+        "enum": ["company_card_narrative_render_plan_v1"],
+    }
     description_plan = schema["properties"]["description_plan"]
     assert description_plan["additionalProperties"] is False
     for field in ("statement_ids", "connector_ids"):
         array = description_plan["properties"][field]
         assert array["minItems"] == array["maxItems"] == 3
-        assert len(array["prefixItems"]) == 3
-        assert array["items"] is False
+        assert array["items"]["type"] == "string"
+        assert len(array["items"]["enum"]) == 3
+        assert "prefixItems" not in array
+    assert schema["properties"]["chart_comments"]["items"] == {"type": "string"}
 
 
 def test_every_object_schema_is_recursively_closed() -> None:

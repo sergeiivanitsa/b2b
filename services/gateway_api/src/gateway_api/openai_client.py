@@ -1,5 +1,6 @@
 import json
 import logging
+from typing import Literal
 
 import httpx
 
@@ -48,6 +49,8 @@ async def create_chat_completion(
     timeout_seconds: int | None = None,
     response_format: dict | None = None,
     max_output_tokens: int | None = None,
+    reasoning_effort: Literal["minimal"] | None = None,
+    require_complete_output: bool = False,
 ) -> tuple[str, dict | None]:
     # The model is intentionally unset while the narrative profile is
     # disabled.  Keep that fail-closed invariant at the final paid boundary,
@@ -99,6 +102,8 @@ async def create_chat_completion(
         payload["response_format"] = response_format
     if max_output_tokens is not None:
         payload["max_completion_tokens"] = max_output_tokens
+    if reasoning_effort is not None:
+        payload["reasoning_effort"] = reasoning_effort
 
     try:
         timeout = timeout_seconds or settings.openai_timeout_seconds
@@ -150,8 +155,25 @@ async def create_chat_completion(
             retryable=True,
             err_type="upstream_error",
         )
-    message = choices[0].get("message") or {}
+    choice = choices[0]
+    if require_complete_output and choice.get("finish_reason") != "stop":
+        raise OpenAIError(
+            status_code=502,
+            message="incomplete response",
+            code="incomplete_response",
+            retryable=True,
+            err_type="upstream_error",
+        )
+    message = choice.get("message") or {}
     text = message.get("content")
+    if require_complete_output and (not isinstance(text, str) or not text.strip()):
+        raise OpenAIError(
+            status_code=502,
+            message="empty content",
+            code="empty_content",
+            retryable=True,
+            err_type="upstream_error",
+        )
     if text is None:
         raise OpenAIError(
             status_code=502,

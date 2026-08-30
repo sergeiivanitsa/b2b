@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from gateway_api import main as gateway_main
+from gateway_api import openai_client
 from gateway_api.openai_client import OpenAIError, create_chat_completion
 from gateway_api.settings import Settings
 from shared.constants import COMPANY_CARD_NARRATIVE_MODEL_PROFILE, COMPANY_CARD_NARRATIVE_OUTPUT_SCHEMA_NAME
@@ -57,6 +58,8 @@ def test_enabled_narrative_forwards_exact_profile_options_and_dispatch_id(client
     assert received["model"] == "narrative-test-model"
     assert received["timeout"] == 20
     assert received["max_output_tokens"] == 600
+    assert received["reasoning_effort"] == "minimal"
+    assert received["require_complete_output"] is True
     assert received["response_format"]["json_schema"]["name"] == COMPANY_CARD_NARRATIVE_OUTPUT_SCHEMA_NAME
 
 
@@ -240,6 +243,160 @@ async def test_paid_boundary_rejects_unset_model_before_network():
     with pytest.raises(OpenAIError) as caught:
         await create_chat_completion(settings, None, [])
     assert caught.value.code == "missing_model"
+
+
+@pytest.mark.asyncio
+async def test_paid_boundary_forwards_minimal_reasoning_and_structured_limits(monkeypatch):
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": "{}"},
+                    }
+                ],
+                "usage": {"total_tokens": 1},
+            }
+
+    class Client:
+        def __init__(self, *, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, *, json, headers):
+            captured.update(url=url, payload=json, headers=headers)
+            return Response()
+
+    monkeypatch.setattr(openai_client.httpx, "AsyncClient", Client)
+    settings = Settings(
+        GATEWAY_SHARED_SECRET="test",
+        OPENAI_API_KEY="not-printed",
+    )
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {"name": "test", "strict": True, "schema": {"type": "object"}},
+    }
+
+    text, usage = await create_chat_completion(
+        settings,
+        "gpt-5-nano",
+        [{"role": "user", "content": "{}"}],
+        20,
+        response_format=response_format,
+        max_output_tokens=600,
+        reasoning_effort="minimal",
+        require_complete_output=True,
+    )
+
+    assert text == "{}"
+    assert usage == {"total_tokens": 1}
+    assert captured["payload"]["response_format"] == response_format
+    assert captured["payload"]["max_completion_tokens"] == 600
+    assert captured["payload"]["reasoning_effort"] == "minimal"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("finish_reason", "content", "expected_code"),
+    [("length", "", "incomplete_response"), ("stop", "", "empty_content")],
+)
+async def test_paid_boundary_rejects_incomplete_or_empty_output(
+    monkeypatch, finish_reason, content, expected_code
+):
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "choices": [
+                    {
+                        "finish_reason": finish_reason,
+                        "message": {"content": content},
+                    }
+                ]
+            }
+
+    class Client:
+        def __init__(self, *, timeout):
+            del timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return Response()
+
+    monkeypatch.setattr(openai_client.httpx, "AsyncClient", Client)
+    settings = Settings(
+        GATEWAY_SHARED_SECRET="test",
+        OPENAI_API_KEY="not-printed",
+    )
+
+    with pytest.raises(OpenAIError) as caught:
+        await create_chat_completion(
+            settings,
+            "gpt-5-nano",
+            [],
+            require_complete_output=True,
+        )
+
+    assert caught.value.code == expected_code
+
+
+@pytest.mark.asyncio
+async def test_legacy_paid_boundary_keeps_partial_content_compatibility(monkeypatch):
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {"content": "partial"},
+                    }
+                ]
+            }
+
+    class Client:
+        def __init__(self, *, timeout):
+            del timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return Response()
+
+    monkeypatch.setattr(openai_client.httpx, "AsyncClient", Client)
+    settings = Settings(
+        GATEWAY_SHARED_SECRET="test",
+        OPENAI_API_KEY="not-printed",
+    )
+
+    text, usage = await create_chat_completion(settings, "legacy-model", [])
+
+    assert text == "partial"
+    assert usage is None
 
 
 def test_narrative_dispatch_id_must_be_lowercase_canonical_uuid(client):
