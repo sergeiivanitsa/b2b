@@ -262,6 +262,29 @@ def test_release_dockerfiles_mount_smoke_vars_read_only_without_persisting_them(
                 assert re.match(r"^COPY\s+(?:--\S+\s+)*\.\s", instruction) is None
 
 
+def test_product_release_image_loads_flattened_alembic_layout_offline() -> None:
+    product = (ROOT / "services/product_api/Dockerfile").read_text(encoding="utf-8")
+    gateway = (ROOT / "services/gateway_api/Dockerfile").read_text(encoding="utf-8")
+    release = product.split("FROM base AS release", 1)[1].split(
+        "FROM base AS local", 1
+    )[0]
+    smoke = "python -m alembic -c /app/alembic.ini ensure_version --sql >/dev/null"
+
+    assert "COPY services/product_api/alembic.ini /app/alembic.ini" in release
+    assert "COPY services/product_api/alembic /app/alembic" in release
+    assert release.count(smoke) == 1
+    assert release.index("set +a") < release.index(smoke) < release.index(
+        "rm -rf /wheelhouse /locks"
+    )
+    assert smoke not in gateway
+
+    env = (ROOT / "services/product_api/alembic/env.py").read_text(encoding="utf-8")
+    assert "BASE_DIR.parents[1]" not in env
+    assert '(BASE_DIR, *BASE_DIR.parents)' in env
+    assert 'candidate / "shared" / "__init__.py"' in env
+    assert 'raise RuntimeError("unable to locate shared package root")' in env
+
+
 def test_release_dockerfiles_require_numeric_epoch_without_runtime_env_leak() -> None:
     for path in (
         ROOT / "services/product_api/Dockerfile",

@@ -246,6 +246,28 @@ wait_product_ready() {
   return 2
 }
 
+wait_ingress_status() {
+  local expected_status=$1
+  local deadline=$((SECONDS + 30))
+  local current_status=unavailable
+  [[ "$expected_status" =~ ^[1-5][0-9]{2}$ ]] || return 2
+  while (( SECONDS < deadline )); do
+    if current_status=$(readiness_run "$deadline" curl \
+      --connect-timeout 1 --max-time 2 --silent --output /dev/null \
+      --write-out '%{http_code}' --resolve pork.su:443:127.0.0.1 \
+      https://pork.su/api/internal/whoami); then
+      if test "$current_status" = "$expected_status"; then
+        return 0
+      fi
+    fi
+    if test "$SECONDS" -lt "$deadline"; then
+      sleep 1 || return 2
+    fi
+  done
+  echo "nginx ingress readiness deadline exceeded: expected=$expected_status observed=$current_status; STOP" >&2
+  return 2
+}
+
 stop_container() {
   local id=$1
   bounded docker update --restart=no "$id" >/dev/null
@@ -274,13 +296,18 @@ signed_gateway_smoke_container() {
 }
 
 force_maintenance_ingress() {
+  test -L /etc/nginx/sites-enabled/pork.su || return 2
+  test "$(terminal_bounded readlink -- /etc/nginx/sites-enabled/pork.su)" = \
+    /etc/nginx/sites-available/pork.su.conf || return 2
   terminal_bounded install -m 640 \
     "$stage/product_api_legacy_0015_h2_bootstrap.conf" \
-    /etc/nginx/sites-available/pork.su.conf
-  terminal_bounded nginx -t
-  # reload-or-restart is synchronous and also establishes maintenance when a
-  # prior crash or reboot left nginx inactive.
-  terminal_bounded systemctl reload-or-restart nginx
+    /etc/nginx/sites-available/pork.su.conf || return 2
+  terminal_bounded nginx -t || return 2
+  # A graceful reload may leave old workers serving the prior configuration.
+  # This one-time maintenance boundary tolerates a short stop/start gap and
+  # requires the prior worker generation to be gone before any writer stops.
+  terminal_bounded systemctl restart nginx || return 2
+  wait_ingress_status 503 || return 2
 }
 
 cleanup_boot_guard() {
@@ -305,6 +332,7 @@ cleanup_boot_guard() {
 verify_tree_access() {
   local root=$1
   local allow_current=${2:-false}
+  local inaccessible
   [[ "$root" = /var/lib/pork/* ]]
   bounded python3 - "$root" "$EUID" "$runner_gid" "$allow_current" <<'PY'
 import os
@@ -330,7 +358,14 @@ for current_root, directories, files in os.walk(root, followlinks=False):
         if path.is_symlink() or not stat.S_ISREG(metadata.st_mode) or (metadata.st_uid, metadata.st_gid, stat.S_IMODE(metadata.st_mode)) != (uid, gid, 0o640):
             raise SystemExit("release file identity invalid; STOP")
 PY
-  test -z "$(bounded runuser --user www-data --group www-data -- find "$root" -xdev \( -type d ! -executable -o -type f ! -readable \) -print -quit)"
+  if ! inaccessible=$(
+    cd /
+    bounded runuser --user www-data --group www-data -- find "$root" -xdev \( -type d ! -executable -o -type f ! -readable \) -print -quit
+  ); then
+    echo 'nginx worker release-tree access check failed; STOP' >&2
+    return 2
+  fi
+  test -z "$inaccessible"
 }
 
 expected_database_identity=$(cat "$identity_credential")
@@ -747,7 +782,7 @@ bounded docker exec -i "$product_id" python - settings \
   < "$stage/fresh_install_candidate.py"
 signed_gateway_smoke_container "$product_id"
 for service in product_api company_report_worker company_card_narrative_worker; do
-  collect_ids ids bounded docker ps -q --filter label=com.docker.compose.service="$service"
+  collect_ids ids bounded docker ps --no-trunc -q --filter label=com.docker.compose.service="$service"
   test "${#ids[@]}" -eq 1
   id=${ids[0]}
   test "$(bounded docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$id")" = "$project"
@@ -771,9 +806,15 @@ else
   db_guard verify-runtime >/dev/null
 fi
 marker_once ingress-armed
+test -L /etc/nginx/sites-enabled/pork.su
+test "$(bounded readlink -- /etc/nginx/sites-enabled/pork.su)" = \
+  /etc/nginx/sites-available/pork.su.conf
 bounded install -m 640 "$stage/product_api.conf" /etc/nginx/sites-available/pork.su.conf
 bounded nginx -t
-bounded systemctl reload-or-restart nginx
+# Do not publish success while a graceful old maintenance worker can still
+# answer.  A restart makes the regular cutover generation unambiguous.
+bounded systemctl restart nginx
+wait_ingress_status 401
 bounded curl --connect-timeout 10 --max-time 30 --fail --silent --show-error --resolve pork.su:443:127.0.0.1 https://pork.su/ >/dev/null
 code=$(bounded curl --connect-timeout 10 --max-time 30 --silent --output /dev/null --write-out '%{http_code}' --resolve pork.su:443:127.0.0.1 https://pork.su/api/internal/whoami)
 test "$code" = 401

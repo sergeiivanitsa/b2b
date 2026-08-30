@@ -51,6 +51,9 @@ if test -e "$success_receipt" || test -L "$success_receipt"; then
   exit 0
 fi
 verify_receipt "$active_receipt" active
+test -L /etc/nginx/sites-enabled/pork.su
+test "$(readlink -- /etc/nginx/sites-enabled/pork.su)" = \
+  /etc/nginx/sites-available/pork.su.conf
 install -m 640 "$stage/product_api_legacy_0015_h2_bootstrap.conf" \
   /etc/nginx/sites-available/pork.su.conf
 nginx -t
