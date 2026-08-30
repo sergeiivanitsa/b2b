@@ -130,6 +130,156 @@ def test_preflight_is_read_only_and_binds_legacy_topology_database_and_uploads()
         assert mutation not in preflight
 
 
+def test_preflight_binds_exact_release_less_ru_legacy_image_identity() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    preflight = workflow.split(
+        "- name: Exact read-only live RU legacy topology and database preflight", 1
+    )[1].split("- name: Stage exact release", 1)[0]
+    ru = preflight.split(
+        'ssh "${ssh_args[@]}" "$RU_TARGET" \'set -euo pipefail', 1
+    )[1].split("' > .release/preflight/ru-topology.txt", 1)[0]
+
+    legacy_release = "6bee95e881a3e9ea1fe324ca13c11ae239f896f4"
+    legacy_digest = (
+        "sha256:f99665e9c0654cfca050a2f4d8d05a05f70b1ce94534e15c8c55bd23c65e74ad"
+    )
+    assert f"b2b-product-api:{legacy_release}" in ru
+    assert legacy_digest in ru
+    assert ru.count(".Config.Image") >= 2
+    assert 'docker inspect --format "{{.Image}}" "$product_id"' in ru
+    assert 'docker inspect --format "{{.Image}}" "$report_id"' in ru
+    assert 'test "$(docker inspect --format "{{.Image}}" "$report_id")" = "$image"' in ru
+
+    assert 'product_env=$(docker inspect --format' in ru
+    assert 'report_env=$(docker inspect --format' in ru
+    assert 'printf "%s\\n" "$product_env" | sed -n' in ru
+    assert 'printf "%s\\n" "$report_env" | sed -n' in ru
+    assert 'test "$product_release_count" -eq 0' in ru
+    assert 'test "$report_release_count" -eq 0' in ru
+    assert 'docker inspect --format "{{range .Config.Env}}{{println .}}{{end}}" "$product_id" |' not in ru
+    assert 'docker inspect --format "{{range .Config.Env}}{{println .}}{{end}}" "$report_id" |' not in ru
+    assert 'test "$release" = 6bee95e881a3e9ea1fe324ca13c11ae239f896f4' not in ru
+
+    for diagnostic in (
+        "legacy Product image digest changed",
+        "legacy Product config image changed",
+        "legacy report worker config image changed",
+        "legacy Product unexpectedly exposes PRODUCT_RELEASE_COMMIT",
+        "legacy report worker unexpectedly exposes PRODUCT_RELEASE_COMMIT",
+    ):
+        assert diagnostic in ru
+    assert 'stop() { echo "$1; STOP" >&2; exit 2; }' in ru
+
+
+def test_preflight_and_gateway_arm_bind_unique_release_less_us_legacy_identity() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    preflight = workflow.split(
+        "- name: Exact read-only live RU legacy topology and database preflight", 1
+    )[1].split("- name: Stage exact release", 1)[0]
+    us = preflight.split(
+        'ssh "${ssh_args[@]}" "$US_TARGET" \'set -euo pipefail', 1
+    )[1].split("' > .release/preflight/us-topology.txt", 1)[0]
+    arm = workflow.split(
+        "- name: Arm reversible prior Gateway identity before candidate mutation", 1
+    )[1].split(
+        "- name: Deploy and verify same exact Gateway SHA before destructive boundary", 1
+    )[0]
+
+    legacy_config = "/opt/b2b/docker-compose.gateway.yml"
+    legacy_digest = (
+        "sha256:f3da3267549b92c04bcec89d0f9c6502b2a5b79c3652678471d2def0b90e3035"
+    )
+    for block in (us, arm):
+        assert "--filter label=com.docker.compose.service=gateway_api" in block
+        assert "gateway_ids=$(docker ps -aq" in block
+        assert "gateway_env=$(docker inspect --format" in block
+        assert "com.docker.compose.project.config_files" in block
+        assert legacy_config in block
+        assert 'test "$project" = b2b' in block or 'test "$current_project" = b2b' in block
+        assert "/opt/b2b/deploy/us/compose/docker-compose.gateway.yml" not in block
+        assert 'stop() { echo "$1; STOP" >&2; exit 2; }' in block
+
+    assert legacy_digest in preflight
+    assert legacy_digest in arm
+    assert "GATEWAY_RELEASE_COMMIT" in us
+    assert 'commit_count=$(printf "%s\\n" "$gateway_env" | sed -n' in us
+    assert 'test "${us[8]}" -eq 0' in preflight
+    assert 'test "$commit_count" -eq 0' in arm
+    assert "mapfile -t commits" not in us
+    assert "mapfile -t commits" not in arm
+    assert 'test "${us[6]}" = /opt/b2b' in preflight
+    assert 'test "${us[7]}" = /opt/b2b/.env.gateway' in preflight
+    assert (
+        'test "${us[6]}" = "$US_RELEASE_ROOT/$RELEASE_SHA-fresh-install"'
+        in preflight
+    )
+    assert preflight.count('test "${us[7]}" = /opt/b2b/.env.gateway') >= 3
+    assert 'test "$current_working_dir" = /opt/b2b' in arm
+    assert 'test "$current_environment_file" = /opt/b2b/.env.gateway' in arm
+    assert 'test "$current_working_dir" = "$stage"' in arm
+    assert 'test "$current_environment_file" = "$stage/.env.gateway"' not in arm
+    for diagnostic in (
+        "legacy Gateway container cardinality changed",
+        "legacy Gateway Compose project changed",
+        "legacy Gateway image digest changed",
+        "legacy Gateway Compose config path changed",
+        "legacy Gateway Compose working directory changed",
+        "legacy Gateway Compose environment file changed",
+        "legacy Gateway unexpectedly exposes GATEWAY_RELEASE_COMMIT",
+    ):
+        assert diagnostic in preflight
+
+
+def test_claims_modes_are_independently_transitional_empty_and_normalized_in_stage() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    preflight = workflow.split(
+        "- name: Exact read-only live RU legacy topology and database preflight", 1
+    )[1].split("- name: Stage exact release", 1)[0]
+    stage = workflow.split("- name: Stage exact release", 1)[1].split(
+        "- name: Arm reversible prior Gateway identity", 1
+    )[0]
+
+    for block in (preflight, stage):
+        assert "0:0:755|0:0:750" in block
+        assert "0:0:700|0:0:750" in block
+        assert 'first_claims_entry=$(find "$claims_root" -mindepth 1 -print -quit)' in block
+        assert 'unexpected_claims_entry=$(find "$claims_parent"' in block
+        assert 'test -z "$first_claims_entry"' in block
+        assert 'test -z "$unexpected_claims_entry"' in block
+        assert 'test -z "$(find ' not in block
+        assert 'test "$(realpath -e -- "$claims_parent")" = "$claims_parent"' in block
+        assert 'test "$(realpath -e -- "$claims_root")" = "$claims_root"' in block
+
+    assert 'chmod 750 -- "$claims_parent" "$claims_root"' in stage
+    assert stage.index("0:0:755|0:0:750") < stage.index(
+        'chmod 750 -- "$claims_parent" "$claims_root"'
+    )
+    assert stage.index("0:0:700|0:0:750") < stage.index(
+        'chmod 750 -- "$claims_parent" "$claims_root"'
+    )
+    assert stage.count("stat -c '%u:%g:%a' -- \"$claims_parent\"") >= 2
+    assert stage.count("stat -c '%u:%g:%a' -- \"$claims_root\"") >= 2
+    for destructive in (
+        'rm -rf "$claims_parent"',
+        'rm -rf "$claims_root"',
+        'unlink "$claims_parent"',
+        'unlink "$claims_root"',
+    ):
+        assert destructive not in stage
+
+    for diagnostic in (
+        "legacy Claims parent identity or mode changed",
+        "legacy Claims root identity or mode changed",
+        "legacy Claims root is not empty",
+        "Claims parent identity or mode changed before normalization",
+        "Claims root identity or mode changed before normalization",
+        "Claims root is no longer empty before normalization",
+        "Claims parent normalization failed",
+        "Claims root normalization failed",
+    ):
+        assert diagnostic in workflow
+
+
 def test_claims_uploads_gain_one_exact_persistent_product_mount() -> None:
     compose = COMPOSE.read_text(encoding="utf-8")
     product = compose.split("  product_api:", 1)[1].split("  company_report_worker:", 1)[0]
