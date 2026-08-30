@@ -48,6 +48,8 @@ FROM base AS local
 COPY .github/ci/python-bootstrap.lock /locks/python-bootstrap.lock
 COPY .github/ci/python-product-runtime.lock /locks/python-runtime.lock
 COPY services/product_api /app/services/product_api
+COPY services/product_api/alembic.ini /app/alembic.ini
+COPY services/product_api/alembic /app/alembic
 COPY shared /app/shared
 RUN python -m pip install --no-deps --only-binary=:all: --require-hashes -r /locks/python-bootstrap.lock \
     && python -m pip install --no-deps --only-binary=:all: --require-hashes -r /locks/python-runtime.lock \

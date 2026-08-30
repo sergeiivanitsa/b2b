@@ -17,9 +17,12 @@ import subprocess
 import sys
 import time
 from typing import Callable, Protocol, Sequence
+from urllib.parse import unquote, urlsplit
 
 _CONTAINER_ID = re.compile(r"^[0-9a-f]{12,64}$")
 _IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
+_RELEASE_SHA = re.compile(r"^[0-9a-f]{40}$")
+_INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
 
 
 class DrainError(RuntimeError):
@@ -172,6 +175,39 @@ def deployment_result_json(result: DrainResult, database_url: str) -> str:
     return json.dumps(data, sort_keys=True, separators=(",", ":"))
 
 
+def preflight_result_json(
+    snapshot: AggregateSnapshot,
+    identities: tuple[ContainerIdentity, ContainerIdentity],
+    database_url: str,
+    release_sha: str,
+) -> str:
+    """Bind a read-only, privacy-safe preflight to its release and DB target."""
+    if (
+        _RELEASE_SHA.fullmatch(release_sha) is None
+        or not database_url
+        or any(character in database_url for character in "\r\n\x00")
+        or len(identities) != 2
+        or identities[0].container_id == identities[1].container_id
+    ):
+        raise DrainError("worker drain preflight identity is invalid")
+    data = {
+        "outcome": "validated",
+        "release_sha": release_sha,
+        "database_target_sha256": sha256(database_url.encode("utf-8")).hexdigest(),
+        "db_clock": snapshot.db_clock,
+        "aggregate": {
+            key: value
+            for key, value in asdict(snapshot).items()
+            if key != "db_clock"
+        },
+        "report_worker_container": identities[0].container_id,
+        "narrative_worker_container": identities[1].container_id,
+        "report_worker_image": identities[0].image_id,
+        "narrative_worker_image": identities[1].image_id,
+    }
+    return json.dumps(data, sort_keys=True, separators=(",", ":"))
+
+
 class ContainerAdapter(Protocol):
     def capture(self) -> tuple[ContainerIdentity, ContainerIdentity]: ...
     def disable_restart(self, identity: ContainerIdentity) -> None: ...
@@ -188,12 +224,13 @@ def drain_workers(
     database: DatabaseAdapter,
     policy: DrainPolicy,
     *,
+    identities: tuple[ContainerIdentity, ContainerIdentity] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> DrainResult:
     """Drain exact workers and return only after two equal safe snapshots."""
     started = monotonic()
-    identities = containers.capture()
+    identities = containers.capture() if identities is None else identities
     if len(identities) != 2 or identities[0].container_id == identities[1].container_id:
         raise DrainError("exact report and narrative worker identities are required")
     for identity in identities:
@@ -295,10 +332,10 @@ class DockerCliAdapter:
 _AGGREGATE_SQL = r"""
 WITH report AS (
   SELECT
-    count(*) FILTER (WHERE status = 'queued') AS queued,
-    count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
-    count(*) FILTER (WHERE status = 'failed') AS failed,
-    count(*) FILTER (WHERE status = 'running') AS running
+    count(*) FILTER (WHERE state = 'queued') AS queued,
+    count(*) FILTER (WHERE state = 'succeeded') AS succeeded,
+    count(*) FILTER (WHERE state = 'failed') AS failed,
+    count(*) FILTER (WHERE state = 'running') AS running
   FROM company_report_jobs
 ), outbox AS (
   SELECT
@@ -381,16 +418,77 @@ FROM report, outbox, narrative, runtime, reservation;
 """
 
 
+def _decode_database_url_part(value: str) -> str:
+    if not value or _INVALID_PERCENT_ESCAPE.search(value):
+        raise DrainError("database URL is missing or invalid")
+    try:
+        decoded = unquote(value, encoding="utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise DrainError("database URL is missing or invalid") from exc
+    if any(ord(character) < 32 or ord(character) == 127 for character in decoded):
+        raise DrainError("database URL is missing or invalid")
+    return decoded
+
+
+def _libpq_environment(database_url: str) -> dict[str, str]:
+    """Translate the supported SQLAlchemy URL into deterministic libpq inputs."""
+    supported_prefixes = ("postgresql://", "postgresql+asyncpg://")
+    if (
+        not database_url
+        or not database_url.startswith(supported_prefixes)
+        or "?" in database_url
+        or "#" in database_url
+        or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in database_url
+        )
+    ):
+        raise DrainError("database URL is missing or invalid")
+    try:
+        parsed = urlsplit(database_url)
+        parsed_port = parsed.port
+        port = 5432 if parsed_port is None else parsed_port
+        host = parsed.hostname
+    except ValueError as exc:
+        raise DrainError("database URL is missing or invalid") from exc
+    if (
+        parsed.scheme not in {"postgresql", "postgresql+asyncpg"}
+        or parsed.netloc.count("@") != 1
+        or parsed.netloc.rpartition("@")[2].endswith(":")
+        or parsed.query
+        or parsed.fragment
+        or host is None
+        or parsed.username is None
+        or parsed.password is None
+        or not 1 <= port <= 65535
+        or not parsed.path.startswith("/")
+        or "/" in parsed.path[1:]
+        or "%" in host
+        or "," in host
+        or "%" in parsed.path
+    ):
+        raise DrainError("database URL is missing or invalid")
+    return {
+        "PGHOST": _decode_database_url_part(host),
+        "PGPORT": str(port),
+        "PGUSER": _decode_database_url_part(parsed.username),
+        "PGPASSWORD": _decode_database_url_part(parsed.password),
+        "PGDATABASE": _decode_database_url_part(parsed.path[1:]),
+    }
+
+
 class PsqlAggregateAdapter:
     def __init__(self, database_url: str) -> None:
-        if not database_url or any(character in database_url for character in "\r\n\x00"):
-            raise DrainError("database URL is missing or invalid")
-        self._database_url = database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+        self._connection_environment = _libpq_environment(database_url)
 
     def snapshot(self) -> AggregateSnapshot:
-        environment = os.environ.copy()
+        environment = {
+            name: value
+            for name, value in os.environ.items()
+            if not name.upper().startswith("PG")
+        }
+        environment.update(self._connection_environment)
         environment["PGCONNECT_TIMEOUT"] = "5"
-        environment["PGDATABASE"] = self._database_url
         completed = subprocess.run(
             ["psql", "--no-psqlrc", "--tuples-only", "--no-align", "--set", "ON_ERROR_STOP=1", "--command", _AGGREGATE_SQL],
             check=False,
@@ -457,6 +555,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--settings-container", required=True)
     parser.add_argument("--deadline-seconds", type=float, required=True)
     parser.add_argument("--stable-interval-seconds", type=float, required=True)
+    parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument("--release-sha")
     return parser
 
 
@@ -466,6 +566,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         containers = DockerCliAdapter(args.container)
         if args.settings_container not in args.container:
             raise DrainError("settings container must be one of the exact workers")
+        identities = containers.capture()
         settings = containers.environment(args.settings_container, _REQUIRED_SETTINGS)
         for container_id in args.container:
             if containers.environment(container_id, _REQUIRED_SETTINGS) != settings:
@@ -481,10 +582,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             stable_interval_seconds=args.stable_interval_seconds,
         )
+        database = PsqlAggregateAdapter(settings["DATABASE_URL"])
+        preflight_snapshot = database.snapshot()
+        if args.validate_only:
+            if _RELEASE_SHA.fullmatch(args.release_sha or "") is None:
+                raise DrainError("exact release SHA is required for worker drain preflight")
+            if not preflight_snapshot.safe:
+                raise DrainError("worker aggregate snapshot is unsafe for deployment preflight")
+            print(
+                preflight_result_json(
+                    preflight_snapshot,
+                    identities,
+                    settings["DATABASE_URL"],
+                    args.release_sha,
+                )
+            )
+            return 0
         result = drain_workers(
             containers,
-            PsqlAggregateAdapter(settings["DATABASE_URL"]),
+            database,
             policy,
+            identities=identities,
         )
     except (DrainError, OSError, subprocess.SubprocessError) as exc:
         print(str(exc), file=sys.stderr)

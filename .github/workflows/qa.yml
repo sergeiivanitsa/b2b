@@ -509,8 +509,68 @@ jobs:
           docker run --rm --network=none --env-file .github/ci/release-import-smoke.vars --entrypoint python "b2b-gateway-api:$RELEASE_SHA" -c "import gateway_api.main"
           mkdir -p services/web_ui/dist-company-public-h2
           tar -xzf ".release/verified/company-public-h2-$RELEASE_SHA.tgz" --strip-components=1 -C services/web_ui/dist-company-public-h2 company-public-h2/assets
-          python -m pytest deploy/nginx deploy/product_api deploy/web_ui -q -ra -p no:cacheprovider
+          python -m pytest deploy/nginx deploy/product_api deploy/web_ui deploy/us deploy/rehearsal -q -ra -p no:cacheprovider
           pwsh -File deploy/nginx/test_product_api_conf.ps1
+
+  deploy-rehearsal:
+    name: deploy-rehearsal
+    needs: [resolve-release, release-build]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.resolve-release.outputs.release_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up locked Python
+        uses: ./.github/actions/setup-python-ci
+        with:
+          release-sha: ${{ needs.resolve-release.outputs.release_sha }}
+      - name: Download exact build-once release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: qa-release-${{ needs.resolve-release.outputs.release_sha }}
+          path: .release/rehearsal-release
+      - name: Materialize exact release images and pinned PostgreSQL
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          command -v docker >/dev/null
+          docker compose version >/dev/null
+          command -v psql >/dev/null
+          cd .release/rehearsal-release
+          sha256sum --check "checksums-$RELEASE_SHA.txt"
+          cd ../..
+          python deploy/product_api/release_manifest.py "$PWD/.release/rehearsal-release" "$RELEASE_SHA"
+          docker load --input ".release/rehearsal-release/product-api-$RELEASE_SHA.oci.tar"
+          docker load --input ".release/rehearsal-release/gateway-api-$RELEASE_SHA.oci.tar"
+          docker pull --platform linux/amd64 "$POSTGRES_IMAGE"
+      - name: Run fresh-install to normal-deploy rehearsal with failure injection
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p .release/rehearsal-evidence
+          printf 'release_sha=%s\n' "$RELEASE_SHA" > .release/rehearsal-evidence/context.txt
+          python deploy/rehearsal/normal_deploy_rehearsal.py \
+            --release-sha "$RELEASE_SHA" \
+            --release-root "$PWD/.release/rehearsal-release" \
+            --postgres-image "$POSTGRES_IMAGE" \
+            > .release/rehearsal-evidence/normal-deploy-rehearsal.json
+          test -s .release/rehearsal-evidence/normal-deploy-rehearsal.json
+      - name: Upload SHA-bound deploy rehearsal evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deploy-rehearsal-${{ needs.resolve-release.outputs.release_sha }}
+          path: .release/rehearsal-evidence/
+          if-no-files-found: error
+          retention-days: 14
 
   qa-required:
     name: qa-required
@@ -522,6 +582,7 @@ jobs:
       - release-build
       - browser-e2e-visual
       - release-contract
+      - deploy-rehearsal
     if: always()
     runs-on: ubuntu-24.04
     outputs:
@@ -538,6 +599,7 @@ jobs:
           BUILD_RESULT: ${{ needs.release-build.result }}
           BROWSER_RESULT: ${{ needs.browser-e2e-visual.result }}
           CONTRACT_RESULT: ${{ needs.release-contract.result }}
+          REHEARSAL_RESULT: ${{ needs.deploy-rehearsal.result }}
         run: |
           set -euo pipefail
           test "$UNIT_RESULT" = success
@@ -546,6 +608,7 @@ jobs:
           test "$BUILD_RESULT" = success
           test "$BROWSER_RESULT" = success
           test "$CONTRACT_RESULT" = success
+          test "$REHEARSAL_RESULT" = success
       - name: Check out exact release
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -572,6 +635,7 @@ jobs:
           BUILD_RESULT: ${{ needs.release-build.result }}
           BROWSER_RESULT: ${{ needs.browser-e2e-visual.result }}
           CONTRACT_RESULT: ${{ needs.release-contract.result }}
+          REHEARSAL_RESULT: ${{ needs.deploy-rehearsal.result }}
           WORKFLOW_RUN_ID: ${{ github.run_id }}
           WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
@@ -591,7 +655,7 @@ jobs:
           release = json.loads(release_path.read_text(encoding="utf-8"))
           if release.get("release_sha") != release_sha:
               raise SystemExit("release manifest SHA mismatch")
-          jobs = {name: os.environ[name] for name in ("UNIT_RESULT", "POSTGRES_RESULT", "WEB_RESULT", "BUILD_RESULT", "BROWSER_RESULT", "CONTRACT_RESULT")}
+          jobs = {name: os.environ[name] for name in ("UNIT_RESULT", "POSTGRES_RESULT", "WEB_RESULT", "BUILD_RESULT", "BROWSER_RESULT", "CONTRACT_RESULT", "REHEARSAL_RESULT")}
           if set(jobs.values()) != {"success"}:
               raise SystemExit("not every QA job succeeded")
           attestation = {

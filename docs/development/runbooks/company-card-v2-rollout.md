@@ -286,14 +286,30 @@ receipt, no active receipt, and no active/activating/failed/enabled fresh or
 legacy recovery unit. The superseded legacy bootstrap rejects both global
 receipts and any installed fresh recovery unit before it can create a stage.
 
+The required `qa-required` attestation includes `deploy-rehearsal`. That job
+consumes the build-once Product/Gateway images, migrates a disposable
+PostgreSQL 16 database, executes the shipped worker aggregate SQL, injects a
+failure after restart-policy/SIGTERM mutation, invokes the same worker recovery
+helper as production, and moves an exact Gateway from a fresh-install Compose
+stage to a normal release stage. It does not replace SSH/systemd/nginx/host
+checks. Run the separate `Read-only production deploy preflight` workflow for
+the intended main-history SHA to check those live RU/US identities without
+creating a stage, loading/tagging an image, signalling a process or changing
+the database. Normal deploy repeats that read-only script before its first
+remote write, so a stale standalone receipt is never deployment authority.
+
 The fixed order is:
 
-1. reverify QA attestation, release manifest and every artifact checksum;
-2. perform read-only RU/US preflight and record compatible prior identities;
+1. reverify QA attestation (including deploy rehearsal), release manifest and
+   every artifact checksum;
+2. perform the shared SHA-bound read-only RU/US runtime/worker-SQL/Gateway
+   preflight, then record compatible prior identities;
 3. install and loopback-verify H2 assets;
 4. drain the exact report and narrative workers using `SIGTERM` only;
 5. run additive `alembic upgrade head` against the exact reviewed database;
-6. recreate Product and both workers from the exact SHA image and verify health;
+6. recreate Product and both workers from the exact SHA image, verify Product
+   health, then prove exact worker release/image/project identities and execute
+   an in-container read-only `SELECT 1` from each worker before re-inspection;
 7. recreate Gateway from the same exact SHA, verify image identity and require
    the authenticated `/internal/ping` release identity to equal that SHA;
 8. install the SHA-bound Web archive under
@@ -319,6 +335,20 @@ provider/Gateway timeout bounds. It disables restart, sends only `SIGTERM`,
 waits for both captured processes, and requires two stable privacy-safe zero-
 unsafe snapshots. It never runs Alembic/recreate and never escalates to
 `SIGKILL`. Failure stops before migration.
+
+If failure or cancellation occurs after drain is armed but before Product is
+armed, `worker_runtime_recovery.py` recreates only the two exact prior workers
+through the recorded prior Compose graph, verifies their
+release/image/project/restart identities, runs an in-container read-only
+`SELECT 1` from each worker, and re-inspects both processes. Once Product is
+armed, the broader Product/workers rollback remains responsible for restoring
+the full prior runtime through the recorded prior Compose file and working
+directory; it performs the same two worker database probes and post-probe
+identity checks before accepting rollback. Each mutable phase is armed by its own completed step
+before the long-running operation, so cancellation can still select recovery.
+Both paths require the recorded rollback identity; neither selects or rebuilds
+an alternative image. Gateway rollback likewise uses its recorded prior
+Compose file, working directory, release tag and fixed loopback binding.
 
 Settings are cached. Editing an env file is not activation evidence; an
 authorized setting change requires exact process recreation followed by a
@@ -467,7 +497,7 @@ These commands use disposable/local state and do not authorize production:
 ```powershell
 python scripts/check-python-ci-lock.py
 python -m pytest deploy/product_api/test_fresh_install.py -q
-python -m pytest deploy/nginx deploy/product_api deploy/web_ui -q -ra -p no:cacheprovider
+python -m pytest deploy/nginx deploy/product_api deploy/web_ui deploy/us deploy/rehearsal -q -ra -p no:cacheprovider
 pwsh -File deploy/nginx/test_product_api_conf.ps1
 pwsh -NoProfile -File scripts/run-iteration25-postgres-tests.ps1 -Mode PostgresFull
 git diff --check
