@@ -1481,6 +1481,14 @@ def test_company_card_v2_activation_proves_live_release_schema_and_openai_before
         "preflight --role gateway --environment-file /opt/b2b/.env.gateway",
     ):
         assert token in preflight
+    assert preflight.count('python3 "$working_dir/release_image_identity.py"') == 2
+    for archive in ("product-api", "gateway-api"):
+        assert (
+            'python3 "$working_dir/release_image_identity.py" '
+            '"$working_dir/release-manifest-$release_sha.json" "$release_sha" '
+            f'"{archive}-$release_sha.oci.tar" "$image_id" >/dev/null'
+        ) in preflight
+        assert f'"$working_dir/{archive}-$release_sha.oci.tar"' not in preflight
     assert text.index("Prove exact live SHA") < text.index("apply --role gateway")
     assert text.index("Prove exact live SHA") < text.index("prepare-mask")
     assert text.index("prepare-mask") < text.index("apply --role gateway")

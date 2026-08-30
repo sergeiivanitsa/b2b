@@ -146,7 +146,7 @@ jobs:
           test "$working_dir" = "$release_root/$release_sha"
           test "$(docker inspect --format '{{.Config.Image}}' "$product_id")" = "b2b-product-api:$release_sha"
           image_id=$(docker inspect --format '{{.Image}}' "$product_id")
-          python3 "$working_dir/release_image_identity.py" "$working_dir/release-manifest-$release_sha.json" "$release_sha" "$working_dir/product-api-$release_sha.oci.tar" "$image_id" >/dev/null
+          python3 "$working_dir/release_image_identity.py" "$working_dir/release-manifest-$release_sha.json" "$release_sha" "product-api-$release_sha.oci.tar" "$image_id" >/dev/null
           docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$product_id" | grep -Fx "PRODUCT_RELEASE_COMMIT=$release_sha" >/dev/null
           for service in company_report_worker company_card_narrative_worker; do
             mapfile -t ids < <(docker ps -q --filter "label=com.docker.compose.service=$service")
@@ -185,7 +185,7 @@ jobs:
           test "$working_dir" = "$release_root/$release_sha"
           test "$(docker inspect --format '{{.Config.Image}}' "$id")" = "b2b-gateway-api:$release_sha"
           image_id=$(docker inspect --format '{{.Image}}' "$id")
-          python3 "$working_dir/release_image_identity.py" "$working_dir/release-manifest-$release_sha.json" "$release_sha" "$working_dir/gateway-api-$release_sha.oci.tar" "$image_id" >/dev/null
+          python3 "$working_dir/release_image_identity.py" "$working_dir/release-manifest-$release_sha.json" "$release_sha" "gateway-api-$release_sha.oci.tar" "$image_id" >/dev/null
           docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id" | grep -Fx "GATEWAY_RELEASE_COMMIT=$release_sha" >/dev/null
           python3 "$stage/company_card_v2_activation.py" preflight --role gateway --environment-file /opt/b2b/.env.gateway
           printf '%s\n' "$project" > "$stage/gateway-project"
