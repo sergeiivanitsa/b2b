@@ -404,10 +404,65 @@ jobs:
           done
           REMOTE
           ssh "${ssh_args[@]}" "$RU_TARGET" "set -euo pipefail; command -v docker >/dev/null; command -v python3 >/dev/null; command -v psql >/dev/null; command -v curl >/dev/null; command -v sha256sum >/dev/null; command -v getent >/dev/null; command -v ps >/dev/null; command -v runuser >/dev/null; test \"\$(id -u)\" -eq 0; nginx_group_id=\$(getent group www-data | cut -d: -f3); printf '%s\n' \"\$nginx_group_id\" | grep -Eq '^[1-9][0-9]*$'; nginx_user=\$(nginx -T 2>/dev/null | awk '\$1 == \"user\" && NF == 2 { value=\$2; sub(/;\$/, \"\", value); print value }'); test \"\$nginx_user\" = www-data; nginx_workers=\$(ps -C nginx -o user=,group= | awk '\$1 != \"root\" {print \$1 \":\" \$2}' | sort -u); test \"\$nginx_workers\" = www-data:www-data; test -f /opt/b2b/.env.product; python3 -c \"import pathlib,sys; rows={}; [rows.__setitem__(*raw.split('=',1)) for raw in pathlib.Path(sys.argv[1]).read_text(encoding='utf-8').splitlines() if raw and not raw.lstrip().startswith('#') and '=' in raw]; (rows.get('CLAIMS_UPLOAD_ROOT') == '/var/lib/pork/claims-uploads/v1' and rows.get('CLAIMS_UPLOAD_DIR') == '/data/claims_uploads') or sys.exit('persistent Claims upload mapping is not configured; STOP')\" /opt/b2b/.env.product; claims_root=/var/lib/pork/claims-uploads/v1; test -d \"\$claims_root\"; test ! -L \"\$claims_root\"; test \"\$(realpath -e -- \"\$claims_root\")\" = \"\$claims_root\"; test \"\$(stat -c '%u:%g:%a' -- \"\$claims_root\")\" = 0:0:750; test -d '$RU_RELEASE_ROOT'; test ! -L '$RU_RELEASE_ROOT'; test ! -e '$RU_RELEASE_ROOT/$RELEASE_SHA'; test -d /var/lib/pork/company-public-h2/v1/manifests/sha256; test -f /var/lib/pork/company-public-h2/v1/manifest-set.json; test -f /var/lib/pork/web-ui/v1/release-set.json; test -d /var/lib/pork/web-ui/v1/releases; test -L /var/lib/pork/web-ui/v1/current; test \"\$(stat -c '%u:%g:%a' /var/lib/pork/company-public-h2)\" = \"0:\$nginx_group_id:750\"; test \"\$(stat -c '%u:%g:%a' /var/lib/pork/company-public-h2/v1)\" = \"0:\$nginx_group_id:750\"; test \"\$(stat -c '%u:%g:%a' /var/lib/pork/web-ui)\" = \"0:\$nginx_group_id:750\"; test \"\$(stat -c '%u:%g:%a' /var/lib/pork/web-ui/v1)\" = \"0:\$nginx_group_id:750\"; test -z \"\$(find /var/lib/pork/company-public-h2/v1 /var/lib/pork/web-ui/v1 -xdev ! -type l \\( ! -user root -o ! -group www-data -o -type d ! -perm 0750 -o -type f ! -perm 0640 \\) -print -quit)\"; test -z \"\$(runuser --user www-data --group www-data -- find /var/lib/pork/company-public-h2/v1 /var/lib/pork/web-ui/v1/current/site -xdev \\( -type d ! -executable -o -type f ! -readable \\) -print -quit)\"; product_id=\$(docker compose -f /opt/b2b/docker-compose.product.yml --env-file /opt/b2b/.env.product ps -q product_api); report_id=\$(docker compose -f /opt/b2b/docker-compose.product.yml --env-file /opt/b2b/.env.product ps -q company_report_worker); narrative_id=\$(docker compose -f /opt/b2b/docker-compose.product.yml --env-file /opt/b2b/.env.product ps -q company_card_narrative_worker); test -n \"\$product_id\"; test -n \"\$report_id\"; test -n \"\$narrative_id\"; test \"\$(docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/data/claims_uploads\"}}{{printf \"%s|%s|%t\" .Source .Destination .RW}}{{end}}{{end}}' \"\$product_id\")\" = '/var/lib/pork/claims-uploads/v1|/data/claims_uploads|true'; product_image=\$(docker inspect --format '{{.Image}}' \"\$product_id\"); test \"\$(docker inspect --format '{{.Image}}' \"\$report_id\")\" = \"\$product_image\"; test \"\$(docker inspect --format '{{.Image}}' \"\$narrative_id\")\" = \"\$product_image\""
-          ssh "${ssh_args[@]}" "$US_TARGET" "set -euo pipefail; command -v docker >/dev/null; command -v curl >/dev/null; command -v sha256sum >/dev/null; test -f /opt/b2b/.env.gateway; test -d '$US_RELEASE_ROOT'; test ! -L '$US_RELEASE_ROOT'; test ! -e '$US_RELEASE_ROOT/$RELEASE_SHA'; gateway_id=\$(docker compose -f /opt/b2b/deploy/us/compose/docker-compose.gateway.yml --env-file /opt/b2b/.env.gateway ps -q gateway_api); test -n \"\$gateway_id\"; test \"\$(docker ps -q --filter label=com.docker.compose.service=gateway_api | wc -l)\" -eq 1; test \"\$(docker port \"\$gateway_id\" 8001/tcp)\" = 127.0.0.1:8001; test \"\$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' \"\$gateway_id\")\" = unless-stopped; docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \"\$gateway_id\" | grep -Eq '^GATEWAY_RELEASE_COMMIT=[0-9a-f]{40}$'"
           mkdir -p .release/prior
+          ssh "${ssh_args[@]}" "$US_TARGET" bash -s -- "$US_RELEASE_ROOT" "$RELEASE_SHA" <<'REMOTE' > .release/prior/us-identities.txt
+          set -euo pipefail
+          stop() {
+            echo "$1; STOP" >&2
+            exit 2
+          }
+          US_RELEASE_ROOT=$1
+          RELEASE_SHA=$2
+          command -v docker >/dev/null
+          command -v curl >/dev/null
+          command -v realpath >/dev/null
+          command -v sed >/dev/null
+          test "$(id -u)" -eq 0
+          test -f /opt/b2b/.env.gateway && test ! -L /opt/b2b/.env.gateway
+          test -d "$US_RELEASE_ROOT" && test ! -L "$US_RELEASE_ROOT"
+          test "$(realpath -e -- "$US_RELEASE_ROOT")" = "$US_RELEASE_ROOT"
+          test ! -e "$US_RELEASE_ROOT/$RELEASE_SHA"
+          gateway_ids=$(docker ps -aq --no-trunc --filter label=com.docker.compose.service=gateway_api)
+          mapfile -t gateway_id_rows < <(printf '%s\n' "$gateway_ids" | sed '/^$/d')
+          test "${#gateway_id_rows[@]}" -eq 1 || stop "Gateway service cardinality is not exactly one"
+          gateway_id=${gateway_id_rows[0]}
+          test "$(docker inspect --format '{{.State.Running}}' "$gateway_id")" = true || stop "Gateway is not running"
+          gateway_env=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$gateway_id")
+          mapfile -t release_rows < <(printf '%s\n' "$gateway_env" | sed -n 's/^GATEWAY_RELEASE_COMMIT=//p')
+          test "${#release_rows[@]}" -eq 1 || stop "Gateway release identity cardinality is not exactly one"
+          old_commit=${release_rows[0]}
+          [[ "$old_commit" =~ ^[0-9a-f]{40}$ ]] || stop "Gateway release identity is invalid"
+          test "$old_commit" != "$RELEASE_SHA" || stop "Gateway already runs the requested release"
+          old_image=$(docker inspect --format '{{.Image}}' "$gateway_id")
+          [[ "$old_image" =~ ^sha256:[0-9a-f]{64}$ ]] || stop "Gateway image identity is invalid"
+          config_image=$(docker inspect --format '{{.Config.Image}}' "$gateway_id")
+          test "$config_image" = "b2b-gateway-api:$old_commit" || stop "Gateway config image is not release-bound"
+          test "$(docker image inspect --format '{{.Id}}' "$config_image")" = "$old_image" || stop "Gateway tag/image identity mismatch"
+          service=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$gateway_id")
+          test "$service" = gateway_api || stop "Gateway service label mismatch"
+          project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$gateway_id")
+          [[ "$project" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || stop "Gateway Compose project identity is invalid"
+          config_files=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$gateway_id")
+          working_dir=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$gateway_id")
+          environment_file=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.environment_file"}}' "$gateway_id")
+          fresh_stage="$US_RELEASE_ROOT/$old_commit-fresh-install"
+          normal_stage="$US_RELEASE_ROOT/$old_commit"
+          if test "$config_files" = "$fresh_stage/docker-compose.gateway.yml"; then
+            test "$working_dir" = "$fresh_stage" || stop "fresh-install Gateway working directory mismatch"
+          elif test "$config_files" = "$normal_stage/docker-compose.gateway.yml"; then
+            test "$working_dir" = "$normal_stage" || stop "normal Gateway working directory mismatch"
+          else
+            stop "Gateway Compose graph is outside an approved release stage"
+          fi
+          test "$environment_file" = /opt/b2b/.env.gateway || stop "Gateway environment-file label mismatch"
+          test -f "$config_files" && test ! -L "$config_files"
+          test "$(realpath -e -- "$config_files")" = "$config_files"
+          test "$(docker port "$gateway_id" 8001/tcp)" = 127.0.0.1:8001 || stop "Gateway loopback port mismatch"
+          test "$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "$gateway_id")" = unless-stopped || stop "Gateway restart policy mismatch"
+          curl --fail --silent --show-error http://127.0.0.1:8001/health >/dev/null
+          printf '%s\n%s\n' "$gateway_id" "$old_image"
+          REMOTE
           ssh "${ssh_args[@]}" "$RU_TARGET" "docker inspect --format '{{.Image}}' \$(docker compose -f /opt/b2b/docker-compose.product.yml --env-file /opt/b2b/.env.product ps -q product_api); readlink /var/lib/pork/web-ui/v1/current; sha256sum /var/lib/pork/company-public-h2/v1/manifest-set.json" > .release/prior/ru-identities.txt
-          ssh "${ssh_args[@]}" "$US_TARGET" "docker inspect --format '{{.Image}}' \$(docker compose -f /opt/b2b/deploy/us/compose/docker-compose.gateway.yml --env-file /opt/b2b/.env.gateway ps -q gateway_api)" > .release/prior/us-identities.txt
           test -s .release/prior/ru-identities.txt
           test -s .release/prior/us-identities.txt
           echo "ru_stage=$RU_RELEASE_ROOT/$RELEASE_SHA" >> "$GITHUB_OUTPUT"
@@ -436,11 +491,74 @@ jobs:
           US_TARGET: ${{ secrets.US_DEPLOY_TARGET }}
           RU_STAGE: ${{ steps.preflight.outputs.ru_stage }}
           US_STAGE: ${{ steps.preflight.outputs.us_stage }}
+          US_RELEASE_ROOT: ${{ vars.US_RELEASE_ROOT }}
         run: |
           set -euo pipefail
           ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/iteration25-ssh/known_hosts")
           ssh "${ssh_args[@]}" "$RU_TARGET" "set -euo pipefail; umask 027; product_id=\$(docker compose -f /opt/b2b/docker-compose.product.yml --env-file /opt/b2b/.env.product ps -q product_api); old_image=\$(docker inspect --format '{{.Image}}' \"\$product_id\"); project=\$(docker inspect --format '{{index .Config.Labels \"com.docker.compose.project\"}}' \"\$product_id\"); printf '%s\n' \"\$project\" | grep -Eq '^[a-z0-9][a-z0-9_-]*$'; docker tag \"\$old_image\" 'b2b-product-api:rollback-$RELEASE_SHA'; old_commit=\$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \"\$product_id\" | grep '^PRODUCT_RELEASE_COMMIT=[0-9a-f]\{40\}$'); old_commit=\${old_commit#PRODUCT_RELEASE_COMMIT=}; test \"\$old_commit\" != '$RELEASE_SHA'; provider_state=\$(docker exec -i \"\$product_id\" python - provider --release-sha '$RELEASE_SHA' < '$RU_STAGE/fresh_install_candidate.py'); test \"\$provider_state\" = enabled -o \"\$provider_state\" = disabled; printf '%s\n' \"\$provider_state\" > '$RU_STAGE/prior-provider-state'; printf '%s\n' \"\$old_commit\" > '$RU_STAGE/prior-product-release-sha'; printf '%s\n' \"\$old_image\" > '$RU_STAGE/prior-product-image-id'; printf '%s\n' \"\$project\" > '$RU_STAGE/prior-product-compose-project'; cp --no-preserve=mode,ownership /var/lib/pork/company-public-h2/v1/manifest-set.json '$RU_STAGE/prior-h2-manifest-set.json'; cp --no-preserve=mode,ownership /var/lib/pork/web-ui/v1/release-set.json '$RU_STAGE/prior-web-release-set.json'; readlink /var/lib/pork/web-ui/v1/current > '$RU_STAGE/prior-web-pointer'; grep -Eq '^releases/[0-9a-f]{40}$' '$RU_STAGE/prior-web-pointer'; cp --no-preserve=mode,ownership /etc/nginx/sites-available/pork.su.conf '$RU_STAGE/prior-nginx.conf'"
-          ssh "${ssh_args[@]}" "$US_TARGET" "set -euo pipefail; umask 027; gateway_id=\$(docker compose -f /opt/b2b/deploy/us/compose/docker-compose.gateway.yml --env-file /opt/b2b/.env.gateway ps -q gateway_api); old_image=\$(docker inspect --format '{{.Image}}' \"\$gateway_id\"); project=\$(docker inspect --format '{{index .Config.Labels \"com.docker.compose.project\"}}' \"\$gateway_id\"); printf '%s\n' \"\$project\" | grep -Eq '^[a-z0-9][a-z0-9_-]*$'; old_commit=\$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \"\$gateway_id\" | sed -n 's/^GATEWAY_RELEASE_COMMIT=//p'); printf '%s\n' \"\$old_commit\" | grep -Eq '^[0-9a-f]{40}$'; docker tag \"\$old_image\" 'b2b-gateway-api:rollback-$RELEASE_SHA'; printf '%s\n' \"\$old_image\" > '$US_STAGE/prior-gateway-image-id'; printf '%s\n' \"\$project\" > '$US_STAGE/prior-gateway-compose-project'; printf '%s\n' \"\$old_commit\" > '$US_STAGE/prior-gateway-release-sha'"
+          mapfile -t prior_gateway < .release/prior/us-identities.txt
+          test "${#prior_gateway[@]}" -eq 2
+          expected_gateway_id=${prior_gateway[0]}
+          expected_gateway_image=${prior_gateway[1]}
+          [[ "$expected_gateway_id" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$expected_gateway_image" =~ ^sha256:[0-9a-f]{64}$ ]]
+          ssh "${ssh_args[@]}" "$US_TARGET" bash -s -- "$US_RELEASE_ROOT" "$US_STAGE" "$RELEASE_SHA" "$expected_gateway_id" "$expected_gateway_image" <<'REMOTE'
+          set -euo pipefail
+          stop() {
+            echo "$1; STOP" >&2
+            exit 2
+          }
+          US_RELEASE_ROOT=$1
+          US_STAGE=$2
+          RELEASE_SHA=$3
+          EXPECTED_GATEWAY_ID=$4
+          EXPECTED_GATEWAY_IMAGE=$5
+          umask 027
+          test "$US_STAGE" = "$US_RELEASE_ROOT/$RELEASE_SHA"
+          gateway_ids=$(docker ps -aq --no-trunc --filter label=com.docker.compose.service=gateway_api)
+          mapfile -t gateway_id_rows < <(printf '%s\n' "$gateway_ids" | sed '/^$/d')
+          test "${#gateway_id_rows[@]}" -eq 1 || stop "Gateway service cardinality changed before rollback recording"
+          gateway_id=${gateway_id_rows[0]}
+          test "$gateway_id" = "$EXPECTED_GATEWAY_ID" || stop "Gateway container identity changed before rollback recording"
+          test "$(docker inspect --format '{{.State.Running}}' "$gateway_id")" = true || stop "Gateway stopped before rollback recording"
+          gateway_env=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$gateway_id")
+          mapfile -t release_rows < <(printf '%s\n' "$gateway_env" | sed -n 's/^GATEWAY_RELEASE_COMMIT=//p')
+          test "${#release_rows[@]}" -eq 1 || stop "Gateway release identity cardinality changed before rollback recording"
+          old_commit=${release_rows[0]}
+          [[ "$old_commit" =~ ^[0-9a-f]{40}$ ]] || stop "Gateway release identity became invalid"
+          test "$old_commit" != "$RELEASE_SHA" || stop "Gateway already runs the requested release"
+          old_image=$(docker inspect --format '{{.Image}}' "$gateway_id")
+          test "$old_image" = "$EXPECTED_GATEWAY_IMAGE" || stop "Gateway image identity changed before rollback recording"
+          config_image=$(docker inspect --format '{{.Config.Image}}' "$gateway_id")
+          test "$config_image" = "b2b-gateway-api:$old_commit" || stop "Gateway config image is not release-bound"
+          test "$(docker image inspect --format '{{.Id}}' "$config_image")" = "$old_image" || stop "Gateway tag/image identity mismatch"
+          service=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$gateway_id")
+          test "$service" = gateway_api || stop "Gateway service label mismatch"
+          project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$gateway_id")
+          [[ "$project" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || stop "Gateway Compose project identity is invalid"
+          config_files=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$gateway_id")
+          working_dir=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$gateway_id")
+          environment_file=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.environment_file"}}' "$gateway_id")
+          fresh_stage="$US_RELEASE_ROOT/$old_commit-fresh-install"
+          normal_stage="$US_RELEASE_ROOT/$old_commit"
+          if test "$config_files" = "$fresh_stage/docker-compose.gateway.yml"; then
+            test "$working_dir" = "$fresh_stage" || stop "fresh-install Gateway working directory mismatch"
+          elif test "$config_files" = "$normal_stage/docker-compose.gateway.yml"; then
+            test "$working_dir" = "$normal_stage" || stop "normal Gateway working directory mismatch"
+          else
+            stop "Gateway Compose graph is outside an approved release stage"
+          fi
+          test "$environment_file" = /opt/b2b/.env.gateway || stop "Gateway environment-file label mismatch"
+          test -f "$config_files" && test ! -L "$config_files"
+          test "$(realpath -e -- "$config_files")" = "$config_files"
+          test "$(docker port "$gateway_id" 8001/tcp)" = 127.0.0.1:8001 || stop "Gateway loopback port mismatch"
+          test "$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "$gateway_id")" = unless-stopped || stop "Gateway restart policy mismatch"
+          curl --fail --silent --show-error http://127.0.0.1:8001/health >/dev/null
+          docker tag "$old_image" "b2b-gateway-api:rollback-$RELEASE_SHA"
+          printf '%s\n' "$old_image" > "$US_STAGE/prior-gateway-image-id"
+          printf '%s\n' "$project" > "$US_STAGE/prior-gateway-compose-project"
+          printf '%s\n' "$old_commit" > "$US_STAGE/prior-gateway-release-sha"
+          REMOTE
           echo "ready=true" >> "$GITHUB_OUTPUT"
       - name: Offline verify candidate provider preservation before live mutation
         shell: bash
