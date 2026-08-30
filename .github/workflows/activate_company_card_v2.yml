@@ -361,7 +361,7 @@ jobs:
         if: always()
         shell: bash
         env:
-          ROLLBACK_REQUIRED: ${{ failure() || cancelled() }}
+          ROLLBACK_REQUIRED: ${{ job.status != 'success' }}
           RELEASE_SHA: ${{ needs.trusted-main.outputs.release_sha }}
           RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
           US_TARGET: ${{ secrets.US_DEPLOY_TARGET }}
