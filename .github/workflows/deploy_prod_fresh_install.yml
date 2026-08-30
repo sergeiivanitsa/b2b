@@ -267,8 +267,9 @@ jobs:
           REMOTE
           ssh "${ssh_args[@]}" "$US_TARGET" "set -euo pipefail; stage='$US_RELEASE_ROOT/$RELEASE_SHA-fresh-install'; if test -e \"\$stage\" || test -L \"\$stage\"; then test -d \"\$stage\" && test ! -L \"\$stage\" && test \"\$(cat \"\$stage/stage-identity\")\" = '$RELEASE_SHA:production-fresh-install-v1'; fi"
           ssh "${ssh_args[@]}" "$RU_TARGET" 'set -euo pipefail
+            stop() { echo "$1; STOP" >&2; exit 2; }
             test "$(id -u)" -eq 0
-            for tool in docker python3 curl sha256sum getent nginx systemctl flock timeout; do command -v "$tool" >/dev/null; done
+            for tool in docker python3 curl sha256sum getent nginx systemctl flock timeout find chmod sync; do command -v "$tool" >/dev/null; done
             test -f /opt/b2b/.env.product && test ! -L /opt/b2b/.env.product
             test -f /opt/b2b/docker-compose.product.yml && test ! -L /opt/b2b/docker-compose.product.yml
             test -f /etc/nginx/sites-available/pork.su.conf && test ! -L /etc/nginx/sites-available/pork.su.conf
@@ -282,6 +283,16 @@ jobs:
             test "$(docker inspect --format "{{.State.Running}}" "$report_id")" = true
             image=$(docker inspect --format "{{.Image}}" "$product_id")
             test "$(docker inspect --format "{{.Image}}" "$report_id")" = "$image"
+            test "$image" = sha256:f99665e9c0654cfca050a2f4d8d05a05f70b1ce94534e15c8c55bd23c65e74ad || stop "legacy Product image digest changed"
+            legacy_config_image=b2b-product-api:6bee95e881a3e9ea1fe324ca13c11ae239f896f4
+            test "$(docker inspect --format "{{.Config.Image}}" "$product_id")" = "$legacy_config_image" || stop "legacy Product config image changed"
+            test "$(docker inspect --format "{{.Config.Image}}" "$report_id")" = "$legacy_config_image" || stop "legacy report worker config image changed"
+            product_env=$(docker inspect --format "{{range .Config.Env}}{{println .}}{{end}}" "$product_id")
+            report_env=$(docker inspect --format "{{range .Config.Env}}{{println .}}{{end}}" "$report_id")
+            product_release_count=$(printf "%s\n" "$product_env" | sed -n "/^PRODUCT_RELEASE_COMMIT=/p" | wc -l)
+            report_release_count=$(printf "%s\n" "$report_env" | sed -n "/^PRODUCT_RELEASE_COMMIT=/p" | wc -l)
+            test "$product_release_count" -eq 0 || stop "legacy Product unexpectedly exposes PRODUCT_RELEASE_COMMIT"
+            test "$report_release_count" -eq 0 || stop "legacy report worker unexpectedly exposes PRODUCT_RELEASE_COMMIT"
             project=$(docker inspect --format "{{index .Config.Labels \"com.docker.compose.project\"}}" "$product_id")
             test "$(docker inspect --format "{{index .Config.Labels \"com.docker.compose.project\"}}" "$report_id")" = "$project"
             printf "%s\n" "$project" | grep -Eq "^[a-z0-9][a-z0-9_-]*$"
@@ -290,25 +301,23 @@ jobs:
             test "$(docker ps -q --filter label=com.docker.compose.service=company_report_worker | wc -l)" -eq 1
             test "$(docker ps -q --filter label=com.docker.compose.service=company_card_narrative_worker | wc -l)" -eq 0
             revision=$(docker exec -w /app/services/product_api "$product_id" python -m alembic -c alembic.ini current)
-            case "$revision" in 0015_claims_company_report_handoff|"0015_claims_company_report_handoff (head)") ;; *) exit 2 ;; esac
-            release=$(docker inspect --format "{{range .Config.Env}}{{println .}}{{end}}" "$product_id" | sed -n "s/^PRODUCT_RELEASE_COMMIT=//p")
-            test "$release" = 6bee95e881a3e9ea1fe324ca13c11ae239f896f4
+            case "$revision" in 0015_claims_company_report_handoff|"0015_claims_company_report_handoff (head)") ;; *) stop "legacy Product Alembic revision changed" ;; esac
             test "$(docker inspect --format "{{range .Mounts}}{{if eq .Destination \"/data/claims_uploads\"}}{{println .Destination}}{{end}}{{end}}" "$product_id")" = ""
             test -d /var/lib/pork && test ! -L /var/lib/pork
             test "$(realpath -e -- /var/lib/pork)" = /var/lib/pork
             test "$(stat -c "%u" -- /var/lib/pork)" = 0
             claims_parent=/var/lib/pork/claims-uploads
-            if test -e "$claims_parent" || test -L "$claims_parent"; then
-              test -d "$claims_parent" && test ! -L "$claims_parent"
-              test "$(realpath -e -- "$claims_parent")" = "$claims_parent"
-              test "$(stat -c "%u:%g:%a" -- "$claims_parent")" = 0:0:750
-            fi
             claims_root=$claims_parent/v1
-            if test -e "$claims_root" || test -L "$claims_root"; then
-              test -d "$claims_root" && test ! -L "$claims_root"
-              test "$(realpath -e -- "$claims_root")" = "$claims_root"
-              test "$(stat -c "%u:%g:%a" -- "$claims_root")" = 0:0:750
-            fi
+            test -d "$claims_parent" && test ! -L "$claims_parent" || stop "legacy Claims parent is not a real directory"
+            test "$(realpath -e -- "$claims_parent")" = "$claims_parent" || stop "legacy Claims parent is not canonical"
+            case "$(stat -c "%u:%g:%a" -- "$claims_parent")" in 0:0:755|0:0:750) ;; *) stop "legacy Claims parent identity or mode changed" ;; esac
+            test -d "$claims_root" && test ! -L "$claims_root" || stop "legacy Claims root is not a real directory"
+            test "$(realpath -e -- "$claims_root")" = "$claims_root" || stop "legacy Claims root is not canonical"
+            case "$(stat -c "%u:%g:%a" -- "$claims_root")" in 0:0:700|0:0:750) ;; *) stop "legacy Claims root identity or mode changed" ;; esac
+            unexpected_claims_entry=$(find "$claims_parent" -mindepth 1 -maxdepth 1 ! -path "$claims_root" -print -quit)
+            first_claims_entry=$(find "$claims_root" -mindepth 1 -print -quit)
+            test -z "$unexpected_claims_entry" || stop "legacy Claims parent contains an unexpected entry"
+            test -z "$first_claims_entry" || stop "legacy Claims root is not empty"
             python3 - /opt/b2b/.env.product <<"PY"
           import pathlib, sys
           rows={}
@@ -341,26 +350,37 @@ jobs:
               raise SystemExit('database preflight receipt is not canonical; STOP')
           PY
           ssh "${ssh_args[@]}" "$US_TARGET" 'set -euo pipefail
+            stop() { echo "$1; STOP" >&2; exit 2; }
             test "$(id -u)" -eq 0
             command -v docker >/dev/null && command -v curl >/dev/null && command -v python3 >/dev/null
             test -f /opt/b2b/.env.gateway && test ! -L /opt/b2b/.env.gateway
-            test -f /opt/b2b/deploy/us/compose/docker-compose.gateway.yml
-            id=$(docker compose -f /opt/b2b/deploy/us/compose/docker-compose.gateway.yml --env-file /opt/b2b/.env.gateway ps -q gateway_api)
-            test -n "$id" && test "$(docker inspect --format "{{.State.Running}}" "$id")" = true
-            test "$(docker ps -q --filter label=com.docker.compose.service=gateway_api | wc -l)" -eq 1
+            test -f /opt/b2b/docker-compose.gateway.yml && test ! -L /opt/b2b/docker-compose.gateway.yml
+            gateway_ids=$(docker ps -aq --filter label=com.docker.compose.service=gateway_api)
+            mapfile -t ids < <(printf "%s" "$gateway_ids")
+            test "${#ids[@]}" -eq 1 || stop "legacy Gateway container cardinality changed"
+            id=${ids[0]}
+            test "$(docker inspect --format "{{.State.Running}}" "$id")" = true || stop "legacy Gateway is not running"
             test "$(docker port "$id" 8001/tcp)" = 127.0.0.1:8001
             test "$(docker inspect --format "{{.HostConfig.RestartPolicy.Name}}" "$id")" = unless-stopped
             project=$(docker inspect --format "{{index .Config.Labels \"com.docker.compose.project\"}}" "$id")
             image=$(docker inspect --format "{{.Image}}" "$id")
-            printf "%s\n" "$project" | grep -Eq "^[a-z0-9][a-z0-9_-]*$"
+            config_image=$(docker inspect --format "{{.Config.Image}}" "$id")
+            config_files=$(docker inspect --format "{{index .Config.Labels \"com.docker.compose.project.config_files\"}}" "$id")
+            working_dir=$(docker inspect --format "{{index .Config.Labels \"com.docker.compose.project.working_dir\"}}" "$id")
+            environment_file=$(docker inspect --format "{{index .Config.Labels \"com.docker.compose.project.environment_file\"}}" "$id")
+            test "$project" = b2b || stop "Gateway Compose project changed"
             printf "%s\n" "$image" | grep -Eq "^sha256:[0-9a-f]{64}$"
-            mapfile -t commits < <(docker inspect --format "{{range .Config.Env}}{{println .}}{{end}}" "$id" | sed -n "s/^GATEWAY_RELEASE_COMMIT=//p")
-            test "${#commits[@]}" -le 1
+            gateway_env=$(docker inspect --format "{{range .Config.Env}}{{println .}}{{end}}" "$id")
+            commit_count=$(printf "%s\n" "$gateway_env" | sed -n "/^GATEWAY_RELEASE_COMMIT=/p" | wc -l)
+            test "$commit_count" -le 1
             prior_commit=-
-            if test "${#commits[@]}" -eq 1 && test -n "${commits[0]}"; then prior_commit=${commits[0]}; printf "%s\n" "$prior_commit" | grep -Eq "^[0-9a-f]{40}$"; fi
-            printf "%s\n%s\n%s\n%s\n" "$id" "$project" "$image" "$prior_commit"' > .release/preflight/us-topology.txt
+            if test "$commit_count" -eq 1; then
+              commit_value=$(printf "%s\n" "$gateway_env" | sed -n "s/^GATEWAY_RELEASE_COMMIT=//p")
+              if test -n "$commit_value"; then prior_commit=$commit_value; printf "%s\n" "$prior_commit" | grep -Eq "^[0-9a-f]{40}$"; fi
+            fi
+            printf "%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n" "$id" "$project" "$image" "$prior_commit" "$config_image" "$config_files" "$working_dir" "$environment_file" "$commit_count"' > .release/preflight/us-topology.txt
           mapfile -t us < .release/preflight/us-topology.txt
-          test "${#us[@]}" -eq 4
+          test "${#us[@]}" -eq 9
           gateway_candidate=$(python3 -c "import json,re,sys; value=json.load(open(sys.argv[1],encoding='utf-8')); digest=value['images'][sys.argv[2]]['config_digest']; (isinstance(digest,str) and re.fullmatch(r'sha256:[0-9a-f]{64}',digest)) or sys.exit(2); print(digest)" ".release/deploy/release-manifest-$RELEASE_SHA.json" "gateway-api-$RELEASE_SHA.oci.tar")
           prior_state=$(ssh "${ssh_args[@]}" "$US_TARGET" "set -euo pipefail; receipt='$US_RELEASE_ROOT/$RELEASE_SHA-fresh-install/prior-gateway.json'; if test -e \"\$receipt\" || test -L \"\$receipt\"; then echo present; else echo absent; fi")
           case "$prior_state" in
@@ -373,14 +393,42 @@ jobs:
               test "$prior_tag" = "${prior[1]}"
               if test "${us[2]}" = "${prior[1]}"; then
                 test "${us[3]}" = "${prior[2]}"
+                if test "${us[4]}" = b2b-gateway_api; then
+                  test "${us[2]}" = sha256:f3da3267549b92c04bcec89d0f9c6502b2a5b79c3652678471d2def0b90e3035
+                  test "${us[3]}" = -
+                  test "${us[5]}" = /opt/b2b/docker-compose.gateway.yml
+                  test "${us[6]}" = /opt/b2b
+                  test "${us[7]}" = /opt/b2b/.env.gateway
+                  test "${us[8]}" -eq 0
+                else
+                  test "${us[4]}" = "b2b-gateway-api:fresh-install-prior-$RELEASE_SHA"
+                  test "${us[5]}" = "$US_RELEASE_ROOT/$RELEASE_SHA-fresh-install/docker-compose.gateway.yml"
+                  test "${us[6]}" = "$US_RELEASE_ROOT/$RELEASE_SHA-fresh-install"
+                  test "${us[7]}" = /opt/b2b/.env.gateway
+                  test "${us[8]}" -eq 1
+                fi
               elif test "${us[2]}" = "$gateway_candidate"; then
                 test "${us[3]}" = "$RELEASE_SHA"
+                test "${us[4]}" = "b2b-gateway-api:$RELEASE_SHA"
+                test "${us[5]}" = "$US_RELEASE_ROOT/$RELEASE_SHA-fresh-install/docker-compose.gateway.yml"
+                test "${us[6]}" = "$US_RELEASE_ROOT/$RELEASE_SHA-fresh-install"
+                test "${us[7]}" = /opt/b2b/.env.gateway
+                test "${us[8]}" -eq 1
               else
                 echo 'current Gateway is outside the immutable prior/candidate graph; STOP' >&2
                 exit 2
               fi
               ;;
-            absent) ;;
+            absent)
+              test "${us[1]}" = b2b || { echo 'legacy Gateway Compose project changed; STOP' >&2; exit 2; }
+              test "${us[2]}" = sha256:f3da3267549b92c04bcec89d0f9c6502b2a5b79c3652678471d2def0b90e3035 || { echo 'legacy Gateway image digest changed; STOP' >&2; exit 2; }
+              test "${us[3]}" = - || { echo 'legacy Gateway unexpectedly exposes GATEWAY_RELEASE_COMMIT; STOP' >&2; exit 2; }
+              test "${us[8]}" -eq 0 || { echo 'legacy Gateway unexpectedly defines GATEWAY_RELEASE_COMMIT; STOP' >&2; exit 2; }
+              test "${us[4]}" = b2b-gateway_api || { echo 'legacy Gateway config image changed; STOP' >&2; exit 2; }
+              test "${us[5]}" = /opt/b2b/docker-compose.gateway.yml || { echo 'legacy Gateway Compose config path changed; STOP' >&2; exit 2; }
+              test "${us[6]}" = /opt/b2b || { echo 'legacy Gateway Compose working directory changed; STOP' >&2; exit 2; }
+              test "${us[7]}" = /opt/b2b/.env.gateway || { echo 'legacy Gateway Compose environment file changed; STOP' >&2; exit 2; }
+              ;;
             *) echo 'prior Gateway receipt state is invalid; STOP' >&2; exit 2 ;;
           esac
           echo "ru_stage=$RU_RELEASE_ROOT/$RELEASE_SHA-fresh-install" >> "$GITHUB_OUTPUT"
@@ -398,6 +446,27 @@ jobs:
         run: |
           set -euo pipefail
           ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/fresh-install-ssh/known_hosts")
+          ssh "${ssh_args[@]}" "$RU_TARGET" bash -s <<'REMOTE'
+          set -euo pipefail
+          stop() { echo "$1; STOP" >&2; exit 2; }
+          claims_parent=/var/lib/pork/claims-uploads
+          claims_root=$claims_parent/v1
+          test -d "$claims_parent" && test ! -L "$claims_parent" || stop "Claims parent changed before normalization"
+          test "$(realpath -e -- "$claims_parent")" = "$claims_parent" || stop "Claims parent is not canonical before normalization"
+          case "$(stat -c '%u:%g:%a' -- "$claims_parent")" in 0:0:755|0:0:750) ;; *) stop "Claims parent identity or mode changed before normalization" ;; esac
+          test -d "$claims_root" && test ! -L "$claims_root" || stop "Claims root changed before normalization"
+          test "$(realpath -e -- "$claims_root")" = "$claims_root" || stop "Claims root is not canonical before normalization"
+          case "$(stat -c '%u:%g:%a' -- "$claims_root")" in 0:0:700|0:0:750) ;; *) stop "Claims root identity or mode changed before normalization" ;; esac
+          unexpected_claims_entry=$(find "$claims_parent" -mindepth 1 -maxdepth 1 ! -path "$claims_root" -print -quit)
+          first_claims_entry=$(find "$claims_root" -mindepth 1 -print -quit)
+          test -z "$unexpected_claims_entry" || stop "Claims parent gained an unexpected entry before normalization"
+          test -z "$first_claims_entry" || stop "Claims root is no longer empty before normalization"
+          chmod 750 -- "$claims_parent" "$claims_root"
+          sync -f "$claims_parent"
+          sync -f "$claims_root"
+          test "$(stat -c '%u:%g:%a' -- "$claims_parent")" = 0:0:750 || stop "Claims parent normalization failed"
+          test "$(stat -c '%u:%g:%a' -- "$claims_root")" = 0:0:750 || stop "Claims root normalization failed"
+          REMOTE
           ssh "${ssh_args[@]}" "$RU_TARGET" "set -euo pipefail; install -d -m 750 '$RU_STAGE'; identity='$RELEASE_SHA:production-fresh-install-v1'; if test -e '$RU_STAGE/stage-identity' || test -L '$RU_STAGE/stage-identity'; then test -f '$RU_STAGE/stage-identity' && test ! -L '$RU_STAGE/stage-identity' && test \"\$(cat '$RU_STAGE/stage-identity')\" = \"\$identity\"; else printf '%s\n' \"\$identity\" > '$RU_STAGE/.stage-identity.tmp'; chmod 640 '$RU_STAGE/.stage-identity.tmp'; sync -f '$RU_STAGE/.stage-identity.tmp'; mv -T '$RU_STAGE/.stage-identity.tmp' '$RU_STAGE/stage-identity'; sync -f '$RU_STAGE'; fi"
           ssh "${ssh_args[@]}" "$US_TARGET" "set -euo pipefail; install -d -m 750 '$US_STAGE'; identity='$RELEASE_SHA:production-fresh-install-v1'; if test -e '$US_STAGE/stage-identity' || test -L '$US_STAGE/stage-identity'; then test -f '$US_STAGE/stage-identity' && test ! -L '$US_STAGE/stage-identity' && test \"\$(cat '$US_STAGE/stage-identity')\" = \"\$identity\"; else printf '%s\n' \"\$identity\" > '$US_STAGE/.stage-identity.tmp'; chmod 640 '$US_STAGE/.stage-identity.tmp'; sync -f '$US_STAGE/.stage-identity.tmp'; mv -T '$US_STAGE/.stage-identity.tmp' '$US_STAGE/stage-identity'; sync -f '$US_STAGE'; fi"
           credential="/etc/pork/fresh-install-credentials/$RELEASE_SHA.database-identity.sha256"
@@ -431,24 +500,44 @@ jobs:
           ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/fresh-install-ssh/known_hosts")
           ssh "${ssh_args[@]}" "$US_TARGET" bash -s -- "$US_STAGE" "$RELEASE_SHA" <<'REMOTE'
           set -euo pipefail
+          stop() { echo "$1; STOP" >&2; exit 2; }
           stage=$1; release_sha=$2
           cd "$stage"
           test -f fresh_install_gateway_receipt.py && test ! -L fresh_install_gateway_receipt.py
           expected=$(python3 -c "import json,re,sys; value=json.load(open(sys.argv[1],encoding='utf-8')); digest=value['images'][sys.argv[2]]['config_digest']; (isinstance(digest,str) and re.fullmatch(r'sha256:[0-9a-f]{64}',digest)) or sys.exit(2); print(digest)" "release-manifest-$release_sha.json" "gateway-api-$release_sha.oci.tar")
-          id=$(docker compose -f /opt/b2b/deploy/us/compose/docker-compose.gateway.yml --env-file /opt/b2b/.env.gateway ps -q gateway_api)
-          test -n "$id" && test "$(docker inspect --format '{{.State.Running}}' "$id")" = true
+          gateway_ids=$(docker ps -aq --filter label=com.docker.compose.service=gateway_api)
+          mapfile -t ids < <(printf '%s' "$gateway_ids")
+          test "${#ids[@]}" -eq 1 || stop "Gateway container cardinality changed before arming rollback"
+          id=${ids[0]}
+          test "$(docker inspect --format '{{.State.Running}}' "$id")" = true || stop "Gateway is not running before arming rollback"
           current_project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$id")
           current_image=$(docker inspect --format '{{.Image}}' "$id")
-          mapfile -t commits < <(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id" | sed -n 's/^GATEWAY_RELEASE_COMMIT=//p')
-          test "${#commits[@]}" -le 1
+          current_config_image=$(docker inspect --format '{{.Config.Image}}' "$id")
+          current_config_files=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$id")
+          current_working_dir=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$id")
+          current_environment_file=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.environment_file"}}' "$id")
+          test "$current_project" = b2b || stop "Gateway Compose project changed before arming rollback"
+          gateway_env=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id")
+          commit_count=$(printf '%s\n' "$gateway_env" | sed -n '/^GATEWAY_RELEASE_COMMIT=/p' | wc -l)
+          test "$commit_count" -le 1
           current_commit=-
-          if test "${#commits[@]}" -eq 1 && test -n "${commits[0]}"; then current_commit=${commits[0]}; printf '%s\n' "$current_commit" | grep -Eq '^[0-9a-f]{40}$'; fi
+          if test "$commit_count" -eq 1; then
+            commit_value=$(printf '%s\n' "$gateway_env" | sed -n 's/^GATEWAY_RELEASE_COMMIT=//p')
+            if test -n "$commit_value"; then current_commit=$commit_value; printf '%s\n' "$current_commit" | grep -Eq '^[0-9a-f]{40}$'; fi
+          fi
           receipt="$stage/prior-gateway.json"
           tag="b2b-gateway-api:fresh-install-prior-$release_sha"
           if test -e "$receipt" || test -L "$receipt"; then
             prior_payload=$(python3 fresh_install_gateway_receipt.py read "$receipt" "$release_sha")
             mapfile -t prior <<< "$prior_payload"
           else
+            test "$current_image" = sha256:f3da3267549b92c04bcec89d0f9c6502b2a5b79c3652678471d2def0b90e3035 || stop "legacy Gateway image digest changed before arming rollback"
+            test "$current_config_image" = b2b-gateway_api || stop "legacy Gateway config image changed before arming rollback"
+            test "$current_config_files" = /opt/b2b/docker-compose.gateway.yml || stop "legacy Gateway Compose config path changed before arming rollback"
+            test "$current_working_dir" = /opt/b2b || stop "legacy Gateway Compose working directory changed before arming rollback"
+            test "$current_environment_file" = /opt/b2b/.env.gateway || stop "legacy Gateway Compose environment file changed before arming rollback"
+            test "$current_commit" = - || stop "legacy Gateway unexpectedly exposes GATEWAY_RELEASE_COMMIT before arming rollback"
+            test "$commit_count" -eq 0 || stop "legacy Gateway unexpectedly defines GATEWAY_RELEASE_COMMIT before arming rollback"
             test "$current_image" != "$expected"
             if docker image inspect "$tag" >/dev/null 2>&1; then
               test "$(docker image inspect --format '{{.Id}}' "$tag")" = "$current_image"
@@ -463,8 +552,27 @@ jobs:
           test "$(docker image inspect --format '{{.Id}}' "$tag")" = "${prior[1]}"
           if test "$current_image" = "${prior[1]}"; then
             test "$current_commit" = "${prior[2]}"
+            if test "$current_config_image" = b2b-gateway_api; then
+              test "$current_image" = sha256:f3da3267549b92c04bcec89d0f9c6502b2a5b79c3652678471d2def0b90e3035
+              test "$current_commit" = -
+              test "$current_config_files" = /opt/b2b/docker-compose.gateway.yml
+              test "$current_working_dir" = /opt/b2b
+              test "$current_environment_file" = /opt/b2b/.env.gateway
+              test "$commit_count" -eq 0
+            else
+              test "$current_config_image" = "b2b-gateway-api:fresh-install-prior-$release_sha"
+              test "$current_config_files" = "$stage/docker-compose.gateway.yml"
+              test "$current_working_dir" = "$stage"
+              test "$current_environment_file" = /opt/b2b/.env.gateway
+              test "$commit_count" -eq 1
+            fi
           elif test "$current_image" = "$expected"; then
             test "$current_commit" = "$release_sha"
+            test "$current_config_image" = "b2b-gateway-api:$release_sha"
+            test "$current_config_files" = "$stage/docker-compose.gateway.yml"
+            test "$current_working_dir" = "$stage"
+            test "$current_environment_file" = /opt/b2b/.env.gateway
+            test "$commit_count" -eq 1
           else
             echo 'current Gateway is outside the immutable prior/candidate graph; STOP' >&2
             exit 2
