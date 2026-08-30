@@ -527,6 +527,54 @@ def test_gateway_release_identity_is_exact_in_normal_deploy_and_rollback() -> No
     assert "grep -Eq '^[0-9a-f]{40}$' '$US_STAGE/prior-gateway-release-sha'" in rollback
 
 
+def test_normal_deploy_discovers_post_install_gateway_by_closed_identity() -> None:
+    deploy = DEPLOY.read_text(encoding="utf-8")
+    preflight = deploy.split(
+        "Read-only RU/US preflight and record compatible prior identities", 1
+    )[1].split("Upload exact verified release and owned deploy tools", 1)[0]
+    rollback_record = deploy.split(
+        "Record exact compatible rollback identities and pointers", 1
+    )[1].split(
+        "Offline verify candidate provider preservation before live mutation", 1
+    )[0]
+
+    assert "/opt/b2b/deploy/us/compose/docker-compose.gateway.yml" not in deploy
+    assert "deploy/us/compose/docker-compose.gateway.yml" in deploy
+    for section in (preflight, rollback_record):
+        for token in (
+            "gateway_ids=$(docker ps -aq --no-trunc --filter label=com.docker.compose.service=gateway_api)",
+            'test "${#gateway_id_rows[@]}" -eq 1',
+            "{{.State.Running}}",
+            "{{.Config.Image}}",
+            "docker image inspect --format '{{.Id}}'",
+            'com.docker.compose.service',
+            'com.docker.compose.project',
+            'com.docker.compose.project.config_files',
+            'com.docker.compose.project.working_dir',
+            'com.docker.compose.project.environment_file',
+            'fresh_stage="$US_RELEASE_ROOT/$old_commit-fresh-install"',
+            'normal_stage="$US_RELEASE_ROOT/$old_commit"',
+            'test "$environment_file" = /opt/b2b/.env.gateway',
+            'test "$(realpath -e -- "$config_files")" = "$config_files"',
+            'test "$(docker port "$gateway_id" 8001/tcp)" = 127.0.0.1:8001',
+            "http://127.0.0.1:8001/health",
+        ):
+            assert token in section
+        assert "mapfile -t gateway_id_rows < <(docker ps" not in section
+
+    assert "> .release/prior/us-identities.txt" in preflight
+    assert "printf '%s\\n%s\\n' \"$gateway_id\" \"$old_image\"" in preflight
+    assert 'test "$gateway_id" = "$EXPECTED_GATEWAY_ID"' in rollback_record
+    assert 'test "$old_image" = "$EXPECTED_GATEWAY_IMAGE"' in rollback_record
+    assert "docker tag \"$old_image\" \"b2b-gateway-api:rollback-$RELEASE_SHA\"" in rollback_record
+    candidate = deploy.split("Recreate and verify exact Gateway", 1)[1].split(
+        "Atomically switch Web", 1
+    )[0]
+    rollback = deploy.split("Fail-closed restore of prior Gateway", 1)[1]
+    assert "-f '$US_STAGE/docker-compose.gateway.yml'" in candidate
+    assert "-f '$US_STAGE/docker-compose.gateway.yml'" in rollback
+
+
 def test_product_example_keeps_privacy_key_unset_and_collection_closed() -> None:
     lines = (ROOT / "services/product_api/.env.example").read_text(encoding="utf-8").splitlines()
     assert "COMPANY_CARD_V2_ARBITRATION_COLLECTION_ENABLED=false" in lines
