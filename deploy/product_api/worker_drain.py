@@ -17,10 +17,12 @@ import subprocess
 import sys
 import time
 from typing import Callable, Protocol, Sequence
+from urllib.parse import unquote, urlsplit
 
 _CONTAINER_ID = re.compile(r"^[0-9a-f]{12,64}$")
 _IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 _RELEASE_SHA = re.compile(r"^[0-9a-f]{40}$")
+_INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
 
 
 class DrainError(RuntimeError):
@@ -416,16 +418,77 @@ FROM report, outbox, narrative, runtime, reservation;
 """
 
 
+def _decode_database_url_part(value: str) -> str:
+    if not value or _INVALID_PERCENT_ESCAPE.search(value):
+        raise DrainError("database URL is missing or invalid")
+    try:
+        decoded = unquote(value, encoding="utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise DrainError("database URL is missing or invalid") from exc
+    if any(ord(character) < 32 or ord(character) == 127 for character in decoded):
+        raise DrainError("database URL is missing or invalid")
+    return decoded
+
+
+def _libpq_environment(database_url: str) -> dict[str, str]:
+    """Translate the supported SQLAlchemy URL into deterministic libpq inputs."""
+    supported_prefixes = ("postgresql://", "postgresql+asyncpg://")
+    if (
+        not database_url
+        or not database_url.startswith(supported_prefixes)
+        or "?" in database_url
+        or "#" in database_url
+        or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in database_url
+        )
+    ):
+        raise DrainError("database URL is missing or invalid")
+    try:
+        parsed = urlsplit(database_url)
+        parsed_port = parsed.port
+        port = 5432 if parsed_port is None else parsed_port
+        host = parsed.hostname
+    except ValueError as exc:
+        raise DrainError("database URL is missing or invalid") from exc
+    if (
+        parsed.scheme not in {"postgresql", "postgresql+asyncpg"}
+        or parsed.netloc.count("@") != 1
+        or parsed.netloc.rpartition("@")[2].endswith(":")
+        or parsed.query
+        or parsed.fragment
+        or host is None
+        or parsed.username is None
+        or parsed.password is None
+        or not 1 <= port <= 65535
+        or not parsed.path.startswith("/")
+        or "/" in parsed.path[1:]
+        or "%" in host
+        or "," in host
+        or "%" in parsed.path
+    ):
+        raise DrainError("database URL is missing or invalid")
+    return {
+        "PGHOST": _decode_database_url_part(host),
+        "PGPORT": str(port),
+        "PGUSER": _decode_database_url_part(parsed.username),
+        "PGPASSWORD": _decode_database_url_part(parsed.password),
+        "PGDATABASE": _decode_database_url_part(parsed.path[1:]),
+    }
+
+
 class PsqlAggregateAdapter:
     def __init__(self, database_url: str) -> None:
-        if not database_url or any(character in database_url for character in "\r\n\x00"):
-            raise DrainError("database URL is missing or invalid")
-        self._database_url = database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+        self._connection_environment = _libpq_environment(database_url)
 
     def snapshot(self) -> AggregateSnapshot:
-        environment = os.environ.copy()
+        environment = {
+            name: value
+            for name, value in os.environ.items()
+            if not name.upper().startswith("PG")
+        }
+        environment.update(self._connection_environment)
         environment["PGCONNECT_TIMEOUT"] = "5"
-        environment["PGDATABASE"] = self._database_url
         completed = subprocess.run(
             ["psql", "--no-psqlrc", "--tuples-only", "--no-align", "--set", "ON_ERROR_STOP=1", "--command", _AGGREGATE_SQL],
             check=False,

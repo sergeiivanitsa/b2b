@@ -5,7 +5,7 @@ This repo contains two FastAPI services:
 - gateway_api (US/EU)
 
 ## Local run (Docker)
-1. Apply migrations: `docker compose run --rm --build product_api sh -lc "cd /app/services/product_api && alembic -c alembic.ini upgrade head"`
+1. Apply migrations: `docker compose run --rm --build product_api python -m alembic -c /app/alembic.ini upgrade head`
 2. Start API, CompanyReport worker, Gateway, and PostgreSQL: `docker compose up --build`
 3. `curl http://localhost:8000/health`
 4. `curl http://localhost:8001/health`

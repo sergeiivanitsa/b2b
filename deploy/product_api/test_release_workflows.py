@@ -560,6 +560,16 @@ def test_product_compose_keeps_local_sha_optional_and_deploy_supplies_exact_sha(
     assert "--no-build --force-recreate product_api company_report_worker company_card_narrative_worker" in deploy
 
 
+def test_local_product_image_contains_the_migration_graph_used_by_readme() -> None:
+    dockerfile = (ROOT / "services/product_api/Dockerfile").read_text(encoding="utf-8")
+    local = dockerfile.split("FROM base AS local", 1)[1]
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "COPY services/product_api/alembic.ini /app/alembic.ini" in local
+    assert "COPY services/product_api/alembic /app/alembic" in local
+    assert "python -m alembic -c /app/alembic.ini upgrade head" in readme
+    assert "cd /app/services/product_api" not in readme
+
+
 def test_normal_deploy_preserves_exact_claims_bind_for_candidate_and_rollback() -> None:
     compose = (ROOT / "docker-compose.product.yml").read_text(encoding="utf-8")
     deploy = DEPLOY.read_text(encoding="utf-8")

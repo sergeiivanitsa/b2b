@@ -227,16 +227,64 @@ def test_container_settings_are_exact_json_without_shell_evaluation() -> None:
 
 
 def test_psql_connection_secret_is_environment_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    database_url = "postgresql://user:secret@db/app"
+    database_url = (
+        "postgresql+asyncpg://user%3Aname:secret%2F%40@db.example:5544/app"
+    )
+    monkeypatch.setenv("PGSERVICE", "inherited-service")
+    monkeypatch.setenv("PGHOST", "inherited-host")
+    monkeypatch.setenv("PGPASSWORD", "inherited-secret")
+    monkeypatch.setenv("PGSSLMODE", "inherited-mode")
 
     def run(arguments, **kwargs):
         assert database_url not in arguments
-        assert kwargs["env"]["PGDATABASE"] == database_url
+        assert all("secret" not in argument for argument in arguments)
+        assert kwargs["env"]["PGHOST"] == "db.example"
+        assert kwargs["env"]["PGPORT"] == "5544"
+        assert kwargs["env"]["PGUSER"] == "user:name"
+        assert kwargs["env"]["PGPASSWORD"] == "secret/@"
+        assert kwargs["env"]["PGDATABASE"] == "app"
+        assert kwargs["env"]["PGCONNECT_TIMEOUT"] == "5"
+        assert "PGSERVICE" not in kwargs["env"]
+        assert "PGSSLMODE" not in kwargs["env"]
         return SimpleNamespace(returncode=0, stdout=json.dumps(drain.asdict(_snapshot())) + "\n")
 
     monkeypatch.setattr(drain.subprocess, "run", run)
     snapshot = drain.PsqlAggregateAdapter(database_url).snapshot()
     assert snapshot.report_running == 0
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    (
+        "",
+        "mysql://user:secret@db/app",
+        "postgresql://user:secret@/app",
+        "postgresql://db/app",
+        "postgresql://user@db/app",
+        "postgresql://user:secret@db",
+        "postgresql://user:secret@db/app/extra",
+        "postgresql://user:secret@db:0/app",
+        "postgresql://user:secret@db:invalid/app",
+        "postgresql://user:secret@db/app?sslmode=require",
+        "postgresql://user:secret@db/app?",
+        "postgresql://user:secret@db/app#fragment",
+        "postgresql://user:secret@db/app#",
+        "PostgreSQL://user:secret@db/app",
+        " postgresql://user:secret@db/app",
+        "postgresql://user:sec\tret@db/app",
+        "postgresql://user:pa@ss@db/app",
+        "postgresql://user:secret@db:/app",
+        "postgresql://user:secret@db,db2/app",
+        "postgresql://user:secret@db%2Flocal/app",
+        "postgresql://user:secret@db/app%2Fname",
+        "postgresql://user:secret%0Avalue@db/app",
+        "postgresql://user:secret%FF@db/app",
+        "postgresql://user%ZZ:secret@db/app",
+    ),
+)
+def test_psql_rejects_ambiguous_or_unsupported_database_urls(database_url: str) -> None:
+    with pytest.raises(drain.DrainError, match="database URL is missing or invalid"):
+        drain.PsqlAggregateAdapter(database_url)
 
 
 def test_aggregate_sql_uses_migrated_company_report_job_state_column() -> None:
