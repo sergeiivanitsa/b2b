@@ -112,11 +112,17 @@ async def _store_h1(
     inn: str = INN,
     publish: bool,
     usable: bool = True,
+    full_name: str = "ООО Канареечный тест",
+    short_name: str | None = None,
 ) -> tuple[UUID, UUID]:
     now = datetime(2026, 8, 29, tzinfo=timezone.utc)
     report = complete_company_report(
         counterparty=counterparty_facts().model_copy(
-            update={"inn": inn, "full_name": "ООО Канареечный тест"}
+            update={
+                "inn": inn,
+                "full_name": full_name,
+                "short_name": short_name,
+            }
         ),
         report_version="2",
     ).model_copy(
@@ -588,12 +594,17 @@ async def test_canary_prepare_is_idempotent_and_has_no_public_side_effects(
 
 
 @pytest.mark.asyncio
-async def test_canary_prepare_appends_private_h1_pin_idempotently(
+async def test_canary_prepare_pins_public_h1_canonical_idempotently_when_names_differ(
     engine,
     db_url: str,
     tmp_path: Path,
 ) -> None:
-    subject_id, report_id = await _store_h1(engine, publish=False)
+    subject_id, report_id = await _store_h1(
+        engine,
+        publish=False,
+        full_name="Общество с ограниченной ответственностью Канареечный тест",
+        short_name="ООО Канареечный тест",
+    )
     sitemap_before = await _sitemap_identity(engine)
     plan_path = (tmp_path / "canary-plan-unpublished.json").resolve()
     inspected = await inspect_canary(
@@ -605,6 +616,10 @@ async def test_canary_prepare_appends_private_h1_pin_idempotently(
     receipt_path = (tmp_path / "canary-unpublished-receipt.json").resolve()
     assert plan.h1_rollback.source_kind == "latest_eligible_report"
     assert plan.h1_rollback.pin_exists is False
+    assert (
+        plan.h1_rollback.canonical_path
+        == f"/company/{INN}-ooo-kanareechnyi-test"
+    )
 
     first = await prepare_canary(
         plan=plan,
@@ -651,6 +666,7 @@ async def test_canary_prepare_appends_private_h1_pin_idempotently(
         assert len(pins) == 1
         assert pins[0].report_id == report_id
         assert pins[0].generation == plan.h1_rollback.pin_generation
+        assert pins[0].canonical_path == plan.h1_rollback.canonical_path
 
 
 @pytest.mark.parametrize("winner", ("prepare", "h1_enqueue"))

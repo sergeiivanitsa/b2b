@@ -64,7 +64,7 @@ from product_api.company_reports.persistence.serialization import (
     calculate_company_report_snapshot_hash,
     company_report_from_snapshot,
 )
-from product_api.company_reports.seo import canonical_path, evaluate_publication
+from product_api.company_reports.seo import evaluate_publication
 from product_api.settings import Settings, get_settings
 
 from .arbitration_keyring import resolve_arbitration_mask_key
@@ -133,7 +133,6 @@ class CanaryRuntimeConfig:
 @dataclass(frozen=True)
 class _H1Policy:
     report: CompanyReportRecord
-    canonical_path: str
     published_lastmod: datetime
 
 
@@ -385,9 +384,6 @@ def _eligible_h1_policy(
             return None
         return _H1Policy(
             report=report,
-            canonical_path=canonical_path(
-                decision.projection.inn, decision.projection.name
-            ),
             published_lastmod=report.generated_at.astimezone(timezone.utc),
         )
     except Exception:
@@ -539,11 +535,14 @@ async def _find_h1_selection(
         or resolved.indexable is not False
         or report is None
         or policy is None
-        or policy.canonical_path != resolved.canonical_path
         or policy.published_lastmod.astimezone(timezone.utc)
         != resolved.checked_at.astimezone(timezone.utc)
     ):
         raise CanaryExecutionError("canary_h1_unavailable")
+    # The public H1 resolver owns the exact predecessor identity, including
+    # whether its canonical slug uses the legal short or full name.  The SEO
+    # policy above proves publication sufficiency, but its legacy projection
+    # deliberately prefers the full name and therefore cannot own this path.
     return _H1Selection(
         source_kind="latest_eligible_report",
         report=report,
@@ -554,7 +553,7 @@ async def _find_h1_selection(
         )
         + 1,
         pin_exists=False,
-        canonical_path=policy.canonical_path,
+        canonical_path=resolved.canonical_path,
         published_lastmod=policy.published_lastmod,
     )
 
