@@ -239,6 +239,249 @@ def test_psql_connection_secret_is_environment_only(monkeypatch: pytest.MonkeyPa
     assert snapshot.report_running == 0
 
 
+def test_aggregate_sql_uses_migrated_company_report_job_state_column() -> None:
+    report_cte = drain._AGGREGATE_SQL.split("), outbox AS (", 1)[0]
+    assert "status" not in report_cte
+    for state in ("queued", "succeeded", "failed", "running"):
+        assert f"FILTER (WHERE state = '{state}')" in report_cte
+
+
+def test_validate_only_is_sha_and_database_bound_without_worker_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    events: list[object] = []
+    identities = (_identity("report-worker", "a"), _identity("narrative-worker", "b"))
+    settings = {
+        "DATABASE_URL": "postgresql+asyncpg://user:secret@db/app",
+        "COMPANY_REPORT_WORKER_SHUTDOWN_GRACE_SECONDS": "30",
+        "DATANEWTON_TIMEOUT_SECONDS": "10",
+        "COMPANY_CARD_AI_NARRATIVE_GATEWAY_TIMEOUT_SECONDS": "20",
+    }
+
+    class ReadOnlyContainers:
+        def __init__(self, names):
+            assert names == ["report-worker", "narrative-worker"]
+
+        def capture(self):
+            events.append("capture")
+            return identities
+
+        def environment(self, container_id, names):
+            assert container_id in {"report-worker", "narrative-worker"}
+            assert names == drain._REQUIRED_SETTINGS
+            events.append(("environment", container_id))
+            return settings
+
+        def disable_restart(self, identity):
+            raise AssertionError("validate-only changed restart policy")
+
+        def send_sigterm(self, identity):
+            raise AssertionError("validate-only sent a signal")
+
+    class ReadOnlyDatabase:
+        def __init__(self, database_url):
+            assert database_url == settings["DATABASE_URL"]
+
+        def snapshot(self):
+            events.append("snapshot")
+            return _snapshot()
+
+    monkeypatch.setattr(drain, "DockerCliAdapter", ReadOnlyContainers)
+    monkeypatch.setattr(drain, "PsqlAggregateAdapter", ReadOnlyDatabase)
+    monkeypatch.setattr(
+        drain,
+        "drain_workers",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("validate-only entered worker drain")
+        ),
+    )
+    release_sha = "e" * 40
+    assert drain.main([
+        "--container", "report-worker",
+        "--container", "narrative-worker",
+        "--settings-container", "report-worker",
+        "--deadline-seconds", "300",
+        "--stable-interval-seconds", "10",
+        "--validate-only",
+        "--release-sha", release_sha,
+    ]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["outcome"] == "validated"
+    assert output["release_sha"] == release_sha
+    assert output["database_target_sha256"] == drain.sha256(
+        settings["DATABASE_URL"].encode("utf-8")
+    ).hexdigest()
+    assert "secret" not in json.dumps(output)
+    assert events == [
+        "capture",
+        ("environment", "report-worker"),
+        ("environment", "report-worker"),
+        ("environment", "narrative-worker"),
+        "snapshot",
+    ]
+
+
+def test_validate_only_rejects_unsafe_snapshot_before_worker_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    identities = (_identity("report-worker", "a"), _identity("narrative-worker", "b"))
+    settings = {
+        "DATABASE_URL": "postgresql://user:secret@db/app",
+        "COMPANY_REPORT_WORKER_SHUTDOWN_GRACE_SECONDS": "30",
+        "DATANEWTON_TIMEOUT_SECONDS": "10",
+        "COMPANY_CARD_AI_NARRATIVE_GATEWAY_TIMEOUT_SECONDS": "20",
+    }
+
+    class ContainersWithoutMutation:
+        def __init__(self, names):
+            pass
+
+        def capture(self):
+            return identities
+
+        def environment(self, container_id, names):
+            return settings
+
+    class UnsafeDatabase:
+        def __init__(self, database_url):
+            pass
+
+        def snapshot(self):
+            return _snapshot(report_running=1)
+
+    monkeypatch.setattr(drain, "DockerCliAdapter", ContainersWithoutMutation)
+    monkeypatch.setattr(drain, "PsqlAggregateAdapter", UnsafeDatabase)
+    monkeypatch.setattr(
+        drain,
+        "drain_workers",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("unsafe preflight entered worker drain")
+        ),
+    )
+    assert drain.main([
+        "--container", "report-worker",
+        "--container", "narrative-worker",
+        "--settings-container", "report-worker",
+        "--deadline-seconds", "300",
+        "--stable-interval-seconds", "10",
+        "--validate-only",
+        "--release-sha", "e" * 40,
+    ]) == 2
+    assert "unsafe for deployment preflight" in capsys.readouterr().err
+
+
+def test_regular_main_executes_exact_snapshot_before_entering_drain(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    events: list[str] = []
+    identities = (_identity("report-worker", "a"), _identity("narrative-worker", "b"))
+    settings = {
+        "DATABASE_URL": "postgresql://user:secret@db/app",
+        "COMPANY_REPORT_WORKER_SHUTDOWN_GRACE_SECONDS": "30",
+        "DATANEWTON_TIMEOUT_SECONDS": "10",
+        "COMPANY_CARD_AI_NARRATIVE_GATEWAY_TIMEOUT_SECONDS": "20",
+    }
+
+    class Containers:
+        def __init__(self, names):
+            pass
+
+        def capture(self):
+            events.append("capture")
+            return identities
+
+        def environment(self, container_id, names):
+            return settings
+
+    class Database:
+        def __init__(self, database_url):
+            pass
+
+        def snapshot(self):
+            events.append("snapshot")
+            return _snapshot()
+
+    def run_drain(containers, database, policy, *, identities):
+        assert identities == (
+            _identity("report-worker", "a"),
+            _identity("narrative-worker", "b"),
+        )
+        events.append("drain")
+        return drain.DrainResult(
+            "drained", 1, _snapshot(), "c" * 64, "d" * 64,
+            f"sha256:{'a' * 64}", f"sha256:{'b' * 64}",
+        )
+
+    monkeypatch.setattr(drain, "DockerCliAdapter", Containers)
+    monkeypatch.setattr(drain, "PsqlAggregateAdapter", Database)
+    monkeypatch.setattr(drain, "drain_workers", run_drain)
+    assert drain.main([
+        "--container", "report-worker",
+        "--container", "narrative-worker",
+        "--settings-container", "report-worker",
+        "--deadline-seconds", "300",
+        "--stable-interval-seconds", "10",
+    ]) == 0
+    assert events == ["capture", "snapshot", "drain"]
+    assert json.loads(capsys.readouterr().out)["outcome"] == "drained"
+
+
+def test_regular_main_aggregate_sql_failure_stops_before_worker_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = {
+        "DATABASE_URL": "postgresql://user:secret@db/app",
+        "COMPANY_REPORT_WORKER_SHUTDOWN_GRACE_SECONDS": "30",
+        "DATANEWTON_TIMEOUT_SECONDS": "10",
+        "COMPANY_CARD_AI_NARRATIVE_GATEWAY_TIMEOUT_SECONDS": "20",
+    }
+
+    class Containers:
+        def __init__(self, names):
+            pass
+
+        def capture(self):
+            return (_identity("report-worker", "a"), _identity("narrative-worker", "b"))
+
+        def environment(self, container_id, names):
+            return settings
+
+        def disable_restart(self, identity):
+            raise AssertionError("SQL failure changed restart policy")
+
+        def send_sigterm(self, identity):
+            raise AssertionError("SQL failure sent a signal")
+
+    class FailingDatabase:
+        def __init__(self, database_url):
+            pass
+
+        def snapshot(self):
+            raise drain.DrainError("worker aggregate database query failed")
+
+    monkeypatch.setattr(drain, "DockerCliAdapter", Containers)
+    monkeypatch.setattr(drain, "PsqlAggregateAdapter", FailingDatabase)
+    monkeypatch.setattr(
+        drain,
+        "drain_workers",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("SQL failure entered worker drain")
+        ),
+    )
+    assert drain.main([
+        "--container", "report-worker",
+        "--container", "narrative-worker",
+        "--settings-container", "report-worker",
+        "--deadline-seconds", "300",
+        "--stable-interval-seconds", "10",
+    ]) == 2
+    assert "aggregate database query failed" in capsys.readouterr().err
+
+
 def test_deploy_result_binds_database_without_exposing_connection_secret() -> None:
     database_url = "postgresql+asyncpg://user:secret@db.example/app"
     result = drain.DrainResult(

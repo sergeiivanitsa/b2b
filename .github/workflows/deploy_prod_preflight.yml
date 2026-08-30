@@ -1,0 +1,119 @@
+name: Read-only production deploy preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact lowercase commit already in protected main history
+        required: true
+        type: string
+      drain_deadline_seconds:
+        description: Worker drain deadline to validate without mutation
+        required: true
+        default: "300"
+        type: string
+      drain_stable_interval_seconds:
+        description: Stable aggregate interval to validate without mutation
+        required: true
+        default: "10"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-read-only-preflight-${{ inputs.release_sha }}
+  cancel-in-progress: true
+
+jobs:
+  trusted-main:
+    name: exact protected-main identity
+    runs-on: ubuntu-24.04
+    outputs:
+      release_sha: ${{ steps.identity.outputs.release_sha }}
+    steps:
+      - name: Check out protected main history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind exact commit to current main history
+        id: identity
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "$RELEASE_SHA^{commit}"
+          git merge-base --is-ancestor "$RELEASE_SHA" HEAD
+          echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+
+  preflight:
+    name: SHA-bound read-only RU and US runtime proof
+    needs: trusted-main
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - name: Check out exact requested commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.trusted-main.outputs.release_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Configure strict production SSH identities
+        shell: bash
+        env:
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          RU_SSH_KNOWN_HOSTS: ${{ secrets.RU_SSH_KNOWN_HOSTS }}
+          US_SSH_KNOWN_HOSTS: ${{ secrets.US_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$PROD_SSH_KEY"
+          test -n "$RU_SSH_KNOWN_HOSTS"
+          test -n "$US_SSH_KNOWN_HOSTS"
+          install -m 700 -d "$RUNNER_TEMP/production-preflight-ssh"
+          printf '%s\n%s\n' "$RU_SSH_KNOWN_HOSTS" "$US_SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/production-preflight-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/production-preflight-ssh/known_hosts"
+          eval "$(ssh-agent -s)"
+          printf '%s\n' "$PROD_SSH_KEY" | ssh-add - >/dev/null
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+      - name: Execute exact read-only runtime preflight
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.trusted-main.outputs.release_sha }}
+          RU_TARGET: ${{ secrets.RU_DEPLOY_TARGET }}
+          US_TARGET: ${{ secrets.US_DEPLOY_TARGET }}
+          RU_RELEASE_ROOT: ${{ vars.RU_RELEASE_ROOT }}
+          US_RELEASE_ROOT: ${{ vars.US_RELEASE_ROOT }}
+          DRAIN_DEADLINE_SECONDS: ${{ inputs.drain_deadline_seconds }}
+          DRAIN_STABLE_INTERVAL_SECONDS: ${{ inputs.drain_stable_interval_seconds }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          bash deploy/production_runtime_preflight.sh \
+            "$RELEASE_SHA" \
+            "$RU_TARGET" \
+            "$US_TARGET" \
+            "$RU_RELEASE_ROOT" \
+            "$US_RELEASE_ROOT" \
+            "$RUNNER_TEMP/production-preflight-ssh/known_hosts" \
+            "$DRAIN_DEADLINE_SECONDS" \
+            "$DRAIN_STABLE_INTERVAL_SECONDS" \
+            "$PWD/.release/production-preflight"
+      - name: Upload SHA-bound read-only preflight evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: production-preflight-${{ needs.trusted-main.outputs.release_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .release/production-preflight/*.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Stop local preflight credential agent
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SSH_AGENT_PID:-}"
+          ssh-agent -k >/dev/null

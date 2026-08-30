@@ -20,6 +20,7 @@ from typing import Callable, Protocol, Sequence
 
 _CONTAINER_ID = re.compile(r"^[0-9a-f]{12,64}$")
 _IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
+_RELEASE_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
 class DrainError(RuntimeError):
@@ -172,6 +173,39 @@ def deployment_result_json(result: DrainResult, database_url: str) -> str:
     return json.dumps(data, sort_keys=True, separators=(",", ":"))
 
 
+def preflight_result_json(
+    snapshot: AggregateSnapshot,
+    identities: tuple[ContainerIdentity, ContainerIdentity],
+    database_url: str,
+    release_sha: str,
+) -> str:
+    """Bind a read-only, privacy-safe preflight to its release and DB target."""
+    if (
+        _RELEASE_SHA.fullmatch(release_sha) is None
+        or not database_url
+        or any(character in database_url for character in "\r\n\x00")
+        or len(identities) != 2
+        or identities[0].container_id == identities[1].container_id
+    ):
+        raise DrainError("worker drain preflight identity is invalid")
+    data = {
+        "outcome": "validated",
+        "release_sha": release_sha,
+        "database_target_sha256": sha256(database_url.encode("utf-8")).hexdigest(),
+        "db_clock": snapshot.db_clock,
+        "aggregate": {
+            key: value
+            for key, value in asdict(snapshot).items()
+            if key != "db_clock"
+        },
+        "report_worker_container": identities[0].container_id,
+        "narrative_worker_container": identities[1].container_id,
+        "report_worker_image": identities[0].image_id,
+        "narrative_worker_image": identities[1].image_id,
+    }
+    return json.dumps(data, sort_keys=True, separators=(",", ":"))
+
+
 class ContainerAdapter(Protocol):
     def capture(self) -> tuple[ContainerIdentity, ContainerIdentity]: ...
     def disable_restart(self, identity: ContainerIdentity) -> None: ...
@@ -188,12 +222,13 @@ def drain_workers(
     database: DatabaseAdapter,
     policy: DrainPolicy,
     *,
+    identities: tuple[ContainerIdentity, ContainerIdentity] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> DrainResult:
     """Drain exact workers and return only after two equal safe snapshots."""
     started = monotonic()
-    identities = containers.capture()
+    identities = containers.capture() if identities is None else identities
     if len(identities) != 2 or identities[0].container_id == identities[1].container_id:
         raise DrainError("exact report and narrative worker identities are required")
     for identity in identities:
@@ -295,10 +330,10 @@ class DockerCliAdapter:
 _AGGREGATE_SQL = r"""
 WITH report AS (
   SELECT
-    count(*) FILTER (WHERE status = 'queued') AS queued,
-    count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
-    count(*) FILTER (WHERE status = 'failed') AS failed,
-    count(*) FILTER (WHERE status = 'running') AS running
+    count(*) FILTER (WHERE state = 'queued') AS queued,
+    count(*) FILTER (WHERE state = 'succeeded') AS succeeded,
+    count(*) FILTER (WHERE state = 'failed') AS failed,
+    count(*) FILTER (WHERE state = 'running') AS running
   FROM company_report_jobs
 ), outbox AS (
   SELECT
@@ -457,6 +492,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--settings-container", required=True)
     parser.add_argument("--deadline-seconds", type=float, required=True)
     parser.add_argument("--stable-interval-seconds", type=float, required=True)
+    parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument("--release-sha")
     return parser
 
 
@@ -466,6 +503,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         containers = DockerCliAdapter(args.container)
         if args.settings_container not in args.container:
             raise DrainError("settings container must be one of the exact workers")
+        identities = containers.capture()
         settings = containers.environment(args.settings_container, _REQUIRED_SETTINGS)
         for container_id in args.container:
             if containers.environment(container_id, _REQUIRED_SETTINGS) != settings:
@@ -481,10 +519,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             stable_interval_seconds=args.stable_interval_seconds,
         )
+        database = PsqlAggregateAdapter(settings["DATABASE_URL"])
+        preflight_snapshot = database.snapshot()
+        if args.validate_only:
+            if _RELEASE_SHA.fullmatch(args.release_sha or "") is None:
+                raise DrainError("exact release SHA is required for worker drain preflight")
+            if not preflight_snapshot.safe:
+                raise DrainError("worker aggregate snapshot is unsafe for deployment preflight")
+            print(
+                preflight_result_json(
+                    preflight_snapshot,
+                    identities,
+                    settings["DATABASE_URL"],
+                    args.release_sha,
+                )
+            )
+            return 0
         result = drain_workers(
             containers,
-            PsqlAggregateAdapter(settings["DATABASE_URL"]),
+            database,
             policy,
+            identities=identities,
         )
     except (DrainError, OSError, subprocess.SubprocessError) as exc:
         print(str(exc), file=sys.stderr)

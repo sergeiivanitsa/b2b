@@ -167,7 +167,7 @@ jobs:
           if attestation.get("release_manifest_sha256") != sha256(release_path.read_bytes()).hexdigest():
               raise SystemExit("QA release manifest digest mismatch; STOP")
           jobs = attestation.get("job_conclusions")
-          required = {"UNIT_RESULT", "POSTGRES_RESULT", "WEB_RESULT", "BUILD_RESULT", "BROWSER_RESULT", "CONTRACT_RESULT"}
+          required = {"UNIT_RESULT", "POSTGRES_RESULT", "WEB_RESULT", "BUILD_RESULT", "BROWSER_RESULT", "CONTRACT_RESULT", "REHEARSAL_RESULT"}
           if not isinstance(jobs, dict) or set(jobs) != required or set(jobs.values()) != {"success"}:
               raise SystemExit("QA attestation is not wholly successful; STOP")
           PY

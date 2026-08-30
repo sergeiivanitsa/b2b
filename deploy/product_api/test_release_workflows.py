@@ -11,6 +11,8 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parents[2]
 QA = ROOT / ".github/workflows/qa.yml"
 DEPLOY = ROOT / ".github/workflows/deploy_prod.yml"
+DEPLOY_PREFLIGHT = ROOT / ".github/workflows/deploy_prod_preflight.yml"
+PRODUCTION_PREFLIGHT = ROOT / "deploy/production_runtime_preflight.sh"
 LEGACY_BOOTSTRAP = ROOT / ".github/workflows/deploy_prod_legacy_0015_bootstrap.yml"
 LEGACY_BOOTSTRAP_RUNNER = ROOT / "deploy/product_api/legacy_0015_bootstrap_runner.sh"
 SEED = ROOT / ".github/workflows/company_public_h2_seed_bundle.yml"
@@ -123,16 +125,16 @@ def test_qa_has_one_exact_sha_and_all_required_build_once_jobs() -> None:
     for token in (
         "pull_request:", "workflow_call:", "resolve-release:", "python-unit-contract:",
         "postgres-full:", "web-static:", "release-build:", "browser-e2e-visual:",
-        "release-contract:", "qa-required:",
+        "release-contract:", "deploy-rehearsal:", "qa-required:",
     ):
         assert token in text
     assert "github.event.pull_request.head.sha" in text
     assert "github.sha" not in text
     assert "merge ref" not in text
     assert "qa-release-${{ needs.resolve-release.outputs.release_sha }}" in text
-    assert text.count("ref: ${{ needs.resolve-release.outputs.release_sha }}") == 7
+    assert text.count("ref: ${{ needs.resolve-release.outputs.release_sha }}") == 8
     assert "web-ui-playwright-runtime-$RELEASE_SHA.tgz" in text
-    assert text.count("python deploy/product_api/release_manifest.py") == 2
+    assert text.count("python deploy/product_api/release_manifest.py") == 3
     assert "install_web_ui_release.sh verify" in text
     assert "npm run build --prefix services/web_ui" in text
     assert text.count("npm run build --prefix services/web_ui") == 1
@@ -373,7 +375,7 @@ def test_qa_builds_and_loads_cached_and_no_cache_docker_archives_with_the_same_e
 def test_release_contract_loads_exact_archives_without_rebuild() -> None:
     qa = QA.read_text(encoding="utf-8")
     contract = qa.split("  release-contract:", 1)[1].split(
-        "  qa-required:", 1
+        "  deploy-rehearsal:", 1
     )[0]
     load_lines = [
         line.strip()
@@ -402,6 +404,87 @@ def test_release_contract_loads_exact_archives_without_rebuild() -> None:
         "docker image inspect --format '{{.Id}}' \"b2b-gateway-api:$RELEASE_SHA\""
         in contract
     )
+
+
+def test_deploy_rehearsal_is_a_required_exact_artifact_runtime_gate() -> None:
+    qa = QA.read_text(encoding="utf-8")
+    rehearsal = qa.split("  deploy-rehearsal:", 1)[1].split(
+        "  qa-required:", 1
+    )[0]
+    required = qa.split("  qa-required:", 1)[1]
+
+    for token in (
+        "needs: [resolve-release, release-build]",
+        "qa-release-${{ needs.resolve-release.outputs.release_sha }}",
+        'sha256sum --check "checksums-$RELEASE_SHA.txt"',
+        'docker load --input ".release/rehearsal-release/product-api-$RELEASE_SHA.oci.tar"',
+        'docker load --input ".release/rehearsal-release/gateway-api-$RELEASE_SHA.oci.tar"',
+        'docker pull --platform linux/amd64 "$POSTGRES_IMAGE"',
+        "deploy/rehearsal/normal_deploy_rehearsal.py",
+        '--postgres-image "$POSTGRES_IMAGE"',
+        "if: always()",
+        "deploy-rehearsal-${{ needs.resolve-release.outputs.release_sha }}",
+    ):
+        assert token in rehearsal
+    assert "docker build" not in rehearsal
+    assert "deploy-rehearsal" in required.split("if: always()", 1)[0]
+    assert "REHEARSAL_RESULT: ${{ needs.deploy-rehearsal.result }}" in required
+    assert 'test "$REHEARSAL_RESULT" = success' in required
+    assert '"CONTRACT_RESULT", "REHEARSAL_RESULT"' in required
+
+
+def test_every_deploy_consumer_requires_the_rehearsal_attestation_result() -> None:
+    for path in (
+        DEPLOY,
+        ROOT / ".github/workflows/deploy_prod_fresh_install.yml",
+        LEGACY_BOOTSTRAP,
+    ):
+        text = path.read_text(encoding="utf-8")
+        assert "REHEARSAL_RESULT" in text
+
+
+def test_separate_production_preflight_is_sha_bound_and_remote_read_only() -> None:
+    workflow = DEPLOY_PREFLIGHT.read_text(encoding="utf-8")
+    script = PRODUCTION_PREFLIGHT.read_text(encoding="utf-8")
+    deploy = DEPLOY.read_text(encoding="utf-8")
+
+    for token in (
+        "workflow_dispatch:",
+        "environment: production",
+        "git merge-base --is-ancestor",
+        "deploy/production_runtime_preflight.sh",
+        "production-preflight-${{ needs.trusted-main.outputs.release_sha }}",
+    ):
+        assert token in workflow
+    assert "StrictHostKeyChecking=yes" in script
+    for token in (
+        "deploy/product_api/worker_drain.py",
+        "deploy/us/gateway_runtime_identity.py",
+        "--validate-only",
+        "--candidate-release-sha",
+        "production_runtime_preflight_v1",
+        "fresh-install-active.json",
+        "fresh-install-success.json",
+        "HostConfig.RestartPolicy.Name",
+        "http://127.0.0.1:8000/health",
+    ):
+        assert token in script
+    for forbidden in (
+        "scp ",
+        "docker load",
+        "docker tag",
+        "docker update",
+        "docker kill",
+        "--force-recreate",
+        "alembic",
+        "systemctl reload",
+    ):
+        assert forbidden not in script
+    preflight = deploy.index("bash deploy/production_runtime_preflight.sh")
+    first_remote_write = deploy.index("Upload exact verified release and owned deploy tools")
+    assert preflight < first_remote_write
+    assert "deploy/us/gateway_runtime_identity.py" in deploy
+    assert "--expected-release-sha '$RELEASE_SHA'" in deploy
 
 
 def test_qa_uses_one_ephemeral_env_file_for_every_offline_image_import() -> None:
@@ -520,10 +603,15 @@ def test_gateway_release_identity_is_exact_in_normal_deploy_and_rollback() -> No
     assert 're.fullmatch(r"[0-9a-f]{40}"' in settings
     assert '"release_commit": settings.gateway_release_commit' in main
     assert "prior-gateway-release-sha" in deploy
+    assert "prior-gateway-config-file" in deploy
+    assert "prior-gateway-working-dir" in deploy
     assert "GATEWAY_RELEASE_COMMIT='$RELEASE_SHA'" in deploy
     assert 'grep -Fx \'GATEWAY_RELEASE_COMMIT=$RELEASE_SHA\'' in deploy
     rollback = deploy.split("Fail-closed restore of prior Gateway", 1)[1]
     assert 'GATEWAY_RELEASE_COMMIT=\\"\\$old_commit\\"' in rollback
+    assert 'GATEWAY_IMAGE_TAG=\\"\\$old_commit\\"' in rollback
+    assert "b2b-gateway-api:\\$old_commit" in rollback
+    assert '-f \\"\\$config_file\\"' in rollback
     assert "grep -Eq '^[0-9a-f]{40}$' '$US_STAGE/prior-gateway-release-sha'" in rollback
 
 
@@ -567,12 +655,14 @@ def test_normal_deploy_discovers_post_install_gateway_by_closed_identity() -> No
     assert 'test "$gateway_id" = "$EXPECTED_GATEWAY_ID"' in rollback_record
     assert 'test "$old_image" = "$EXPECTED_GATEWAY_IMAGE"' in rollback_record
     assert "docker tag \"$old_image\" \"b2b-gateway-api:rollback-$RELEASE_SHA\"" in rollback_record
+    assert "prior-gateway-config-file" in rollback_record
+    assert "prior-gateway-working-dir" in rollback_record
     candidate = deploy.split("Recreate and verify exact Gateway", 1)[1].split(
         "Atomically switch Web", 1
     )[0]
     rollback = deploy.split("Fail-closed restore of prior Gateway", 1)[1]
     assert "-f '$US_STAGE/docker-compose.gateway.yml'" in candidate
-    assert "-f '$US_STAGE/docker-compose.gateway.yml'" in rollback
+    assert '-f \\"\\$config_file\\"' in rollback
 
 
 def test_product_example_keeps_privacy_key_unset_and_collection_closed() -> None:
@@ -609,6 +699,7 @@ def test_deploy_is_manual_current_main_protected_qa_consumer_in_exact_order() ->
     sentinels = [
         "Download sole build-once release",
         "Read-only RU/US preflight",
+        "Read-only validate exact worker drain database contract before live mutation",
         "Offline verify candidate provider preservation before live mutation",
         "Install and loopback-verify H2 assets",
         "Drain both exact old workers",
@@ -636,15 +727,17 @@ def test_deploy_is_manual_current_main_protected_qa_consumer_in_exact_order() ->
     assert "sha256sum --strict --ignore-missing --check" in text
     assert "com.docker.compose.project" in text
     assert "prior-product-compose-project" in text
+    assert "prior-product-config-file" in text
+    assert "prior-product-working-dir" in text
     assert "prior-gateway-compose-project" in text
     assert text.count('docker compose -p \\"\\$project\\"') >= 8
     assert "secrets.PROD_SSH_KEY" in text
     assert "ssh-add - >/dev/null" in text
     assert "ssh-agent -k >/dev/null" in text
-    assert "steps.h2.outputs.armed == 'true'" in text
-    assert "steps.product.outputs.armed == 'true'" in text
-    assert "steps.gateway.outputs.armed == 'true'" in text
-    assert "steps.web.outputs.armed == 'true'" in text
+    assert "steps.h2_guard.outputs.armed == 'true'" in text
+    assert "steps.product_guard.outputs.armed == 'true'" in text
+    assert "steps.gateway_guard.outputs.armed == 'true'" in text
+    assert "steps.web_guard.outputs.armed == 'true'" in text
     assert "fresh_install_candidate.py" in text
     assert "python - settings --release-sha '$RELEASE_SHA'" in text
     assert "python - gateway --release-sha '$RELEASE_SHA'" in text
@@ -654,6 +747,121 @@ def test_deploy_is_manual_current_main_protected_qa_consumer_in_exact_order() ->
     assert "candidate settings contract mismatch; STOP" in candidate
     assert "assert " not in text
     assert text.count("python deploy/product_api/release_manifest.py") == 1
+
+
+def test_normal_deploy_preflights_exact_drain_sql_and_recovers_after_drain_or_cancel() -> None:
+    text = DEPLOY.read_text(encoding="utf-8")
+    preflight_name = (
+        "Read-only validate exact worker drain database contract before live mutation"
+    )
+    h2_name = "Install and loopback-verify H2 assets before process or DB mutation"
+    drain_name = "Drain both exact old workers with P1 bounds"
+    product_name = "Upgrade additive schema and recreate exact Product/workers"
+    success_name = "Record successful exact release deployment"
+    worker_rollback_name = (
+        "Fail-closed restore of prior workers after drain fails before Product phase"
+    )
+    product_rollback_name = (
+        "Fail-closed restore of prior Product and workers after Product phase starts"
+    )
+
+    assert text.index(preflight_name) < text.index(h2_name)
+    assert text.index(preflight_name) < text.index(drain_name)
+    assert text.index(preflight_name) < text.index(
+        "Offline verify candidate provider preservation before live mutation"
+    )
+    assert text.index(preflight_name) < text.index(
+        "python -m alembic -c /app/alembic.ini upgrade head"
+    )
+    preflight = text.split(preflight_name, 1)[1].split(h2_name, 1)[0]
+    for token in (
+        "--validate-only",
+        '--release-sha "$RELEASE_SHA"',
+        '"outcome"] != "validated"',
+        'value["release_sha"] != release_sha',
+        'value["report_worker_container"] != report_id',
+        'value["narrative_worker_container"] != narrative_id',
+        'digest.fullmatch(value["database_target_sha256"])',
+        'image.fullmatch(value["report_worker_image"])',
+        'image.fullmatch(value["narrative_worker_image"])',
+        'raw != json.dumps(value, separators=(",", ":"), sort_keys=True) + "\\n"',
+        "worker drain preflight aggregate is unsafe; STOP",
+        "{{.HostConfig.RestartPolicy.Name}}",
+        "unless-stopped",
+    ):
+        assert token in preflight
+    for forbidden in (
+        "install_company_public_h2_assets.sh",
+        "docker update --restart=no",
+        "--signal=TERM",
+        "python -m alembic",
+    ):
+        assert forbidden not in preflight
+
+    drain = text.split(drain_name, 1)[1].split(product_name, 1)[0]
+    assert "id: drain" in drain
+    assert "--validate-only" not in drain
+    assert drain.index("worker_drain.py") < drain.index(
+        'echo "complete=true" >> "$GITHUB_OUTPUT"'
+    )
+    drain_guard = text.split(
+        "Arm worker-drain recovery before the mutable phase", 1
+    )[1].split(drain_name, 1)[0]
+    assert "id: drain_guard" in drain_guard
+    assert 'echo "armed=true" >> "$GITHUB_OUTPUT"' in drain_guard
+
+    assert text.index(success_name) < text.index(worker_rollback_name)
+    worker_rollback = text.split(worker_rollback_name, 1)[1].split(
+        product_rollback_name, 1
+    )[0]
+    for token in (
+        "if: always()",
+        "steps.rollback-record.outputs.ready == 'true'",
+        "steps.success.outputs.complete != 'true'",
+        "steps.drain_guard.outputs.armed == 'true'",
+        "steps.product_guard.outputs.armed != 'true'",
+        "worker_runtime_recovery.py",
+        "--prior-release-sha",
+        "--expected-image-id",
+        "--rollback-tag 'b2b-product-api:rollback-$RELEASE_SHA'",
+        "prior-product-config-file",
+        '--compose-file \\"\\$config_file\\"',
+    ):
+        assert token in worker_rollback
+
+    rollback = text.split(product_rollback_name, 1)[1].split(
+        "Fail-closed restore of prior Gateway", 1
+    )[0]
+    for token in (
+        "if: always()",
+        "steps.rollback-record.outputs.ready == 'true'",
+        "steps.success.outputs.complete != 'true'",
+        "steps.product_guard.outputs.armed == 'true'",
+        "b2b-product-api:rollback-$RELEASE_SHA",
+        "prior-product-config-file",
+        "prior-product-working-dir",
+        'cd \\"\\$working_dir\\"',
+        '-f \\"\\$config_file\\"',
+        "--force-recreate product_api company_report_worker company_card_narrative_worker",
+        "worker_runtime_identity.py",
+        "rollback-worker-runtime.json",
+        "http://127.0.0.1:8000/health",
+    ):
+        assert token in rollback
+    product = text.split(product_name, 1)[1].split(
+        "Arm Gateway recovery before candidate mutation", 1
+    )[0]
+    for token in (
+        "worker_runtime_identity.py",
+        "candidate-worker-runtime.json",
+        "--report-container",
+        "--narrative-container",
+    ):
+        assert token in product
+    assert text.count(
+        "if: always() && steps.rollback-record.outputs.ready == 'true' "
+        "&& steps.success.outputs.complete != 'true'"
+    ) == 5
 
 
 def test_deploy_checks_effective_provider_and_secret_presence_before_any_live_mutation() -> None:

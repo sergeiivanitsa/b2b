@@ -240,7 +240,7 @@ jobs:
           if attestation.get("release_manifest_sha256") != sha256(release_path.read_bytes()).hexdigest():
               raise SystemExit("QA release manifest digest mismatch; STOP")
           jobs = attestation.get("job_conclusions")
-          if not isinstance(jobs, dict) or set(jobs) != {"UNIT_RESULT", "POSTGRES_RESULT", "WEB_RESULT", "BUILD_RESULT", "BROWSER_RESULT", "CONTRACT_RESULT"} or set(jobs.values()) != {"success"}:
+          if not isinstance(jobs, dict) or set(jobs) != {"UNIT_RESULT", "POSTGRES_RESULT", "WEB_RESULT", "BUILD_RESULT", "BROWSER_RESULT", "CONTRACT_RESULT", "REHEARSAL_RESULT"} or set(jobs.values()) != {"success"}:
               raise SystemExit("QA attestation is not wholly successful; STOP")
           PY
           seed=.release/seed/company-public-h2-seed-bundle-e7478a2fba9aaca17829c3d99e89e8d83d4b3188.tgz
