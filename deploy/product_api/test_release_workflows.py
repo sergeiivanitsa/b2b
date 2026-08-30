@@ -1501,7 +1501,7 @@ def test_company_card_v2_activation_is_atomic_verified_and_reversible() -> None:
         "--receipt-file \"$stage/env.product.activation.json\"",
         "id: activation_success",
         "if: always()",
-        'ROLLBACK_REQUIRED: ${{ failure() || cancelled() }}',
+        "ROLLBACK_REQUIRED: ${{ job.status != 'success' }}",
         'test "$ROLLBACK_REQUIRED" = true',
         "ssh-agent -k >/dev/null 2>&1 || true",
         "restore --role product",
@@ -1515,6 +1515,7 @@ def test_company_card_v2_activation_is_atomic_verified_and_reversible() -> None:
         "--durable-mask-file /opt/b2b/.company-card-v2-arbitration-mask-v1.json",
     ):
         assert token in workflow
+    assert "ROLLBACK_REQUIRED: ${{ failure() || cancelled() }}" not in workflow
     assert workflow.index("restore --role product") < workflow.index("restore --role gateway")
     assert workflow.rfind('ssh-agent -k >/dev/null 2>&1 || true') < workflow.rfind('exit "$rollback_status"')
     assert workflow.count("rollback_status=1") == 2
