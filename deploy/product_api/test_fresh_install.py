@@ -72,6 +72,63 @@ def test_fresh_install_is_manual_exact_main_qa_and_environment_protected() -> No
     assert "seed_bundle_sha256:" not in text
 
 
+def test_protected_workflow_control_checkout_binds_the_staged_runner() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    runner = RUNNER.read_text(encoding="utf-8")
+    trusted = workflow.split("jobs:", 1)[1].split("  qa:", 1)[0]
+    fresh_install = workflow.split("  fresh-install:", 1)[1]
+
+    assert "control_sha: ${{ steps.guard.outputs.control_sha }}" in trusted
+    assert 'test "$WORKFLOW_SHA" = "$protected_main"' in trusted
+    assert 'echo "control_sha=$protected_main" >> "$GITHUB_OUTPUT"' in trusted
+
+    release_checkout = fresh_install.index("- name: Check out exact QA release")
+    control_path = fresh_install.index("path: .release/control")
+    assert release_checkout < control_path
+    control_checkout = fresh_install[
+        fresh_install.rindex("- name:", release_checkout, control_path) :
+        fresh_install.find("- name:", control_path)
+    ]
+    assert "uses: actions/checkout@" in control_checkout
+    assert "ref: ${{ needs.trusted-main.outputs.control_sha }}" in control_checkout
+    assert "fetch-depth: 1" in control_checkout
+    assert "persist-credentials: false" in control_checkout
+
+    assert "CONTROL_SHA: ${{ needs.trusted-main.outputs.control_sha }}" in fresh_install
+    assert 'git -C .release/control rev-parse HEAD' in fresh_install
+    assert "production_fresh_install_control_v1" in fresh_install
+    for field in ("control_sha", "release_sha", "runner_sha256"):
+        assert repr(field) in fresh_install or f'"{field}"' in fresh_install
+    assert ".release/preflight/deployment-control.json" in fresh_install
+
+    stage = fresh_install.split(
+        "- name: Stage exact release, seed and fresh-install tools", 1
+    )[1].split("- name: Arm reversible prior Gateway identity", 1)[0]
+    control_runner = ".release/control/deploy/product_api/fresh_install_runner.sh"
+    assert control_runner in stage
+    assert "deployment-control.json" in stage
+    assert "fresh-install-tools-$RELEASE_SHA.sha256" in stage
+
+    launch = fresh_install.split(
+        "- name: Launch durable fail-closed fresh-install transaction", 1
+    )[1].split("- name: Wait for durable exact-SHA fresh-install success", 1)[0]
+    assert control_runner in launch
+    assert 'runner_sha="$(sha256sum ' + control_runner in launch
+    assert 'sha256sum deploy/product_api/fresh_install_runner.sh' not in launch
+    assert "CONTROL_SHA: ${{ needs.trusted-main.outputs.control_sha }}" in launch
+    assert '"$CONTROL_SHA"' in launch
+    assert "if [[ $# -ne 7 ]]" in runner
+    assert "control_sha=$7" in runner
+    assert "deployment-control.json" in runner
+    assert "production_fresh_install_control_v1" in runner
+    control_guard = runner.index("production_fresh_install_control_v1")
+    assert control_guard < runner.index("bounded docker load")
+    assert "runner_sha256" in runner[control_guard - 500 : control_guard + 1500]
+    assert "control_sha" in runner[control_guard - 500 : control_guard + 1500]
+    assert "release_sha" in runner[control_guard - 500 : control_guard + 1500]
+    assert 'sha256sum "$0"' in runner
+
+
 def test_confirmation_is_exact_and_scope_is_only_public_schema() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     database = DATABASE.read_text(encoding="utf-8")
@@ -569,7 +626,135 @@ def test_exact_gateway_sha_precedes_drop_and_signed_ping_precedes_ingress() -> N
         "marker_once schema-reset-armed", 1
     )[0]
     assert "candidate_image_check host gateway" in boundary
-    assert "production_fresh_install_gateway_v1" in runner
+    assert "production_fresh_install_gateway_v2" in runner
+
+
+def test_runtime_image_identity_is_the_exact_signed_oci_config_pair() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    runner = RUNNER.read_text(encoding="utf-8")
+    preflight = workflow.split(
+        "- name: Exact read-only live RU legacy topology and database preflight", 1
+    )[1].split("- name: Stage exact release", 1)[0]
+    gateway = workflow.split(
+        "- name: Deploy and verify same exact Gateway SHA before destructive boundary", 1
+    )[1].split("- name: Bind exact Gateway success to RU durable stage", 1)[0]
+
+    for block in (preflight, gateway, runner):
+        assert "oci_digest" in block
+        assert "config_digest" in block
+        assert "sorted" in block
+        assert "sorted({" in block
+
+    # A Docker runtime may expose either signed OCI manifest identity.  No
+    # unlisted third identity may pass, and the observed ID remains bound to
+    # the exact container rather than being replaced by a preferred digest.
+    assert "gateway_candidate_ids" in preflight
+    assert "gateway_candidate_matches" in preflight
+    assert "allowed_gateway_image_ids" in gateway
+    assert "allowed_product_image_ids" in runner
+    assert "outside the signed Gateway image identity pair; STOP" in workflow
+    assert "outside the signed Product image identity pair; STOP" in runner
+    assert "docker inspect --format '{{.Image}}' \"$id\"" in gateway
+    assert "docker inspect --format '{{.Image}}' \"$id\")\" = \"$candidate\"" in gateway
+    assert "docker inspect --format '{{.Image}}' \"$id\")\" = \"$candidate_image\"" in runner
+
+    # Regression guard for the Docker-29/containerd failure: neither runtime
+    # check may require only config_digest after loading the signed archive.
+    assert "candidate\" = \"$expected" not in gateway
+    assert "candidate_image\" = \"$expected_image" not in runner
+
+
+def test_gateway_completion_receipt_v2_binds_allowed_pair_and_observed_runtime_id() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    runner = RUNNER.read_text(encoding="utf-8")
+    bind = workflow.split(
+        "- name: Bind exact Gateway success to RU durable stage", 1
+    )[1].split("- name: Launch durable fail-closed fresh-install transaction", 1)[0]
+    verify = runner.split("verify_gateway_receipt() {", 1)[1].split("\n}", 1)[0]
+
+    for block in (bind, verify):
+        assert "production_fresh_install_gateway_v2" in block
+        assert "gateway_image_id" in block
+        assert "allowed_gateway_image_ids" in block
+    assert "GATEWAY_IMAGE_ID" in bind
+    assert "GATEWAY_ALLOWED_IMAGE_IDS" in bind
+    assert "oci_digest" in verify and "config_digest" in verify
+    assert "sorted({" in verify
+    assert "receipt" in verify and "allowed_gateway_image_ids" in verify
+    assert "production_fresh_install_gateway_v1" not in bind
+    assert "production_fresh_install_gateway_v1" not in verify
+
+
+def test_gateway_candidate_and_rollback_use_bounded_identity_bound_readiness() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    candidate = workflow.split(
+        "- name: Deploy and verify same exact Gateway SHA before destructive boundary", 1
+    )[1].split("- name: Bind exact Gateway success to RU durable stage", 1)[0]
+    rollback = workflow.split(
+        "- name: Restore prior Gateway when RU durable handoff is absent", 1
+    )[1].split("- name: Stop local deployment credential agent", 1)[0]
+
+    assert workflow.count("wait_gateway_ready() {") == 2
+    for block in (candidate, rollback):
+        assert "wait_gateway_ready() {" in block
+        # Definition plus invocation; a definition-only retry helper is not a
+        # readiness contract.
+        assert block.count("wait_gateway_ready") >= 2
+        assert "deadline=" in block
+        assert "SECONDS" in block
+        assert "sleep " in block
+        assert "--connect-timeout" in block
+        assert "--max-time" in block
+        assert "http://127.0.0.1:8001/health" in block
+        readiness = block.split("wait_gateway_ready() {", 1)[1].split("\n          }", 1)[0]
+        assert ".State.Running" in readiness
+        assert ".Image" in readiness
+        assert "same Gateway container" in readiness
+        assert "STOP" in readiness
+
+    # The signed RU->US ping is meaningful only after the exact candidate is
+    # serving health, and all candidate identity failures must be diagnosable.
+    signed_ping = candidate.index("docker exec -i '$legacy_product_id' python - gateway")
+    assert candidate.rindex("wait_gateway_ready", 0, signed_ping) < signed_ping
+    assert 'stop() { echo "$1; STOP" >&2; exit 2; }' in candidate
+    for diagnostic in (
+        "candidate Gateway image identity",
+        "candidate Gateway container",
+        "candidate Gateway readiness deadline",
+    ):
+        assert diagnostic in candidate
+
+    bare = "curl --fail --silent --show-error http://127.0.0.1:8001/health"
+    assert bare not in workflow
+
+
+def test_product_startup_readiness_is_bounded_and_precedes_completion() -> None:
+    runner = RUNNER.read_text(encoding="utf-8")
+    assert "wait_product_ready() {" in runner
+    helper = runner.split("wait_product_ready() {", 1)[1].split("\n}", 1)[0]
+    for token in (
+        "deadline=",
+        "SECONDS",
+        "sleep ",
+        "--connect-timeout",
+        "--max-time",
+        "http://127.0.0.1:8000/health",
+        ".State.Running",
+        ".Image",
+        "same Product container",
+        "STOP",
+    ):
+        assert token in helper
+
+    product = runner[
+        runner.index('if ! path_present "$stage/product-complete"') : runner.index(
+            'if ! path_present "$stage/web-complete"'
+        )
+    ]
+    assert product.count("wait_product_ready") == 1
+    assert product.index("wait_product_ready") < product.index("db_guard verify-runtime")
+    assert product.index("wait_product_ready") < product.index("marker_once product-complete")
+    assert "curl --connect-timeout 10 --max-time 30" not in product
 
 
 def test_failure_after_drop_forces_maintenance_or_stops_nginx() -> None:
@@ -784,7 +969,8 @@ def test_gateway_prior_identity_is_immutable_and_terminal_cleanup_covers_partial
     assert ".release/preflight/us-topology.txt \"$US_TARGET:$US_STAGE/\"" not in stage
     arm_step = workflow[arm:candidate]
     assert "fresh_install_gateway_receipt.py write" in arm_step
-    assert 'test "$current_image" != "$expected"' in arm_step
+    assert '! gateway_image_allowed "$current_image"' in arm_step
+    assert "legacy Gateway unexpectedly uses the candidate image" in arm_step
     assert "docker image inspect \"$tag\"" in arm_step
 
 
@@ -838,10 +1024,14 @@ def test_prior_gateway_receipt_is_canonical_and_write_once() -> None:
 
 def test_fresh_install_receipt_examples_are_canonical() -> None:
     module = _database_module()
+    first = "sha256:" + "a" * 64
+    second = "sha256:" + "b" * 64
     payload = {
+        "allowed_gateway_image_ids": [first, second],
+        "gateway_image_id": second,
         "phase": "gateway-complete",
         "release_sha": "a" * 40,
-        "schema_version": "production_fresh_install_marker_v1",
+        "schema_version": "production_fresh_install_gateway_v2",
     }
     assert json.loads(module._canonical(payload)) == payload
     assert module._canonical(payload).endswith(b"\n")
