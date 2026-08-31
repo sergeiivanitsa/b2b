@@ -6,6 +6,7 @@
 - `/api/*` proxies to `product_api` on `127.0.0.1:8000` and strips `/api`
 - `/api/v1/chat` has buffering disabled for SSE streaming
 - `/api/docs`, `/api/redoc`, `/api/openapi.json` are blocked in production
+- `/company-lab/*` serves visual research variants with an HTTP `X-Robots-Tag: noindex, nofollow`
 
 ## Manual rollout on RU server
 
@@ -25,3 +26,4 @@
 - `curl -i https://pork.su/api/internal/whoami` returns `401` without session
 - browser login flow sets cookie and then `/api/internal/whoami` returns `200`
 - chat response arrives progressively (not buffered) on `/api/v1/chat`
+- `curl -I https://pork.su/company-lab/h1/7736207543-ooo-yandeks` includes `X-Robots-Tag: noindex, nofollow`
