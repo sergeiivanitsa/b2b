@@ -17,6 +17,7 @@ from product_api.company_reports.persistence import (
     REPORT_EXECUTION_FAILED_CODE,
     claim_next_job,
     complete_claimed_job,
+    complete_claimed_company_card_v2_job,
     fail_owned_job,
     heartbeat_job,
     reconcile_expired_jobs,
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 SessionFactory = async_sessionmaker[AsyncSession]
 ClientFactory = Callable[[Settings], Any]
 ReportBuilder = Callable[..., Any]
+V3Builder = Callable[[ClaimedReportJob], Any]
 
 
 async def run_one_claimed_job(
@@ -42,6 +44,7 @@ async def run_one_claimed_job(
     session_factory: SessionFactory = AsyncSessionMaker,
     client_factory: ClientFactory = DataNewtonClient,
     report_builder: ReportBuilder = build_company_report,
+    v3_builder: V3Builder | None = None,
 ) -> bool:
     """Execute one claimed job without retrying or replaying the pipeline."""
 
@@ -57,6 +60,23 @@ async def run_one_claimed_job(
         )
     )
     try:
+        # The shipped worker must never accidentally turn a stored H2 job into
+        # an external provider request. A future enabled v3 builder is an
+        # explicitly injected, separately reviewed path.
+        if claimed.writer_profile != "h1_legacy_writer_v2":
+            if (
+                claimed.writer_profile != "company_card_v2_writer_v3"
+                or not settings.company_card_v2_writer_enabled
+                or v3_builder is None
+            ):
+                return await _try_fail_live_owned_job(claimed, session_factory=session_factory)
+            snapshot = await v3_builder(claimed)
+            if ownership_lost.is_set():
+                return False
+            async with session_factory() as session:
+                await complete_claimed_company_card_v2_job(session, claimed=claimed, snapshot=snapshot)
+                await session.commit()
+            return True
         client = client_factory(settings)
         async with client:
             report = await report_builder(

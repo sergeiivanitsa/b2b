@@ -18,6 +18,10 @@ from product_api.company_reports.persistence.serialization import (
     company_report_from_snapshot,
 )
 from product_api.company_reports.persistence.errors import CompanyReportSnapshotError
+from product_api.company_reports.persistence.v3 import (
+    calculate_company_card_v2_snapshot_hash,
+    company_card_v2_from_snapshot,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +72,8 @@ async def resolve_company_report_handoff(
         return HandoffResolution(None, "identity_unavailable")
 
     snapshot = deepcopy(record.normalized_snapshot)
+    if record.report_version == "3":
+        return _resolve_v3_handoff(record, subject.normalized_identifier, snapshot)
     try:
         if calculate_company_report_snapshot_hash(snapshot) != record.snapshot_hash:
             return HandoffResolution(None, "invalid_report")
@@ -94,6 +100,29 @@ async def resolve_company_report_handoff(
             debtor_inn=counterparty.inn,
         )
     )
+
+
+def _resolve_v3_handoff(record: CompanyReportRecord, subject_inn: str, snapshot: dict[object, object]) -> HandoffResolution:
+    """V3 Claims handoff remains exact-report and exposes identity only."""
+    try:
+        card = company_card_v2_from_snapshot(snapshot)
+        if (
+            record.writer_profile != "company_card_v2_writer_v3"
+            or record.presentation_contract != "company_public_h2_v1"
+            or record.snapshot_hash != calculate_company_card_v2_snapshot_hash(card)
+            or card.report_id != str(record.id)
+            or card.subject_inn != subject_inn
+            or card.target_inn != subject_inn
+            or card.counterparty.inn != subject_inn
+        ):
+            return HandoffResolution(None, "invalid_report")
+    except (CompanyReportSnapshotError, TypeError, ValueError):
+        return HandoffResolution(None, "invalid_report")
+    return HandoffResolution(CompanyReportHandoff(
+        report_id=record.id,
+        debtor_name=_first_non_empty(card.counterparty.short_name, card.counterparty.full_name),
+        debtor_inn=card.counterparty.inn,
+    ))
 
 
 def _first_non_empty(*values: str | None) -> str | None:

@@ -109,6 +109,9 @@ class CompanyReportRecord(Base):
         nullable=False,
     )
     report_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    writer_profile: Mapped[str] = mapped_column(String(64), nullable=False, default="h1_legacy_writer_v2", server_default=text("'h1_legacy_writer_v2'"))
+    presentation_contract: Mapped[str] = mapped_column(String(64), nullable=False, default="company_public_h1_v1", server_default=text("'company_public_h1_v1'"))
+    rollout_generation: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default=text("0"))
     lifecycle_status: Mapped[str] = mapped_column(String(16), nullable=False)
     request_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -218,6 +221,10 @@ class CompanyReportJob(Base):
         nullable=False,
     )
     state: Mapped[str] = mapped_column(String(16), nullable=False)
+    writer_profile: Mapped[str] = mapped_column(String(64), nullable=False, default="h1_legacy_writer_v2", server_default=text("'h1_legacy_writer_v2'"))
+    presentation_contract: Mapped[str] = mapped_column(String(64), nullable=False, default="company_public_h1_v1", server_default=text("'company_public_h1_v1'"))
+    rollout_generation: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default=text("0"))
+    fence_generation: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default=text("0"))
     worker_token: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     attempt_count: Mapped[int] = mapped_column(
         Integer,
@@ -242,6 +249,59 @@ class CompanyReportJob(Base):
             f"<CompanyReportJob id={self.id!s} "
             f"state={self.state!r} attempt_count={self.attempt_count}>"
         )
+
+
+class CompanyReportPresentation(Base):
+    __tablename__ = "company_report_presentations"
+    __table_args__ = (UniqueConstraint("report_id", "presentation_contract", name="uq_company_report_presentations_report_contract"),)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    subject_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_subjects.id", ondelete="CASCADE"), nullable=False)
+    report_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_reports.id", ondelete="CASCADE"), nullable=False)
+    presentation_contract: Mapped[str] = mapped_column(String(64), nullable=False)
+    rollout_generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class CompanyReportPresentationPin(Base):
+    __tablename__ = "company_report_presentation_pins"
+    __table_args__ = (UniqueConstraint("subject_id", "presentation_contract", "generation", name="uq_company_report_presentation_pins_generation"),)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    subject_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_subjects.id", ondelete="CASCADE"), nullable=False)
+    report_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_reports.id", ondelete="CASCADE"), nullable=False)
+    presentation_contract: Mapped[str] = mapped_column(String(64), nullable=False)
+    generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class CompanyReportPresentationStagedPointer(Base):
+    __tablename__ = "company_report_presentation_staged_pointers"
+    __table_args__ = (UniqueConstraint("subject_id", name="uq_company_report_presentation_staged_subject"),)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    subject_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_subjects.id", ondelete="CASCADE"), nullable=False)
+    pin_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_presentation_pins.id", ondelete="RESTRICT"), nullable=False)
+    expected_generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class CompanyReportPresentationAssignment(Base):
+    __tablename__ = "company_report_presentation_assignments"
+    __table_args__ = (UniqueConstraint("subject_id", name="uq_company_report_presentation_assignment_subject"),)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    subject_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_subjects.id", ondelete="CASCADE"), nullable=False)
+    pin_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_presentation_pins.id", ondelete="RESTRICT"), nullable=False)
+    generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class CompanyReportPresentationAssignmentJournal(Base):
+    __tablename__ = "company_report_presentation_assignment_journal"
+    __table_args__ = (UniqueConstraint("assignment_id", "generation", name="uq_company_report_presentation_assignment_journal_generation"),)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    assignment_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_presentation_assignments.id", ondelete="CASCADE"), nullable=False)
+    pin_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("company_report_presentation_pins.id", ondelete="RESTRICT"), nullable=False)
+    generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class CompanyReportDataset(Base):

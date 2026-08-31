@@ -36,6 +36,7 @@ from product_api.company_reports.public_h1_service import (
 from product_api.db.session import get_session
 from product_api.rate_limit import RateLimitConfig, RateLimiter
 from product_api.settings import get_settings
+from product_api.company_reports.company_card_v2.service import PublicH2Error, PublicH2Invalid, PublicH2NotEligible, PublicH2NotFound, h2_cohort_selected, resolve_public_h2
 
 router = APIRouter(prefix="/company-reports", tags=["company-reports"])
 logger = logging.getLogger(__name__)
@@ -148,6 +149,49 @@ async def public_company_report_h1(
     except Exception:
         logger.error("unexpected public H1 read failure")
         return _h1_error(500, "public_projection_invalid", "public company projection is invalid")
+
+
+@router.api_route("/{inn}/public-h2", methods=["GET", "HEAD"])
+async def public_company_report_h2(
+    inn: str,
+    request: Request,
+) -> JSONResponse:
+    """Default-off, side-effect-free H2 read endpoint."""
+    current = get_settings()
+    headers = _h1_headers()
+    if request.query_params:
+        return JSONResponse(status_code=422, content={"detail": {"code": "invalid_query", "message": "query parameters are not permitted"}}, headers=headers)
+    if not (inn.isascii() and inn.isdigit() and len(inn) in {10, 12}):
+        return JSONResponse(status_code=400, content={"detail": {"code": "invalid_inn", "message": "invalid INN"}}, headers=headers)
+    accepted = request.headers.get("accept", "*/*")
+    if not any(item.strip().split(";", 1)[0] in {"*/*", "application/json"} for item in accepted.split(",")):
+        return JSONResponse(status_code=406, content={"detail": {"code": "not_acceptable", "message": "application/json is required"}}, headers=headers)
+    try:
+        _enforce_report_rate_limit(request, expensive=False)
+    except HTTPException:
+        return JSONResponse(status_code=429, content={"detail": {"code": "rate_limited", "message": "rate limit"}}, headers=headers)
+    # This decision intentionally precedes any DB access and consequently
+    # cannot enqueue work, evaluate signals, or consume providers.
+    if not h2_cohort_selected(inn=inn, settings=current):
+        return JSONResponse(status_code=404, content={"detail": {"code": "company_public_h2_disabled", "message": "company card v2 is disabled"}}, headers=headers)
+    # Do not put ``get_session`` in the route signature: FastAPI resolves
+    # dependencies before the handler body, which would violate default-off
+    # before DB dependency resolution.  The generator is entered only after
+    # the complete header/identifier/feature decision above.
+    async for session in get_session():
+        try:
+            dto = await resolve_public_h2(session, inn=inn)
+            response = JSONResponse(content=dto.model_dump(mode="json"), headers=headers)
+            if request.method == "HEAD":
+                response.body = b""
+            return response
+        except PublicH2NotFound as exc:
+            return JSONResponse(status_code=404, content={"detail": {"code": exc.code, "message": str(exc)}}, headers=headers)
+        except PublicH2NotEligible as exc:
+            return JSONResponse(status_code=409, content={"detail": {"code": exc.code, "message": "company card v2 is not eligible"}}, headers=headers)
+        except PublicH2Error as exc:
+            return JSONResponse(status_code=500, content={"detail": {"code": exc.code, "message": "company card v2 is unavailable"}}, headers=headers)
+    return JSONResponse(status_code=500, content={"detail": {"code": "company_public_h2_unavailable", "message": "company card v2 is unavailable"}}, headers=headers)
 
 
 @router.get(

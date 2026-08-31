@@ -173,6 +173,11 @@ class Settings(BaseSettings):
     seo_sitemap_chunk_size: int = Field(
         default=1000, validation_alias="SEO_SITEMAP_CHUNK_SIZE"
     )
+    company_card_v2_presentations_enabled: bool = Field(default=False, validation_alias="COMPANY_CARD_V2_PRESENTATIONS_ENABLED")
+    company_card_v2_writer_enabled: bool = Field(default=False, validation_alias="COMPANY_CARD_V2_WRITER_ENABLED")
+    company_card_v2_rollout_generation: int = Field(default=0, validation_alias="COMPANY_CARD_V2_ROLLOUT_GENERATION")
+    company_card_v2_allowlist_inns: Annotated[list[str], NoDecode] = Field(default=[], validation_alias="COMPANY_CARD_V2_ALLOWLIST_INNS")
+    company_card_v2_percentage_basis_points: int = Field(default=0, validation_alias="COMPANY_CARD_V2_PERCENTAGE_BASIS_POINTS")
 
     @model_validator(mode="after")
     def _no_openai_key_in_product_api(self) -> "Settings":
@@ -205,6 +210,26 @@ class Settings(BaseSettings):
                 "COMPANY_REPORT_WORKER_SHUTDOWN_GRACE_SECONDS must be >= 0"
             )
         return self
+
+    @model_validator(mode="after")
+    def _validate_company_card_v2_fail_closed(self) -> "Settings":
+        if self.company_card_v2_rollout_generation < 0:
+            raise ValueError("COMPANY_CARD_V2_ROLLOUT_GENERATION must be >= 0")
+        if self.company_card_v2_percentage_basis_points < 0 or self.company_card_v2_percentage_basis_points > 10000:
+            raise ValueError("COMPANY_CARD_V2_PERCENTAGE_BASIS_POINTS must be in 0..10000")
+        if (self.company_card_v2_presentations_enabled or self.company_card_v2_writer_enabled) and self.company_card_v2_rollout_generation <= 0:
+            raise ValueError("enabled Company Card v2 requires positive rollout generation")
+        for inn in self.company_card_v2_allowlist_inns:
+            if not isinstance(inn, str) or not inn.isascii() or not inn.isdigit() or len(inn) not in {10, 12}:
+                raise ValueError("COMPANY_CARD_V2_ALLOWLIST_INNS must contain INNs only")
+        return self
+
+    @field_validator("company_card_v2_allowlist_inns", mode="before")
+    @classmethod
+    def _parse_company_card_v2_allowlist(cls, value: str | list[str]) -> list[str]:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
 
     @field_validator("superadmin_email")
     @classmethod

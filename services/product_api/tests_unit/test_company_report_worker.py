@@ -131,6 +131,19 @@ async def test_run_one_does_not_retry_unexpected_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_v3_job_never_constructs_provider_while_default_off(monkeypatch):
+    report = complete_company_report()
+    claimed = _claimed(report).__class__(
+        **{**_claimed(report).__dict__, "writer_profile": "company_card_v2_writer_v3", "report_version": "3", "presentation_contract": "company_public_h2_v1", "rollout_generation": 1}
+    )
+    fail = AsyncMock(return_value=False)
+    monkeypatch.setattr(worker, "_try_fail_live_owned_job", fail)
+    factory = lambda _settings: (_ for _ in ()).throw(AssertionError("provider must not be constructed"))
+    assert await worker.run_one_claimed_job(claimed, get_settings(), session_factory=_SessionFactory(), client_factory=factory) is False
+    fail.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_worker_pipeline_calls_each_dataset_exactly_once(monkeypatch):
     seed = complete_company_report()
     claimed = _claimed(seed)

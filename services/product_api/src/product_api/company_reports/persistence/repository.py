@@ -46,6 +46,8 @@ from .serialization import (
     company_report_from_snapshot,
     company_report_to_snapshot,
 )
+from .v3 import calculate_company_card_v2_snapshot_hash, company_card_v2_to_snapshot
+from product_api.company_reports.company_card_v2.models import CompanyCardV2Snapshot
 
 
 @dataclass(frozen=True)
@@ -107,7 +109,15 @@ async def lock_or_create_subject_for_update(
     )
     result = await session.execute(
         select(CompanyReportSubject)
-        .where(CompanyReportSubject.normalized_identifier == normalized)
+        .where(
+            CompanyReportSubject.normalized_identifier == normalized,
+            # Status is part of the permanent H1 contract.  A pending/failed
+            # v3 job is not an H1 run and must not alter the legacy response.
+            CompanyReportRecord.writer_profile == "h1_legacy_writer_v2",
+            CompanyReportRecord.presentation_contract == "company_public_h1_v1",
+            CompanyReportRecord.report_version.in_(("1", "2")),
+            CompanyReportRecord.rollout_generation == 0,
+        )
         .with_for_update()
     )
     subject = result.scalar_one_or_none()
@@ -206,6 +216,47 @@ async def finalize_report(
     return record
 
 
+async def finalize_company_card_v2_report(
+    session: AsyncSession,
+    snapshot_model: CompanyCardV2Snapshot,
+    *,
+    report_id: UUID,
+    subject_id: UUID,
+    finished_at: datetime,
+) -> StoredReportRecord:
+    """Finalize a v3 record without entering H1 dataset/signal logic."""
+    snapshot = company_card_v2_to_snapshot(snapshot_model)
+    digest = calculate_company_card_v2_snapshot_hash(snapshot)
+    record = await _get_report_for_update(session, report_id)
+    if record is None or record.subject_id != subject_id:
+        raise CompanyReportStateConflictError("company card v2 report identity does not match")
+    if (
+        record.report_version != "3"
+        or record.writer_profile != "company_card_v2_writer_v3"
+        or record.presentation_contract != "company_public_h2_v1"
+        or record.rollout_generation <= 0
+        or snapshot_model.report_id != str(report_id)
+        or snapshot_model.subject_inn != snapshot_model.target_inn
+    ):
+        raise CompanyReportStateConflictError("company card v2 writer decision does not match")
+    if record.lifecycle_status != REPORT_PENDING_STATUS:
+        if record.snapshot_hash == digest:
+            return record
+        raise CompanyReportStateConflictError("finalized company card v2 cannot be replaced")
+    record.lifecycle_status = "complete"
+    record.generated_at = _as_utc(snapshot_model.generated_at)
+    record.finished_at = _as_utc(finished_at)
+    record.normalized_snapshot = snapshot
+    record.snapshot_hash = digest
+    record.completeness_snapshot = {"contract": snapshot_model.presentation_contract}
+    record.freshness_snapshot = {"generated_at": snapshot_model.generated_at.isoformat()}
+    record.warnings_snapshot, record.safe_error_snapshot = [], None
+    record.usable_for_public_page = False
+    record.usable_for_future_scoring = False
+    await session.flush()
+    return record
+
+
 async def mark_report_failed(
     session: AsyncSession,
     *,
@@ -278,6 +329,9 @@ async def get_latest_report_by_identifier(
             CompanyReportSubject.normalized_identifier == normalized,
             CompanyReportRecord.lifecycle_status.in_(("complete", "partial")),
             CompanyReportRecord.normalized_snapshot.is_not(None),
+            CompanyReportRecord.writer_profile == "h1_legacy_writer_v2",
+            CompanyReportRecord.presentation_contract == "company_public_h1_v1",
+            CompanyReportRecord.report_version.in_(("1", "2")),
         )
         .order_by(
             desc(CompanyReportRecord.generated_at),
@@ -337,6 +391,9 @@ async def get_fresh_report_by_identifier(
         .join(CompanyReportSubject, CompanyReportSubject.id == CompanyReportRecord.subject_id)
         .where(
             CompanyReportSubject.normalized_identifier == normalized,
+            CompanyReportRecord.writer_profile == "h1_legacy_writer_v2",
+            CompanyReportRecord.presentation_contract == "company_public_h1_v1",
+            CompanyReportRecord.report_version.in_(("1", "2")),
             CompanyReportRecord.lifecycle_status.in_(("complete", "partial")),
             CompanyReportRecord.normalized_snapshot.is_not(None),
             CompanyReportRecord.fresh_until.is_not(None),

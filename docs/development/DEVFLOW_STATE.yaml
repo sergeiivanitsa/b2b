@@ -213,11 +213,11 @@ iterations:
   - id: 20
     slug: company-card-v2-backend-foundation
     title: "Backend и данные Company Card v2"
-    status: planned
-    branch: pending
+    status: blocked
+    branch: feat/iteration-20-company-card-v2-backend-foundation
     commit: pending
     merged_at: null
-    block_reason: null
+    block_reason: "Code review CHANGES_REQUIRED; single fix pass exhausted: full H2 leaf DTO, composite pin/assignment persistence and migration proofs, arbitration/privacy matrices, presentation/job lifecycle fences, clean PostgreSQL JUnit and web checks remain incomplete"
   - id: 21
     slug: company-card-v2-ai-narrative
     title: "Публичное AI-описание Company Card v2"
