@@ -14,7 +14,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
-from sqlalchemy import event, func, select
+from sqlalchemy import event, func, or_, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -214,7 +214,17 @@ async def _assigned_h2(engine):
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         subject = await session.scalar(select(CompanyReportSubject).where(CompanyReportSubject.normalized_identifier == "7701234567"))
         report = await session.get(CompanyReportRecord, report_id)
-        source_pin = await session.scalar(select(CompanyReportPresentationPin).where(CompanyReportPresentationPin.report_id == report_id))
+        source_pin = await session.scalar(
+            select(CompanyReportPresentationPin).where(
+                CompanyReportPresentationPin.report_id == report_id,
+                CompanyReportPresentationPin.narrative_binding_status == "resolved",
+                or_(
+                    CompanyReportPresentationPin.projection_scope.is_(None),
+                    CompanyReportPresentationPin.projection_scope
+                    == "staged_publication",
+                ),
+            )
+        )
         active = await build_active_public_h2_for_pin(
             session,
             record=report,
@@ -298,7 +308,10 @@ async def test_real_exact_assigned_old_digest_h2_returns_safe_500_without_h1_fal
     set_public_h2_asset_manifest(load_public_h2_asset_manifest())
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
         subject = await session.scalar(select(CompanyReportSubject).where(CompanyReportSubject.normalized_identifier == "7701234567"))
-        pin = await session.scalar(select(CompanyReportPresentationPin).where(CompanyReportPresentationPin.report_id == report_id)); pin.projection_digest = "f" * 64; await session.commit()
+        pin = await session.scalar(select(CompanyReportPresentationPin).where(
+            CompanyReportPresentationPin.report_id == report_id,
+            CompanyReportPresentationPin.narrative_binding_status == "resolved",
+        )); pin.projection_digest = "f" * 64; await session.commit()
         session.add(CompanyReportPresentationAssignment(subject_id=subject.id, presentation_contract="company_public_h2_v1", pin_generation=pin.generation, generation=1)); await session.commit()
     stale, sql = await _observe_read_only_request(
         async_client, engine, "GET", "/company/7701234567-company"
@@ -311,7 +324,10 @@ async def test_unassigned_staged_old_digest_h2_leaves_latest_h1_canonical(async_
     h2_id, _ = await _store_resolved_v3_fallback(engine)
     h1_id, _ = await _store_legacy_report(engine, report_id="00000000-0000-4000-8000-000000000002", generated_at="2026-08-25T12:00:00Z", with_fallback=False)
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
-        pin = await session.scalar(select(CompanyReportPresentationPin).where(CompanyReportPresentationPin.report_id == h2_id)); pin.projection_digest = "e" * 64; await session.commit()
+        pin = await session.scalar(select(CompanyReportPresentationPin).where(
+            CompanyReportPresentationPin.report_id == h2_id,
+            CompanyReportPresentationPin.narrative_binding_status == "resolved",
+        )); pin.projection_digest = "e" * 64; await session.commit()
         expected = await resolve_public_h1(session, inn="7701234567")
         assert str(expected.report_id) == str(h1_id)
         subject = await session.scalar(select(CompanyReportSubject).where(CompanyReportSubject.normalized_identifier == "7701234567"))
@@ -330,7 +346,10 @@ async def test_unassigned_staged_old_digest_h2_leaves_latest_h1_canonical(async_
 async def test_generic_staged_old_digest_h2_returns_500_with_route_session_override(async_client, engine, monkeypatch) -> None:
     report_id, _ = await _store_resolved_v3_fallback(engine)
     async with AsyncSession(bind=engine, expire_on_commit=False) as session:
-        pin = await session.scalar(select(CompanyReportPresentationPin).where(CompanyReportPresentationPin.report_id == report_id)); pin.projection_digest = "d" * 64; await session.commit()
+        pin = await session.scalar(select(CompanyReportPresentationPin).where(
+            CompanyReportPresentationPin.report_id == report_id,
+            CompanyReportPresentationPin.narrative_binding_status == "resolved",
+        )); pin.projection_digest = "d" * 64; await session.commit()
     async def override_session():
         async with AsyncSession(bind=engine, expire_on_commit=False) as session: yield session
     monkeypatch.setattr(generic_routes, "h2_cohort_selected", lambda **_kwargs: True)
@@ -384,7 +403,8 @@ async def test_real_assigned_h2_nonready_and_nonactive_outcomes_fail_closed(
             CompanyReportSubject.normalized_identifier == "7701234567"
         ))
         pin = await session.scalar(select(CompanyReportPresentationPin).where(
-            CompanyReportPresentationPin.report_id == report_id
+            CompanyReportPresentationPin.report_id == report_id,
+            CompanyReportPresentationPin.narrative_binding_status == "resolved",
         ))
         if outcome in {"pending", "failed"}:
             record = await session.get(CompanyReportRecord, report_id)

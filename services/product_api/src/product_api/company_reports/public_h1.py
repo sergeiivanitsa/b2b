@@ -20,6 +20,11 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .aggregate import CompanyReport, DatasetReportStatus
+from .company_urls import (
+    CanonicalCompanyIdentity,
+    build_h1_company_binding,
+    parse_company_path,
+)
 from .models import (
     ArbitrationCaseFacts,
     ArbitrationParty,
@@ -28,14 +33,12 @@ from .models import (
     CounterpartyBlockStatus,
     FinanceForm,
 )
-from .seo import canonical_path
 
 _INN = re.compile(r"^(?:[0-9]{10}|[0-9]{12})$")
 _KPP = re.compile(r"^[0-9]{9}$")
 _OGRN = re.compile(r"^(?:[0-9]{13}|[0-9]{15})$")
 _CURRENCY = re.compile(r"^[A-Z][A-Z0-9_-]{2,15}$")
 _DECIMAL = re.compile(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$")
-_CANONICAL = re.compile(r"^/company/(?P<inn>[0-9]{10}(?:[0-9]{2})?)-(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)$")
 _MSK = ZoneInfo("Europe/Moscow")
 _MONTHS = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")
 _BANKRUPTCY_MESSAGES = {
@@ -596,8 +599,8 @@ class CompanyPublicH1Response(PublicModel):
             raise ValueError("checked_at must be aware")
         if self.checked_at.utcoffset() != timezone.utc.utcoffset(self.checked_at):
             raise ValueError("checked_at must be UTC")
-        canonical = _CANONICAL.fullmatch(self.canonical_path)
-        if canonical is None or canonical.group("inn") != self.identity.inn:
+        canonical = parse_company_path(self.canonical_path)
+        if canonical is None or canonical.kind == "plain" or canonical.inn != self.identity.inn:
             raise ValueError("canonical path does not match identity")
         if tuple(item.block_id for item in self.coverage) != _COVERAGE_ORDER:
             raise ValueError("coverage order is invalid")
@@ -963,8 +966,22 @@ def build_public_h1(report: CompanyReport, *, projection_scope: Literal["publish
     identity, limitations = _identity(report)
     requisites, requisites_limitations = _requisites(report)
     limitations.extend(requisites_limitations)
-    path = persisted_canonical_path if projection_scope == "published" else canonical_path(identity.inn, identity.display_name)
-    if path is None or _CANONICAL.fullmatch(path) is None or not path.startswith(f"/company/{identity.inn}-"):
+    if projection_scope == "published":
+        path = persisted_canonical_path
+    else:
+        cp = report.counterparty
+        assert cp is not None
+        binding = build_h1_company_binding(
+            CanonicalCompanyIdentity(
+                inn=identity.inn,
+                legal_form=cp.legal_form,
+                legal_short_name=cp.short_name or (cp.names.short_name if cp.names else None),
+                legal_full_name=cp.full_name or (cp.names.full_name if cp.names else None),
+            )
+        )
+        path = binding.canonical_path if binding is not None else None
+    parsed_path = parse_company_path(path)
+    if path is None or parsed_path is None or parsed_path.kind == "plain" or parsed_path.inn != identity.inn:
         raise ValueError("canonical path unavailable")
     finance, finance_limitations = _finance(report)
     arbitration, arbitration_limitations = _arbitration(report)

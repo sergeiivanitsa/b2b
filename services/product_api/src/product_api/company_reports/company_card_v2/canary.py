@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from product_api.company_reports.company_urls import legacy_h2_binding
 from product_api.company_reports.persistence.jobs import (
     H2_PRESENTATION_CONTRACT,
     H2_WRITER_PROFILE,
@@ -1497,7 +1498,7 @@ async def _canary_lifecycle_status(
                 source_pin=pin,
                 expected_subject_id=subject.id,
                 expected_inn=plan.target_inn,
-                canonical_path=f"/company/{plan.target_inn}-company",
+                canonical_path=(pin.canonical_path or legacy_h2_binding(plan.target_inn).canonical_path),
                 indexable=False,
                 published_lastmod=report.generated_at,
             )
@@ -1634,7 +1635,7 @@ async def _require_decision_inputs(
         source_pin=source_pin,
         expected_subject_id=subject.id,
         expected_inn=plan.target_inn,
-        canonical_path=f"/company/{plan.target_inn}-company",
+        canonical_path=(source_pin.canonical_path or legacy_h2_binding(plan.target_inn).canonical_path),
         indexable=h2_indexable,
         published_lastmod=report.generated_at,
     )

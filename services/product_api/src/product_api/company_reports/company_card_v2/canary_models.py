@@ -16,6 +16,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator, model_validator
 
+from product_api.company_reports.company_urls import parse_company_path
 from .canonical_json import canonical_json_bytes
 
 
@@ -26,7 +27,6 @@ MAX_CANARY_PLAN_BYTES = 65_536
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _INN = re.compile(r"^(?:[0-9]{10}|[0-9]{12})$")
 _KEY_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
-_PATH = re.compile(r"^/company/(?:[0-9]{10}|[0-9]{12})-[a-z0-9]+(?:-[a-z0-9]+)*$")
 _RELEASE = re.compile(r"^[0-9a-f]{40}$")
 _REVISION = re.compile(r"^[A-Za-z0-9_]{1,128}$")
 _UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$")
@@ -108,7 +108,8 @@ class CanaryH1RollbackV1(_ClosedModel):
     @field_validator("canonical_path")
     @classmethod
     def _canonical_path(cls, value: str) -> str:
-        if type(value) is not str or _PATH.fullmatch(value) is None:
+        parsed = parse_company_path(value)
+        if type(value) is not str or parsed is None or parsed.kind == "plain":
             raise ValueError("canonical path is invalid")
         return value
 
@@ -194,9 +195,8 @@ class CompanyCardV2CanaryPlanV1(_ClosedModel):
 
     @model_validator(mode="after")
     def _target_path(self):
-        if not self.h1_rollback.canonical_path.startswith(
-            f"/company/{self.target_inn}-"
-        ):
+        parsed = parse_company_path(self.h1_rollback.canonical_path)
+        if parsed is None or parsed.kind == "plain" or parsed.inn != self.target_inn:
             raise ValueError("H1 rollback target is invalid")
         return self
 

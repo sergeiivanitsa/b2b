@@ -53,6 +53,11 @@ DATASET_STATUSES = (
 )
 REQUEST_OUTCOMES = ("success", "error", "not_executed")
 PUBLICATION_POLICY_VERSION = "publication_sufficiency_v1"
+_COMPANY_CANONICAL_PATH_SQL = (
+    "(canonical_path ~ '^/company/([0-9]{10}|[0-9]{12})-[a-z0-9]+(-[a-z0-9]+)*$' "
+    "OR canonical_path ~ '^/company/(ooo|ao|oao|zao|pao|ip)-[a-z0-9]+"
+    "(-[a-z0-9]+)*-([0-9]{10}|[0-9]{12})$')"
+)
 
 
 class CompanyReportSubject(Base):
@@ -357,7 +362,8 @@ class CompanyReportPresentationPin(Base):
             "(presentation_contract = 'company_public_h1_v1' "
             "AND projection_scope IS NULL "
             "AND indexable = true AND publication_policy_version IS NOT NULL "
-            "AND canonical_path IS NOT NULL AND published_lastmod IS NOT NULL "
+            "AND canonical_path IS NOT NULL AND " + _COMPANY_CANONICAL_PATH_SQL + " "
+            "AND published_lastmod IS NOT NULL "
             "AND projection_digest IS NULL "
             "AND narrative_binding_status IS NULL AND narrative_binding_kind IS NULL "
             "AND narrative_binding_key IS NULL AND chart_facts_version IS NULL "
@@ -368,19 +374,25 @@ class CompanyReportPresentationPin(Base):
             "AND chart_facts_version IS NOT NULL "
             "AND chart_facts_hash IS NOT NULL AND evidence_registry_version IS NOT NULL "
             "AND publication_policy_version IS NOT NULL "
+            # NULL remains in the declarative shape only for rows that already
+            # existed before migration 0021.  Its PostgreSQL trigger rejects
+            # NULL on every new H2 insert and guards predecessor continuity.
             "AND ((projection_digest IS NULL AND narrative_binding_status = 'unresolved' "
             "AND narrative_binding_kind IS NULL AND narrative_binding_key IS NULL "
             "AND (projection_scope IS NULL OR projection_scope = 'staged_publication') "
-            "AND indexable = false AND canonical_path IS NULL AND published_lastmod IS NULL) "
+            "AND indexable = false AND (canonical_path IS NULL OR "
+            + _COMPANY_CANONICAL_PATH_SQL + ") AND published_lastmod IS NULL) "
             "OR (projection_digest ~ '^[0-9a-f]{64}$' "
             "AND narrative_binding_status = 'resolved' "
             "AND narrative_binding_kind IN ('artifact', 'fallback') "
             "AND narrative_binding_key ~ '^[0-9a-f]{64}$' "
             "AND (((projection_scope IS NULL OR projection_scope = 'staged_publication') "
-            "AND indexable = false AND canonical_path IS NULL AND published_lastmod IS NULL) "
+            "AND indexable = false AND (canonical_path IS NULL OR "
+            + _COMPANY_CANONICAL_PATH_SQL + ") AND published_lastmod IS NULL) "
             "OR (projection_scope = 'active_publication' "
             "AND publication_policy_version = 'company_public_h2_publication_v3' "
-            "AND canonical_path IS NOT NULL AND published_lastmod IS NOT NULL)))))",
+            "AND canonical_path IS NOT NULL AND " + _COMPANY_CANONICAL_PATH_SQL + " "
+            "AND published_lastmod IS NOT NULL)))))",
             name="company_report_presentation_pins_contract_shape",
         ),
         ForeignKeyConstraint(
@@ -646,7 +658,7 @@ class CompanyReportPublication(Base):
         UniqueConstraint("report_id", name="uq_company_report_publications_report_id"),
         UniqueConstraint("canonical_path", name="uq_company_report_publications_canonical_path"),
         CheckConstraint("status IN ('active', 'paused', 'disabled')", name="company_report_publication_status"),
-        CheckConstraint("canonical_path ~ '^/company/([0-9]{10}|[0-9]{12})-[a-z0-9]+(-[a-z0-9]+)*$'", name="company_report_publication_path"),
+        CheckConstraint(_COMPANY_CANONICAL_PATH_SQL, name="company_report_publication_path"),
         CheckConstraint("(status = 'active' AND snapshot_hash IS NOT NULL AND published_lastmod IS NOT NULL) OR status != 'active'", name="company_report_publication_active_shape"),
         CheckConstraint("status = 'active' OR indexable = false", name="company_report_publication_inactive_noindex"),
         CheckConstraint("batch_generation > 0", name="company_report_publication_batch_generation"),

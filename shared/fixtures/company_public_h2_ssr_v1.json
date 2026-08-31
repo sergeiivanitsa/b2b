@@ -4,7 +4,7 @@
   "html_fixture": "shared/fixtures/company_public_h2_ssr_v1.html",
   "nonce": "fixture-nonce",
   "robots": "noindex,follow",
-  "html_sha256": "d00cf2ef87d655dc23dc453dfd8420821ea8ef33c6f2f76e45c53fa921c37b49",
+  "html_sha256": "04874e77458fcd45fcedca2798ab8aaf225c687ec5ecf37b401c8723cc18ffa5",
   "required_ids": [
     "hero-status",
     "narrative",

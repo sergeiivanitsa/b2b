@@ -15,6 +15,12 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from product_api.company_reports.normalizers.finance import normalize_finance
+from product_api.company_reports.company_urls import (
+    CanonicalCompanyIdentity,
+    CanonicalUrlBinding,
+    build_v2_company_binding,
+    legacy_h2_binding,
+)
 from product_api.providers.datanewton import COUNTERPARTY_ENDPOINT, FINANCE_ENDPOINT
 
 from .arbitration_v2 import (
@@ -116,12 +122,14 @@ class CompanyCardV2BuildOutcome:
 
     snapshot: CompanyCardV2SnapshotV2
     lifecycle_status: Literal["complete", "partial"]
+    canonical_url_binding: CanonicalUrlBinding
 
 
 @dataclass(frozen=True)
 class CompanyCardV2BuildOutcomeV3:
     snapshot: CompanyCardV2SnapshotV3
     lifecycle_status: Literal["complete", "partial"]
+    canonical_url_binding: CanonicalUrlBinding
 
 
 async def fetch_primary_activity(
@@ -245,6 +253,17 @@ async def build_company_card_v2_snapshot_v2_outcome(
         raise CompanyCardV2BuilderError("counterparty dataset cannot form a V2 snapshot") from exc
     if counterparty.inn != target_inn:
         raise CompanyCardV2BuilderError("counterparty core is not bound to the target")
+    payload = _result_payload(counterparty_result)
+    company = payload.get("company") if isinstance(payload, Mapping) else None
+    observed_legal_form = company.get("opf") if isinstance(company, Mapping) else None
+    canonical_url_binding = build_v2_company_binding(
+        CanonicalCompanyIdentity(
+            inn=target_inn,
+            legal_form=observed_legal_form if isinstance(observed_legal_form, str) else None,
+            legal_short_name=counterparty.short_name,
+            legal_full_name=counterparty.full_name,
+        )
+    ) or legacy_h2_binding(target_inn)
 
     activity = _admitted_primary_activity(counterparty_result, target_inn=target_inn)
     narrative_evidence = PrimaryActivityWriterResult(
@@ -300,6 +319,7 @@ async def build_company_card_v2_snapshot_v2_outcome(
     return CompanyCardV2BuildOutcome(
         snapshot=snapshot,
         lifecycle_status="complete" if finance_available else "partial",
+        canonical_url_binding=canonical_url_binding,
     )
 
 
@@ -433,6 +453,7 @@ async def build_company_card_v2_snapshot_v3_outcome(
             if base.lifecycle_status == "complete" and arbitration_basis.collection_complete
             else "partial"
         ),
+        canonical_url_binding=base.canonical_url_binding,
     )
 
 

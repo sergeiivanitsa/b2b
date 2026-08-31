@@ -15,6 +15,11 @@ from product_api.company_reports.company_card_v2.models import (
     CompanyCardV2SnapshotV2,
     CompanyCardV2SnapshotV3,
 )
+from product_api.company_reports.company_urls import (
+    CanonicalUrlBinding,
+    legacy_h2_binding,
+    parse_company_path,
+)
 from product_api.company_reports.ephemeral_evaluation import (
     evaluate_report_ephemerally,
 )
@@ -488,6 +493,7 @@ async def complete_claimed_company_card_v2_job(
     claimed: ClaimedReportJob,
     snapshot: CompanyCardV2SnapshotV2 | CompanyCardV2SnapshotV3,
     lifecycle_status: Literal["complete", "partial"] = "complete",
+    canonical_url_binding: CanonicalUrlBinding | None = None,
 ) -> CompletedReportJob:
     """Finalize one V2 snapshot and its durable narrative event atomically.
 
@@ -495,6 +501,22 @@ async def complete_claimed_company_card_v2_job(
     insertion failure must escape this function so that the caller rolls the
     report, job and outbox transition back together.
     """
+    binding = canonical_url_binding or legacy_h2_binding(claimed.normalized_identifier)
+    if type(binding) is not CanonicalUrlBinding:
+        raise CompanyReportJobStateConflictError(
+            "company card v2 URL binding is invalid"
+        )
+    parsed_binding = parse_company_path(binding.canonical_path)
+    if (
+        parsed_binding is None
+        or parsed_binding.kind == "plain"
+        or parsed_binding.inn != claimed.normalized_identifier
+        or parsed_binding.form_token != binding.form_token
+        or parsed_binding.name_slug != binding.name_slug
+    ):
+        raise CompanyReportJobStateConflictError(
+            "company card v2 URL binding is invalid"
+        )
     if not _snapshot_matches_claim_decision(snapshot, claimed):
         raise CompanyReportJobStateConflictError(
             "company card v2 completion snapshot decision is invalid"
@@ -530,6 +552,7 @@ async def complete_claimed_company_card_v2_job(
             record=record,
             snapshot=snapshot,
             lifecycle_status=lifecycle_status,
+            canonical_url_binding=binding,
             db_time=db_time,
         )
     _assert_live_owner(job, worker_token=claimed.worker_token, db_time=db_time)
@@ -557,7 +580,11 @@ async def complete_claimed_company_card_v2_job(
     # Pin, report and outbox share the caller transaction.  The read path is
     # deliberately SELECT-only; only a fenced writer may establish v2 policy.
     from .presentations import create_or_reuse_unresolved_h2_pin
-    await create_or_reuse_unresolved_h2_pin(session, report=finalized)
+    await create_or_reuse_unresolved_h2_pin(
+        session,
+        report=finalized,
+        canonical_path=binding.canonical_path,
+    )
     # ``narratives`` imports presentation helpers that depend on this module;
     # defer this narrow write-side dependency until jobs has initialized.
     from .narratives import insert_narrative_outbox
@@ -582,6 +609,7 @@ async def _reuse_exact_company_card_v2_completion(
     snapshot: CompanyCardV2SnapshotV2 | CompanyCardV2SnapshotV3,
     lifecycle_status: Literal["complete", "partial"],
     db_time: datetime,
+    canonical_url_binding: CanonicalUrlBinding | None = None,
 ) -> CompletedReportJob:
     """Return a committed V3 boundary only when every durable row is exact.
 
@@ -630,7 +658,14 @@ async def _reuse_exact_company_card_v2_completion(
     )
 
     try:
-        pin = await require_existing_unresolved_h2_pin(session, report=record)
+        if canonical_url_binding is None:
+            pin = await require_existing_unresolved_h2_pin(session, report=record)
+        else:
+            pin = await require_existing_unresolved_h2_pin(
+                session,
+                report=record,
+                canonical_path=canonical_url_binding.canonical_path,
+            )
     except PresentationAssignmentConflict as exc:
         raise CompanyReportJobStateConflictError(
             "company card v2 completed pin lineage is invalid"

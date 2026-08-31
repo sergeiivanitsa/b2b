@@ -342,7 +342,8 @@ async def _store_resolved_v3_fallback(
             },
             arbitration_enabled=arbitration_enabled,
         )
-        pin = CompanyReportPresentationPin(
+        canonical_path = f"/company/{snapshot.subject_inn}-company"
+        predecessor = CompanyReportPresentationPin(
             subject_id=subject.id,
             report_id=record.id,
             presentation_contract="company_public_h2_v1",
@@ -352,7 +353,27 @@ async def _store_resolved_v3_fallback(
             chart_facts_hash=snapshot.chart_facts.hash,
             evidence_registry_version=snapshot.evidence_version,
             publication_policy_version=publication_policy_version,
-            canonical_path=None,
+            canonical_path=canonical_path,
+            indexable=False,
+            published_lastmod=None,
+            projection_digest=None,
+            narrative_binding_status="unresolved",
+            narrative_binding_kind=None,
+            narrative_binding_key=None,
+        )
+        session.add(predecessor)
+        await session.flush()
+        pin = CompanyReportPresentationPin(
+            subject_id=subject.id,
+            report_id=record.id,
+            presentation_contract="company_public_h2_v1",
+            generation=2,
+            snapshot_hash=snapshot_hash,
+            chart_facts_version=snapshot.chart_facts.version,
+            chart_facts_hash=snapshot.chart_facts.hash,
+            evidence_registry_version=snapshot.evidence_version,
+            publication_policy_version=publication_policy_version,
+            canonical_path=canonical_path,
             indexable=False,
             published_lastmod=None,
             projection_digest=projection.projection_digest,
@@ -551,7 +572,8 @@ async def test_resolved_v3_saved_result_corruption_is_terminal_500(
     async with AsyncSession(bind=engine) as session:
         if corruption == "pin_projection_digest":
             pin = await session.scalar(select(CompanyReportPresentationPin).where(
-                CompanyReportPresentationPin.report_id == report_id
+                CompanyReportPresentationPin.report_id == report_id,
+                CompanyReportPresentationPin.narrative_binding_status == "resolved",
             ))
             pin.projection_digest = "f" * 64
         elif corruption == "generation_identity":

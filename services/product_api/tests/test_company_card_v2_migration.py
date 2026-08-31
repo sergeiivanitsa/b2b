@@ -88,10 +88,10 @@ def test_company_card_v2_clean_0015_head_refuses_lossy_downgrade(monkeypatch) ->
         assert asyncio.run(_read_h1_import(rendered_target)) == expected
         assert asyncio.run(_read_legacy_job_cohort(rendered_target)) == legacy_job_snapshot
         assert asyncio.run(_read_migrated_job_cohort(rendered_target)) == expected_migrated_jobs
-        assert asyncio.run(_revision(rendered_target)) == "0020_company_card_narrative_quota_mode"
+        assert asyncio.run(_revision(rendered_target)) == "0021_company_page_canonical_urls"
         with pytest.raises(RuntimeError, match="refuse to discard narrative data"):
             command.downgrade(config, "0015_claims_company_report_handoff")
-        assert asyncio.run(_revision(rendered_target)) == "0020_company_card_narrative_quota_mode"
+        assert asyncio.run(_revision(rendered_target)) == "0021_company_page_canonical_urls"
         assert not asyncio.run(
             _table_absent(rendered_target, "company_report_presentation_pins")
         )
@@ -107,7 +107,7 @@ def test_company_card_v2_clean_0015_head_refuses_lossy_downgrade(monkeypatch) ->
         assert asyncio.run(_read_h1_import(rendered_target)) == expected
         assert asyncio.run(_read_legacy_job_cohort(rendered_target)) == legacy_job_snapshot
         assert asyncio.run(_read_migrated_job_cohort(rendered_target)) == expected_migrated_jobs
-        assert asyncio.run(_revision(rendered_target)) == "0020_company_card_narrative_quota_mode"
+        assert asyncio.run(_revision(rendered_target)) == "0021_company_page_canonical_urls"
     finally:
         asyncio.run(_drop_database(rendered_admin, database_name))
 

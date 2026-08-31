@@ -21,6 +21,7 @@ def test_bridge_closes_every_product_backed_route_until_switch() -> None:
     for token in (
         "location ^~ /api/",
         'location ~ "^/company/(?:[0-9]{10}|[0-9]{12})-',
+        'location ~ "^/company/(?:ooo|ao|oao|zao|pao|ip)-',
         "location = /robots.txt",
         "location = /sitemaps/index.xml",
         "location /",

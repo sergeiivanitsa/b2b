@@ -181,7 +181,7 @@ async function verifyOrGenerate({ generate }) {
       closures,
       assets,
       BASE_EAGER_GZIP_BYTES,
-      'Iteration 25 adds the reviewed safe-area token, fixed lazy-chart reservation, deterministic unique limitation landmark labels, local overflow containment for unwrapped finance tables, and touch-persistent lazy chart disclosures; factual values, order, and production dependencies remain unchanged.',
+      'Iteration 25 adds its reviewed accessibility and containment changes; iteration 26 extends only the closed canonical-path validator to accept owner-approved form-first company URLs, without adding production dependencies or changing factual presentation.',
     )
     return `${JSON.stringify(output, null, 2)}\n`
   }

@@ -244,6 +244,44 @@ async def test_v2_builder_keeps_admitted_counterparty_as_partial_when_finance_fa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("opf", "short_name", "expected"),
+    [
+        ("ООО", "Тест", "/company/ooo-test-7700000000"),
+        ("ООО", "ПАО Ромашка", "/company/7700000000-company"),
+        ("Неподтверждённая форма", "Тест", "/company/7700000000-company"),
+        (None, "Тест", "/company/7700000000-company"),
+    ],
+)
+async def test_writer_binds_url_before_legal_form_is_excluded_from_snapshot(opf, short_name, expected):
+    payload = _counterparty_payload()
+    payload["company"]["company_names"]["short_name"] = short_name
+    if opf is not None:
+        payload["company"]["opf"] = opf
+
+    class Provider:
+        async def fetch_counterparty(self, *_args, **_kwargs):
+            return _result(payload=payload)
+
+        async def fetch_finance(self, *_args, **_kwargs):
+            raise RuntimeError("safe test-only finance failure")
+
+    outcome = await build_company_card_v2_snapshot_v2_outcome(
+        provider=Provider(),
+        report_id=REPORT_ID,
+        subject_inn=TARGET_INN,
+        target_inn=TARGET_INN,
+        writer_profile="company_card_v2_writer_v3",
+        report_version="3",
+        presentation_contract="company_public_h2_v1",
+        rollout_config_generation=1,
+        now=NOW,
+    )
+    assert outcome.canonical_url_binding.canonical_path == expected
+    assert "opf" not in outcome.snapshot.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
 async def test_v2_builder_does_not_store_a_finance_normalization_error(monkeypatch):
     raw_marker = "PRIVATE-FINANCE-NORMALIZATION-MARKER"
 

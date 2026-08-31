@@ -244,6 +244,15 @@ describe('company public H1 root contract', () => {
 })
 
 describe('identifiers, paths and calendar strings', () => {
+  it('accepts a recognized-form v2 canonical path bound to the identity INN', () => {
+    const value = published()
+    const canonicalPath = '/company/ooo-sintetika-1234567890'
+    value.canonical_path = canonicalPath
+    breadcrumbs(value)[1].path = canonicalPath
+
+    expect(parseCompanyPublicH1(value).canonical_path).toBe(canonicalPath)
+  })
+
   it('mirrors Python whitespace semantics without treating U+FEFF as whitespace', () => {
     const value = published()
     objectAt(value, 'identity').legal_full_name = 'ООО\uFEFFСинтетика'

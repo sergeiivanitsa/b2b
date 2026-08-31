@@ -148,6 +148,7 @@ async def test_latest_report_adds_canonical_path_from_matching_safe_identity(
             "counterparty": base_report.counterparty.model_copy(
                 update={
                     "inn": "0000000000",
+                    "legal_form": "ООО",
                     "short_name": "ООО Вектор",
                     "full_name": "Полное имя не используется",
                 }
@@ -164,7 +165,7 @@ async def test_latest_report_adds_canonical_path_from_matching_safe_identity(
         settings=get_settings(),
     )
 
-    assert response.canonical_path == "/company/0000000000-ooo-vektor"
+    assert response.canonical_path == "/company/ooo-vektor-0000000000"
 
 
 async def test_latest_report_has_no_canonical_path_without_matching_identity_or_for_failed_report(

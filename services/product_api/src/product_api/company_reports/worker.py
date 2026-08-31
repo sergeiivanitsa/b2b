@@ -155,7 +155,12 @@ async def run_one_claimed_job(
             outcome = await v3_builder(claimed)
             snapshot = getattr(outcome, "snapshot", None)
             lifecycle_status = getattr(outcome, "lifecycle_status", None)
-            if snapshot is None or lifecycle_status not in {"complete", "partial"}:
+            canonical_url_binding = getattr(outcome, "canonical_url_binding", None)
+            if (
+                snapshot is None
+                or lifecycle_status not in {"complete", "partial"}
+                or canonical_url_binding is None
+            ):
                 raise RuntimeError("company card v2 builder outcome is invalid")
             if ownership_lost.is_set():
                 return False
@@ -166,6 +171,7 @@ async def run_one_claimed_job(
                         claimed=claimed,
                         snapshot=snapshot,
                         lifecycle_status=lifecycle_status,
+                        canonical_url_binding=canonical_url_binding,
                     )
                     await session.commit()
                 except Exception:

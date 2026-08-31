@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from product_api.company_reports.company_urls import legacy_h2_binding, parse_company_path
 from product_api.company_reports.persistence.jobs import (
     H2_PRESENTATION_CONTRACT,
     H2_WRITER_PROFILE,
@@ -495,10 +496,14 @@ async def _resolve_exact_v3(
 
 def _is_staged_pin_shape(pin: CompanyReportPresentationPin) -> bool:
     """Return the exact persisted shape admitted by staged/latest preview."""
+    parsed_path = parse_company_path(pin.canonical_path) if pin.canonical_path is not None else None
     return (
         getattr(pin, "projection_scope", None) in {None, "staged_publication"}
         and pin.indexable is False
-        and pin.canonical_path is None
+        and (
+            pin.canonical_path is None
+            or (parsed_path is not None and parsed_path.kind != "plain")
+        )
         and pin.published_lastmod is None
     )
 
@@ -548,13 +553,17 @@ def _projection_binding_for_pin(
     expected_inn: str,
 ) -> PublicH2ProjectionBindingV1:
     scope = getattr(pin, "projection_scope", None)
-    default_path = f"/company/{expected_inn}-company"
+    default_path = legacy_h2_binding(expected_inn).canonical_path
+    effective_path = pin.canonical_path or default_path
+    parsed_path = parse_company_path(effective_path)
+    if parsed_path is None or parsed_path.kind == "plain" or parsed_path.inn != expected_inn:
+        raise ValueError("public H2 canonical path is invalid")
     if scope is None:
         if not _is_staged_pin_shape(pin):
             raise ValueError("legacy public H2 pin shape is invalid")
         return PublicH2ProjectionBindingV1(
             projection_scope="latest_unpublished",
-            canonical_path=default_path,
+            canonical_path=effective_path,
             indexable=False,
             published_lastmod=None,
         )
@@ -563,7 +572,7 @@ def _projection_binding_for_pin(
             raise ValueError("staged public H2 pin shape is invalid")
         return PublicH2ProjectionBindingV1(
             projection_scope="staged_publication",
-            canonical_path=default_path,
+            canonical_path=effective_path,
             indexable=False,
             published_lastmod=None,
         )
@@ -572,6 +581,7 @@ def _projection_binding_for_pin(
             pin.narrative_binding_status != "resolved"
             or pin.publication_policy_version != H2_PUBLICATION_POLICY_V3
             or not isinstance(pin.canonical_path, str)
+            or parse_company_path(pin.canonical_path) is None
             or type(pin.indexable) is not bool
             or pin.published_lastmod is None
         ):

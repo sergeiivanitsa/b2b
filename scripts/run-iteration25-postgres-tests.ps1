@@ -32,7 +32,7 @@ $pgPassword = "i25p$runId"
 $guardDatabase = "i24_guard_$short"
 $roundtripDatabase = "i24_roundtrip_$short"
 $suiteDatabase = "i25_suite_$short"
-$expectedHead = "0020_company_card_narrative_quota_mode"
+$expectedHead = "0021_company_page_canonical_urls"
 $temporaryParent = Join-Path $repoRoot ".tmp"
 $temporaryRoot = Join-Path $temporaryParent "iteration25-postgres-$runId"
 $junit0018 = Join-Path $temporaryRoot "exact-0018.xml"
@@ -397,6 +397,9 @@ try {
     }
     if (-not (Test-Path -LiteralPath (Join-Path $productRoot "alembic\versions\0020_company_card_narrative_quota_mode.py") -PathType Leaf)) {
         throw "Required Company Card narrative quota migration is missing"
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $productRoot "alembic\versions\0021_company_page_canonical_urls.py") -PathType Leaf)) {
+        throw "Required company-page canonical URL migration is missing"
     }
     $requiredCommands = @("docker", "python")
     if ($Mode -eq "BrowserE2E") {

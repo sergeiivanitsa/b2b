@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.schemas import ChatRequest, ChatResponse
 
 from product_api.company_reports.company_card_v2.finance import build_chart_facts
+from product_api.company_reports.company_urls import legacy_h2_binding, parse_company_path
 from product_api.company_reports.company_card_v2.models import (
     CompanyCardV2SnapshotV1,
     CompanyCardV2SnapshotV2,
@@ -150,6 +151,7 @@ class ValidatedNarrativeReport:
     generation_key: str
     activity_label: str | None
     publication_policy_version: str | None = None
+    canonical_path: str | None = None
 
     @property
     def is_v3(self) -> bool:
@@ -259,14 +261,15 @@ def _projection_digest(
     snapshot: CompanyCardV2SnapshotV1,
     narrative: PublicH2Narrative,
     publication_policy_version: str | None = None,
+    canonical_path: str | None = None,
 ) -> str:
-    canonical_path = f"/company/{snapshot.subject_inn}-company"
+    effective_path = canonical_path or legacy_h2_binding(snapshot.subject_inn).canonical_path
     return build_public_h2(
         snapshot,
         narrative_binding=_NarrativeBinding(narrative),
         projection_binding=PublicH2ProjectionBindingV1(
             projection_scope="staged_publication",
-            canonical_path=canonical_path,
+            canonical_path=effective_path,
             indexable=False,
             published_lastmod=None,
         ),
@@ -282,7 +285,10 @@ def _fallback_projection(report: ValidatedNarrativeReport) -> str | None:
     if not isinstance(report.snapshot, CompanyCardV2SnapshotV1):
         raise NarrativePersistenceError("v3 narrative snapshot is unavailable")
     return _projection_digest(
-        report.snapshot, _fallback_public_narrative(), report.publication_policy_version,
+        report.snapshot,
+        _fallback_public_narrative(),
+        report.publication_policy_version,
+        report.canonical_path,
     )
 
 
@@ -306,6 +312,7 @@ def projection_digest_for_narrative(
         report.snapshot,
         narrative,
         report.publication_policy_version,
+        report.canonical_path,
     )
 
 
@@ -380,6 +387,7 @@ async def validate_narrative_report(
         raise NarrativePersistenceError("narrative report version is invalid")
 
     publication_policy_version: str | None = None
+    canonical_path: str | None = None
     # A production narrative must bind the one durable predecessor written by
     # the fenced report finalizer.  Selecting a first row would make a corrupt
     # duplicate lineage silently observable, so reject missing and ambiguous
@@ -408,7 +416,6 @@ async def validate_narrative_report(
             or predecessor.presentation_contract != "company_public_h2_v1"
             or predecessor.generation <= 0
             or predecessor.indexable is not False
-            or predecessor.canonical_path is not None
             or predecessor.published_lastmod is not None
             or predecessor.projection_digest is not None
             or predecessor.narrative_binding_status != "unresolved"
@@ -416,6 +423,21 @@ async def validate_narrative_report(
             or predecessor.narrative_binding_key is not None
         ):
             raise NarrativePersistenceError("v3 publication predecessor identity is invalid")
+        parsed_path = (
+            parse_company_path(predecessor.canonical_path)
+            if predecessor.canonical_path is not None
+            else None
+        )
+        if predecessor.canonical_path is not None and (
+            parsed_path is None
+            or parsed_path.kind == "plain"
+            or parsed_path.inn != subject.normalized_identifier
+        ):
+            raise NarrativePersistenceError("v3 publication predecessor identity is invalid")
+        canonical_path = (
+            predecessor.canonical_path
+            or legacy_h2_binding(subject.normalized_identifier).canonical_path
+        )
         publication_policy_version = predecessor.publication_policy_version
         if publication_policy_version not in {
             H2_PUBLICATION_POLICY_V1,
@@ -489,6 +511,7 @@ async def validate_narrative_report(
         generation_key=identity_key(identity),
         activity_label=activity_label,
         publication_policy_version=publication_policy_version,
+        canonical_path=canonical_path,
     )
 
 

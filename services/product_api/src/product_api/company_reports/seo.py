@@ -8,9 +8,9 @@ from decimal import Decimal
 from html import escape
 import re
 from typing import Any, Iterable
-from unicodedata import normalize
 
 from product_api.company_reports.aggregate import CompanyReport, CompanyReportStatus, DatasetReportStatus
+from product_api.company_reports.company_urls import legacy_canonical_slug, legacy_h1_binding
 from product_api.company_reports.ephemeral_evaluation import evaluate_report_ephemerally
 from product_api.company_reports.scoring.models import ScoringLevel
 
@@ -19,10 +19,6 @@ POLICY_VERSION = "publication_sufficiency_v1"
 # projection never copies any of these; only raw credential-bearing shapes make
 # the source snapshot itself ineligible.
 _FORBIDDEN = frozenset({"raw_payload", "headers", "authorization", "api_key"})
-_SLUG_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
-_TRANSLIT = str.maketrans({
-    "а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"e","ж":"zh","з":"z","и":"i","й":"i","к":"k","л":"l","м":"m","н":"n","о":"o","п":"p","р":"r","с":"s","т":"t","у":"u","ф":"f","х":"h","ц":"c","ч":"ch","ш":"sh","щ":"sh","ъ":"","ы":"y","ь":"","э":"e","ю":"yu","я":"ya",
-})
 
 
 class SeoPolicyError(ValueError):
@@ -54,19 +50,17 @@ class PolicyDecision:
 
 
 def canonical_slug(name: str) -> str:
-    value = normalize("NFKD", name.lower().translate(_TRANSLIT))
-    value = "".join(char for char in value if not ("\u0300" <= char <= "\u036f"))
-    value = "".join(char if char.isascii() and char.isalnum() else "-" for char in value)
-    slug = re.sub(r"-+", "-", value).strip("-")
-    if not slug:
-        raise SeoPolicyError("company name cannot form a canonical slug")
-    return slug[:200].rstrip("-")
+    try:
+        return legacy_canonical_slug(name)
+    except ValueError as exc:
+        raise SeoPolicyError(str(exc)) from exc
 
 
 def canonical_path(inn: str, name: str) -> str:
-    if not re.fullmatch(r"[0-9]{10}(?:[0-9]{2})?", inn):
-        raise SeoPolicyError("INN must contain exactly 10 or 12 digits")
-    return f"/company/{inn}-{canonical_slug(name)}"
+    try:
+        return legacy_h1_binding(inn, name).canonical_path
+    except ValueError as exc:
+        raise SeoPolicyError(str(exc)) from exc
 
 
 def _contains_forbidden(value: object) -> bool:

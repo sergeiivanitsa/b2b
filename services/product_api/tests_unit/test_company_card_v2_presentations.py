@@ -90,9 +90,8 @@ def _unresolved_h2_pin_case():
         presentation_contract=H2_PRESENTATION_CONTRACT,
         generation=1,
         publication_policy_version=H2_PUBLICATION_POLICY_V3,
-        # Explicit legacy row shape after the additive 0019 upgrade.
-        projection_scope=None,
-        canonical_path=None,
+        projection_scope="staged_publication",
+        canonical_path="/company/ooo-test-7700000000",
         published_lastmod=None,
         indexable=False,
         chart_facts_version="company_card_v2_chart_facts_v1",
@@ -112,6 +111,7 @@ def _unresolved_h2_pin_case():
         "chart_facts_version": pin.chart_facts_version,
         "chart_facts_hash": pin.chart_facts_hash,
         "evidence_registry_version": pin.evidence_registry_version,
+        "canonical_path": pin.canonical_path,
     }
     return pin, kwargs
 
@@ -135,6 +135,7 @@ async def test_append_h2_unresolved_pin_exact_replay_is_read_only() -> None:
         ("narrative_binding_status", "resolved"),
         ("narrative_binding_kind", "artifact"),
         ("narrative_binding_key", "d" * 64),
+        ("canonical_path", "/company/ao-other-7700000000"),
     ),
 )
 async def test_append_h2_unresolved_pin_rejects_mutated_binding_shape(

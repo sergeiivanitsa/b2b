@@ -8,12 +8,12 @@ from typing import Any
 from sqlalchemy.exc import SQLAlchemyError
 
 from .persistence.models import PUBLICATION_POLICY_VERSION
+from .company_urls import parse_company_path
 from .persistence.public_h1 import get_publication_resolution_record, list_report_resolution_records
 from .persistence.serialization import calculate_company_report_snapshot_hash, company_report_from_snapshot
 from .public_h1 import CompanyPublicH1Response, build_public_h1
 
 _INN = re.compile(r"^(?:[0-9]{10}|[0-9]{12})$")
-_CANONICAL = re.compile(r"^/company/(?P<inn>[0-9]{10}(?:[0-9]{2})?)-(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)$")
 _SUFFICIENCY = {
     "sufficient", "report_not_finalized", "report_not_usable",
     "invalid_or_private_snapshot", "insufficient_scoring", "thin_content",
@@ -123,11 +123,12 @@ def validate_active_publication(record: Any) -> CompanyPublicH1Response:
         or publication.published_lastmod is None
     ):
         raise PublicProjectionInvalidError()
-    canonical = _CANONICAL.fullmatch(publication.canonical_path or "")
+    canonical = parse_company_path(publication.canonical_path)
     if (
         canonical is None
-        or canonical.group("inn") != subject.normalized_identifier
-        or publication.canonical_slug != canonical.group("slug")
+        or canonical.kind == "plain"
+        or canonical.inn != subject.normalized_identifier
+        or publication.canonical_slug != canonical.name_slug
     ):
         raise PublicProjectionInvalidError()
     report = _validated_report(report_record, subject, publication.snapshot_hash)
@@ -176,8 +177,8 @@ def validate_assigned_public_h1(
         or pin.published_lastmod is None
     ):
         raise PublicProjectionInvalidError()
-    canonical = _CANONICAL.fullmatch(pin.canonical_path)
-    if canonical is None or canonical.group("inn") != subject.normalized_identifier:
+    canonical = parse_company_path(pin.canonical_path)
+    if canonical is None or canonical.kind == "plain" or canonical.inn != subject.normalized_identifier:
         raise PublicProjectionInvalidError()
     report = _validated_report(report_record, subject, pin.snapshot_hash)
     if not _same_time(pin.published_lastmod, report_record.generated_at):

@@ -1,5 +1,5 @@
 const COMPANY_RETURN_TARGET_KEY = 'auth.company-return-target.v1'
-const COMPANY_PATH_RE = /^\/company\/(?:[0-9]{10}|[0-9]{12})(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$/
+const COMPANY_PATH_RE = /^\/company\/(?:(?:[0-9]{10}|[0-9]{12})(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?|(?:ooo|ao|oao|zao|pao|ip)-[a-z0-9]+(?:-[a-z0-9]+)*-(?:[0-9]{10}|[0-9]{12}))$/
 
 export function storeCompanyReturnTarget(pathname: string): void {
   if (!COMPANY_PATH_RE.test(pathname)) return

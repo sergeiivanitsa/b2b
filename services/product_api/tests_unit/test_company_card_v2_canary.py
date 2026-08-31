@@ -38,7 +38,7 @@ from product_api.company_reports.company_card_v2.canary_models import (
 
 INN = "7707079463"
 RELEASE = "a" * 40
-REVISION = "0020_company_card_narrative_quota_mode"
+REVISION = "0021_company_page_canonical_urls"
 
 
 def _plan() -> CompanyCardV2CanaryPlanV1:

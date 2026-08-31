@@ -9,6 +9,9 @@ if ($config.Contains('root /opt/b2b/services/web_ui/dist;') -or $publicConfig.Co
 if ($config -match 'location \^~ /assets/company-public-h2\. \{[\s\S]*?alias ') { throw 'H2 immutable assets must preserve the URI with root, not alias' }
 if ($config -notmatch 'location ~ "\^/company/\(\?:\[0-9\]\{10\}\|\[0-9\]\{12\}\)') { throw 'Company route must require exactly 10 or 12 INN digits' }
 if ($config -notmatch 'location ~ "\^/company/\(\?:\[0-9\]\{10\}\|\[0-9\]\{12\}\)\$"[\s\S]*error_page 404 = @company_h1_spa;') { throw 'Plain INN route must use the only 404 SPA fallback' }
+foreach ($candidate in @($config, $publicConfig)) {
+  if ($candidate -notmatch 'location ~ "\^/company/\(\?:ooo\|ao\|oao\|zao\|pao\|ip\)-\[a-z0-9\]\+\(\?:-\[a-z0-9\]\+\)\*-\(\?:\[0-9\]\{10\}\|\[0-9\]\{12\}\)\$"') { throw 'Form-first CompanyReport route is missing' }
+}
 if ($config -match 'location ~ "\^/company/[\s\S]*\)-\[a-z0-9\][\s\S]*error_page') { throw 'Canonical CompanyReport route must not fall back to SPA' }
 if ($publicConfig -match 'location \^~ /assets/company-public-h2\. \{[\s\S]*?alias ') { throw 'Public H2 immutable assets must preserve URI with root, not alias' }
 if ($config -notmatch 'location @company_h1_spa \{[\s\S]*try_files \$uri \$uri/ /index\.html;') { throw 'CompanyReport SPA fallback must serve index.html' }
