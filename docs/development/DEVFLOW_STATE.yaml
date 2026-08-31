@@ -281,8 +281,8 @@ iterations:
   - id: 26
     slug: company-page-url-generation
     title: "Генерация URL страницы компании"
-    status: ready_for_merge
+    status: merged
     branch: feat/iteration-26-company-page-url-generation
-    commit: pending
-    merged_at: null
+    commit: fee268c7b60cf760d296111273ead7fbf47b4af3
+    merged_at: "2026-09-01T07:37:39+10:00"
     block_reason: null
