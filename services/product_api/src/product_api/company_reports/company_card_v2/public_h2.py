@@ -8,6 +8,7 @@ from typing import Literal, Protocol
 from zoneinfo import ZoneInfo
 
 from product_api.company_reports.aggregate import CompanyReport
+from product_api.company_reports.company_urls import parse_company_path
 
 from .canonical_json import canonical_digest, canonical_json_bytes
 from .finance import F5_ROWS, FORM_BY_CODE, build_finance_views
@@ -135,7 +136,8 @@ class PublicH2ProjectionBindingV1:
             raise TypeError("public H2 indexability must be an exact boolean")
         if (
             not isinstance(self.canonical_path, str)
-            or not self.canonical_path.startswith("/company/")
+            or (parsed := parse_company_path(self.canonical_path)) is None
+            or parsed.kind == "plain"
         ):
             raise ValueError("public H2 canonical path is invalid")
         if self.projection_scope == "active_publication":

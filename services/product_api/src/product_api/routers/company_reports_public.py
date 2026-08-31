@@ -39,13 +39,12 @@ from product_api.company_reports.company_card_v2.service import (
     resolve_direct_public_h2,
 )
 from product_api.company_reports.seo import render_sitemap, render_sitemap_index
+from product_api.company_reports.company_urls import parse_company_key
 from product_api.db.session import get_session
 from product_api.settings import get_settings
 
 router = APIRouter(tags=["company-reports-public"])
 _PUBLIC_H2_ASSET_MANIFEST: PublicH2AssetManifest | None = None
-_KEY = re.compile(r"(?P<inn>[0-9]{10}(?:[0-9]{2})?)-(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)$")
-_PLAIN = re.compile(r"(?P<inn>[0-9]{10}(?:[0-9]{2})?)$")
 _CHUNK = re.compile(r"[1-9][0-9]*\.xml$")
 
 
@@ -98,12 +97,11 @@ def _safe_error(status_code: int, title: str, message: str) -> Response:
 async def public_company_page(company_key: str, request: Request, session: AsyncSession = Depends(get_session)) -> Response:
     if request.query_params:
         return _safe_error(422, "Некорректный запрос", "Параметры запроса не поддерживаются.")
-    match = _KEY.fullmatch(company_key)
-    plain = _PLAIN.fullmatch(company_key)
-    if match is None and plain is None:
+    parsed = parse_company_key(company_key)
+    if parsed is None:
         return _not_found()
     try:
-        inn = (match or plain).group("inn")
+        inn = parsed.inn
         current = get_settings()
         direct_h2 = current.company_card_v2_direct_launch_enabled
         if direct_h2:
@@ -137,17 +135,17 @@ async def public_company_page(company_key: str, request: Request, session: Async
     except (PublicH1NotFoundError, PublicH1PendingError, PublicH1FailedError, PublicH1NotEligibleError):
         return _not_found()
     except PublicH2NotFound:
-        if get_settings().company_card_v2_direct_launch_enabled and match is not None:
+        if get_settings().company_card_v2_direct_launch_enabled and parsed.kind != "plain":
             return _direct_plain_redirect(inn)
         return _not_found()
     except (PublicH2Pending, PublicH2Failed, PublicH2NotEligible):
         if get_settings().company_card_v2_direct_launch_enabled:
-            if match is not None:
+            if parsed.kind != "plain":
                 # Preserve old indexed/bookmarked H1 slugs across the direct
                 # switch.  The temporary redirect lands on the one nginx SPA
                 # fallback boundary, where the direct H2 lifecycle can start.
                 return _direct_plain_redirect(inn)
-            if plain is not None:
+            if parsed.kind == "plain":
                 # The plain path remains the nginx SPA fallback while a direct
                 # H2 lifecycle is still pending.  Once ready, the same read
                 # resolves the staged saved-result and redirects to its

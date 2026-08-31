@@ -57,7 +57,8 @@
 | 22 | `company-card-v2-page-shell` | Завершена |
 | 23 | `company-card-v2-finance-charts` | Завершена |
 | 24 | `company-card-v2-arbitration-charts` | Завершена |
-| 25 | `company-card-v2-qa-rollout` | Production fresh install: implementation |
+| 25 | `company-card-v2-qa-rollout` | Завершена |
+| 26 | `company-page-url-generation` | Готова к ручному merge |
 
 ## 3. Инженерные правила roadmap
 
@@ -1718,6 +1719,84 @@ canary для `7707079463` выполняются позже; массовое �
   действия; production activation остаётся отдельным одобренным действием.
 - Независимое end-to-end review выдаёт `VERDICT: READY` до commit/push и
   последующего ручного merge.
+
+---
+
+## Итерация 26 — Генерация URL страницы компании
+
+ID: 26
+Slug: company-page-url-generation
+
+Статус: `ready_for_merge`. Реализация и обязательные проверки завершены
+1 сентября 2026 года; commit/push feature-ветки выполняет DevFlow, merge
+остаётся ручным. Итерация 25 признана владельцем завершённой; решения A1/B1/C1
+утверждены владельцем 31 августа 2026 года. Итерация 26 выполнена отдельно от
+ветки CompanyReport Lab.
+
+### Проверка завершения
+
+- Product API unit: `1698 passed`.
+- Product API integration на одноразовом локальном PostgreSQL:
+  `350 passed, 2 skipped`; skips являются существующими условными сценариями.
+- Gateway API: `37 passed`.
+- Web UI: lint и build успешны, tests: `515 passed`.
+- Nginx contracts: PowerShell contract успешен, Python contract: `2 passed`.
+- `git diff --check` успешен; production deploy, migration и traffic switch не
+  выполнялись.
+
+### Зависимости
+
+- Завершённые canonical/resolver/SEO контракты итераций 11, 12, 14 и 16–18.
+- Совместимый H1/H2 public routing и immutable CompanyReport snapshots.
+- Owner-defined mapping шести форм; дополнительные DataNewton aliases могут
+  появиться только после tracked sanitized evidence.
+
+### Цель
+
+Перевести канонический адрес страницы компании на детерминированную схему
+`/company/{legal-form}-{company-name}-{inn}`, сохранив прямое открытие
+правильной компании и постоянный redirect со старых адресов.
+
+### Scope
+
+- Один backend-генератор slug/canonical path для H1/H2 publications и pins;
+  SSR, SPA и sitemap используют сохранённый backend canonical path и сами slug
+  не генерируют.
+- Зафиксированное правило транслитерации русского текста в латиницу.
+- Единый словарь организационно-правовых форм с полным русским названием,
+  кратким русским названием и URL-значением; обязательная поддержка ООО, АО,
+  ОАО, ЗАО, ПАО и ИП. Неизвестные формы сохраняют legacy URL; дополнительные
+  формы не входят в итерацию 26.
+- Нормализация пробелов, кавычек и разделителей в один дефис, удаление лишних
+  символов и повторных дефисов.
+- Неизменённый валидированный ИНН в конце slug; уникальность адреса
+  обеспечивается ИНН.
+- Постоянный redirect со старого canonical вида `/company/{inn}-{slug}` на
+  новый адрес без redirect loop.
+- Targeted backend/frontend/SSR/canonical/sitemap/compatibility tests.
+- Claims backlink остаётся discovery URL `/company/{inn}`.
+
+### Вне scope
+
+- Внешний вид страницы, хлебные крошки и отображаемое название компании.
+- Содержимое, структура данных и бизнес-семантика CompanyReport.
+- Provider live calls, production deploy, feature activation и миграция
+  immutable report snapshots.
+- DataNewton `individual` end-to-end, массовая конверсия существующих legacy
+  страниц и дополнительные provider forms/aliases.
+
+### Критерии приёмки
+
+- Новый canonical slug начинается с URL-значения правовой формы, содержит
+  транслитерированное название с одиночными дефисами и заканчивается точным
+  ИНН.
+- Одинаковые входные данные всегда дают одинаковый URL, а разные ИНН не
+  конфликтуют.
+- Прямой переход на новый URL открывает правильную компанию.
+- Existing authoritative legacy URL продолжает работать; после естественного
+  появления authoritative v2 generation старый URL отвечает одним постоянным
+  redirect на новый canonical URL и не образует цикл.
+- Все затронутые API, SSR, SPA, SEO и regression checks проходят.
 
 ---
 

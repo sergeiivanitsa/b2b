@@ -11,6 +11,11 @@ from pydantic import SecretStr
 from company_report_orchestrator_test_helpers import successful_fake_provider
 from company_report_signal_test_helpers import complete_company_report
 from product_api.company_reports import worker
+from product_api.company_reports.company_urls import (
+    CanonicalCompanyIdentity,
+    build_v2_company_binding,
+    legacy_h2_binding,
+)
 from product_api.company_reports.persistence import ClaimedReportJob
 from product_api.providers.datanewton import (
     COUNTERPARTY_ENDPOINT,
@@ -216,7 +221,20 @@ async def test_v3_worker_forwards_explicit_partial_outcome_and_commits(monkeypat
             "rollout_generation": 1,
         }
     )
-    outcome = SimpleNamespace(snapshot=object(), lifecycle_status="partial")
+    binding = build_v2_company_binding(
+        CanonicalCompanyIdentity(
+            claimed.normalized_identifier,
+            "ООО",
+            "ООО Ромашка",
+            None,
+        )
+    )
+    assert binding is not None
+    outcome = SimpleNamespace(
+        snapshot=object(),
+        lifecycle_status="partial",
+        canonical_url_binding=binding,
+    )
     builder = AsyncMock(return_value=outcome)
     complete = AsyncMock()
     monkeypatch.setattr(worker, "complete_claimed_company_card_v2_job", complete)
@@ -238,6 +256,10 @@ async def test_v3_worker_forwards_explicit_partial_outcome_and_commits(monkeypat
         claimed=claimed,
         snapshot=outcome.snapshot,
         lifecycle_status="partial",
+        canonical_url_binding=outcome.canonical_url_binding,
+    )
+    assert outcome.canonical_url_binding.canonical_path == (
+        f"/company/ooo-romashka-{claimed.normalized_identifier}"
     )
     assert sessions.sessions[-1].commit.await_count == 1
 
@@ -255,7 +277,11 @@ async def test_v3_completion_failure_rolls_back_before_owned_failure(monkeypatch
         }
     )
     builder = AsyncMock(
-        return_value=SimpleNamespace(snapshot=object(), lifecycle_status="complete")
+        return_value=SimpleNamespace(
+            snapshot=object(),
+            lifecycle_status="complete",
+            canonical_url_binding=legacy_h2_binding(claimed.normalized_identifier),
+        )
     )
     complete = AsyncMock(side_effect=RuntimeError("outbox insert failed"))
     fail = AsyncMock(return_value=False)

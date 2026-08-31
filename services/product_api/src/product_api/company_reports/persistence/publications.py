@@ -31,7 +31,11 @@ from product_api.company_reports.persistence.serialization import (
     calculate_company_report_snapshot_hash,
     company_report_from_snapshot,
 )
-from product_api.company_reports.seo import canonical_path, evaluate_publication
+from product_api.company_reports.company_urls import (
+    CanonicalCompanyIdentity,
+    build_h1_company_binding,
+)
+from product_api.company_reports.seo import evaluate_publication
 
 
 class PublicationStateConflictError(RuntimeError):
@@ -568,14 +572,26 @@ async def finalize_batch_claim(
             # writes under this outer savepoint; the upsert's own savepoint is
             # only for its conflict-resolution protocol.
             async with session.begin_nested():
-                path = canonical_path(decision.projection.inn, decision.projection.name)
+                counterparty = report_model.counterparty
+                if counterparty is None:
+                    raise PublicationStateConflictError("publication identity is missing")
+                binding = build_h1_company_binding(
+                    CanonicalCompanyIdentity(
+                        inn=decision.projection.inn,
+                        legal_form=counterparty.legal_form,
+                        legal_short_name=counterparty.short_name,
+                        legal_full_name=counterparty.full_name,
+                    )
+                )
+                if binding is None:
+                    raise PublicationStateConflictError("publication URL binding is unavailable")
+                path = binding.canonical_path
                 lastmod = _utc(report.generated_at)
-                slug = path[len(f"/company/{decision.projection.inn}-"):]
                 _, applied = await _upsert_publication(
                     session,
                     subject_id=report.subject_id,
                     report_id=report.id,
-                    canonical_slug=slug,
+                    canonical_slug=binding.name_slug,
                     canonical_path_value=path,
                     snapshot_hash=report.snapshot_hash,
                     policy_version=item.policy_version,

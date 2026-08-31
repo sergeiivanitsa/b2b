@@ -180,6 +180,50 @@ def test_public_page_serves_ssr_and_rejects_query_without_writes(monkeypatch):
         app.dependency_overrides.pop(get_session, None)
 
 
+def test_form_first_route_get_head_and_legacy_redirect_share_authority(monkeypatch):
+    report = complete_company_report(
+        counterparty=counterparty_facts().model_copy(
+            update={
+                "inn": "0000000000",
+                "legal_form": "ООО",
+                "short_name": "ООО Ромашка",
+                "full_name": "Общество с ограниченной ответственностью Ромашка",
+            }
+        ),
+        report_version="2",
+    )
+    path = "/company/ooo-romashka-0000000000"
+    dto = build_public_h1(
+        report,
+        projection_scope="published",
+        persisted_canonical_path=path,
+        persisted_indexable=True,
+    )
+
+    async def fake_resolve(*_args, **kwargs):
+        assert kwargs["inn"] == "0000000000"
+        return ResolvedPublicDocument(PublicDocumentKind.H1, dto, True)
+
+    async def fake_session():
+        yield object()
+
+    monkeypatch.setattr(public_routes, "resolve_public_document", fake_resolve)
+    app.dependency_overrides[get_session] = fake_session
+    try:
+        with TestClient(app) as client:
+            get = client.get(path)
+            head = client.head(path)
+            assert get.status_code == head.status_code == 200
+            assert head.content == b""
+            for old in ("/company/0000000000", "/company/0000000000-romashka", "/company/ao-wrong-0000000000"):
+                redirected = client.get(old, follow_redirects=False)
+                assert redirected.status_code == 301
+                assert redirected.headers["location"] == path
+            assert client.get("/company/unknown-romashka-0000000000").status_code == 404
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
 def test_direct_launch_ssr_renders_staged_h2_without_assignment(monkeypatch):
     dto = SimpleNamespace(
         canonical_path="/company/0000000000-direct-h2",

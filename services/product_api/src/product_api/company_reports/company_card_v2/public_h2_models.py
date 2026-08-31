@@ -10,6 +10,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationInfo, model_validator
 
+from product_api.company_reports.company_urls import parse_company_path
 from .canonical_json import canonical_digest, canonical_json_bytes
 
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
@@ -2235,7 +2236,8 @@ class CompanyPublicH2Response(PublicH2Model):
     def _valid(self, info: ValidationInfo) -> "CompanyPublicH2Response":
         if not _DIGEST.fullmatch(self.projection_digest) or not _DIGEST.fullmatch(self.chart_facts_hash) or not _UUID.fullmatch(self.report_id) or not _PATH.fullmatch(self.canonical_path) or not _UTC.fullmatch(self.checked_at) or not _DATE.fullmatch(self.checked_date):
             raise ValueError("invalid public root")
-        if not re.fullmatch(rf"/company/{re.escape(self.identity.inn)}-[a-z0-9]+(?:-[a-z0-9]+)*", self.canonical_path):
+        parsed_path = parse_company_path(self.canonical_path)
+        if parsed_path is None or parsed_path.kind == "plain" or parsed_path.inn != self.identity.inn:
             raise ValueError("canonical path does not bind identity INN")
         if self.block_order != BLOCK_ORDER or tuple(item.block_id for item in self.coverage) != COVERAGE_BLOCKS:
             raise ValueError("invalid block or coverage order")

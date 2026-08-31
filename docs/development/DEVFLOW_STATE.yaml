@@ -253,10 +253,10 @@ iterations:
   - id: 25
     slug: company-card-v2-qa-rollout
     title: "QA и rollout Company Card v2"
-    status: reviewing
+    status: merged
     branch: codex/production-fresh-install
-    commit: null
-    merged_at: null
+    commit: e477918265388db3078df4713ebc46d1a90f58df
+    merged_at: "2026-08-31T08:53:42+10:00"
     block_reason: null
     historical_merge:
       branch: codex/iteration-25-company-card-v2-qa-rollout-refresh
@@ -277,3 +277,12 @@ iterations:
       plan: docs/development/plans/iteration-25-production-fresh-install.md
       destructive_scope: "DROP and recreate PostgreSQL schema public only"
       claims_uploads: preserve
+
+  - id: 26
+    slug: company-page-url-generation
+    title: "Генерация URL страницы компании"
+    status: ready_for_merge
+    branch: feat/iteration-26-company-page-url-generation
+    commit: pending
+    merged_at: null
+    block_reason: null

@@ -1551,7 +1551,7 @@ async def test_canary_decisions_drive_h1_to_h2_to_h1(
 
 
 @pytest.mark.asyncio
-async def test_canary_decision_does_not_reuse_wrong_lineage_active_pin(
+async def test_canary_decision_does_not_reuse_wrong_projection_active_pin(
     engine,
     db_url: str,
     tmp_path: Path,
@@ -1599,11 +1599,15 @@ async def test_canary_decision_does_not_reuse_wrong_lineage_active_pin(
                     == "company_public_h2_v1",
                     CompanyReportPresentationPin.projection_scope
                     == "staged_publication",
+                    CompanyReportPresentationPin.narrative_binding_status
+                    == "resolved",
                 )
             )
             assert report is not None and source_pin is not None
-            wrong_hash = (
-                "0" * 64 if source_pin.snapshot_hash != "0" * 64 else "1" * 64
+            wrong_digest = (
+                "0" * 64
+                if first_target.expected_active_projection_digest != "0" * 64
+                else "1" * 64
             )
             session.add(
                 CompanyReportPresentationPin(
@@ -1611,7 +1615,7 @@ async def test_canary_decision_does_not_reuse_wrong_lineage_active_pin(
                     report_id=report.id,
                     presentation_contract="company_public_h2_v1",
                     generation=first_target.expected_active_h2_pin_generation,
-                    snapshot_hash=wrong_hash,
+                    snapshot_hash=source_pin.snapshot_hash,
                     chart_facts_version=source_pin.chart_facts_version,
                     chart_facts_hash=source_pin.chart_facts_hash,
                     evidence_registry_version=source_pin.evidence_registry_version,
@@ -1620,7 +1624,7 @@ async def test_canary_decision_does_not_reuse_wrong_lineage_active_pin(
                     canonical_path=f"/company/{profile['inn']}-company",
                     indexable=True,
                     published_lastmod=report.generated_at,
-                    projection_digest=first_target.expected_active_projection_digest,
+                    projection_digest=wrong_digest,
                     narrative_binding_status="resolved",
                     narrative_binding_kind=source_pin.narrative_binding_kind,
                     narrative_binding_key=source_pin.narrative_binding_key,

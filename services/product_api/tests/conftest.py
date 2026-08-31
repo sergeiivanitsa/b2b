@@ -111,6 +111,12 @@ SELF_MANAGED_DATABASE_TESTS = {
     "test_iteration24_terminal_defaults_checks_and_round_trip",
     "test_company_card_v2_rollout_clean_upgrade_downgrade_reupgrade",
     "test_company_card_v2_rollout_downgrade_refuses_new_scope_or_audit",
+    "test_company_page_url_0021_upgrade_has_no_backfill_and_round_trips",
+    "test_company_page_url_0021_enforces_new_h2_binding_lifecycle",
+    "test_company_page_url_0021_historical_null_continues_via_legacy_fallback",
+    "test_company_page_url_0021_downgrade_guards_every_new_binding[h1_v2]",
+    "test_company_page_url_0021_downgrade_guards_every_new_binding[h2_v2]",
+    "test_company_page_url_0021_downgrade_guards_every_new_binding[h2_staged_legacy]",
 }
 
 

@@ -30,7 +30,7 @@ from product_api.providers.datanewton import (
 )
 from product_api.settings import Settings
 
-from .seo import SeoPolicyError, canonical_path
+from .company_urls import CanonicalCompanyIdentity, build_h1_company_binding
 from .schemas import (
     CompanyReportAcceptedResponse,
     CompanyReportResponse,
@@ -262,13 +262,15 @@ def _canonical_path_for_report(report: object, inn: str) -> str | None:
     counterparty = getattr(report, "counterparty", None)
     if counterparty is None or getattr(counterparty, "inn", None) != inn:
         return None
-    name = getattr(counterparty, "short_name", None) or getattr(counterparty, "full_name", None)
-    if not isinstance(name, str) or not name.strip():
-        return None
-    try:
-        return canonical_path(inn, name.strip())
-    except SeoPolicyError:
-        return None
+    binding = build_h1_company_binding(
+        CanonicalCompanyIdentity(
+            inn=inn,
+            legal_form=getattr(counterparty, "legal_form", None),
+            legal_short_name=getattr(counterparty, "short_name", None),
+            legal_full_name=getattr(counterparty, "full_name", None),
+        )
+    )
+    return binding.canonical_path if binding is not None else None
 
 
 def validate_company_report_inn(value: str) -> str:

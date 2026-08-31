@@ -105,7 +105,7 @@ from product_api.company_reports.persistence.v3 import (
 from product_api.company_reports.seo import canonical_path as h1_canonical_path
 
 
-EXPECTED_HEAD = "0020_company_card_narrative_quota_mode"
+EXPECTED_HEAD = "0021_company_page_canonical_urls"
 REGISTRY_PATH = (
     REPO_ROOT
     / "services"
@@ -757,7 +757,7 @@ async def seed_database(
         async with AsyncSession(bind=engine, expire_on_commit=False) as session:
             revision = await session.scalar(text("SELECT version_num FROM alembic_version"))
             if revision != EXPECTED_HEAD:
-                raise SeederContractError("database is not at exact iteration-25 head")
+                raise SeederContractError("database is not at the required schema head")
             existing = await session.scalar(select(func.count()).select_from(CompanyReportSubject))
             if existing != 0:
                 raise SeederContractError("acceptance database must be empty")

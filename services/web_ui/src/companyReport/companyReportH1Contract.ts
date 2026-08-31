@@ -474,8 +474,10 @@ function sameOriginPath(value: unknown): string {
 
 function canonicalPath(value: unknown, expectedInn: string): string {
   const parsed = rawString(value)
-  const match = /^\/company\/([0-9]{10}(?:[0-9]{2})?)-[a-z0-9]+(?:-[a-z0-9]+)*$/.exec(parsed)
-  if (match === null || match[1] !== expectedInn) fail()
+  const legacy = /^\/company\/([0-9]{10}|[0-9]{12})-[a-z0-9]+(?:-[a-z0-9]+)*$/.exec(parsed)
+  const v2 = /^\/company\/(?:ooo|ao|oao|zao|pao|ip)-[a-z0-9]+(?:-[a-z0-9]+)*-([0-9]{10}|[0-9]{12})$/.exec(parsed)
+  const inn = legacy?.[1] ?? v2?.[1]
+  if (inn !== expectedInn) fail()
   return parsed
 }
 

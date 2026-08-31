@@ -56,13 +56,24 @@ describe('CompanyReport presentation policy', () => {
     vi.restoreAllMocks()
   })
 
-  it('parses only strict plain/canonical keys and rejects non-empty queries', () => {
+  it('parses strict plain, legacy and form-first keys and rejects non-empty queries', () => {
     expect(parseCompanyKey('1234567890')).toEqual({
       kind: 'plain',
       inn: '1234567890',
     })
     expect(parseCompanyKey('123456789012-safe-name')).toEqual({
-      kind: 'canonical',
+      kind: 'legacy',
+      inn: '123456789012',
+      nameSlug: 'safe-name',
+    })
+    expect(parseCompanyKey('ooo-safe-name-1234567890')).toEqual({
+      kind: 'v2',
+      inn: '1234567890',
+      formToken: 'ooo',
+      nameSlug: 'safe-name',
+    })
+    expect(parseCompanyKey('ip-ivanov-ivan-123456789012')).toMatchObject({
+      kind: 'v2',
       inn: '123456789012',
     })
     for (const key of [
@@ -72,6 +83,8 @@ describe('CompanyReport presentation policy', () => {
       '1234567890-Safe',
       '1234567890-safe_name',
       '1234567890-safe-',
+      'unknown-safe-1234567890',
+      'ooo-safe-12345678901',
     ]) {
       expect(parseCompanyKey(key)).toEqual({ error: 'invalid_company_key' })
     }
@@ -79,13 +92,16 @@ describe('CompanyReport presentation policy', () => {
       error: 'invalid_company_key',
     })
     expect(parseCompanyRoute('1234567890-safe', '')).toMatchObject({
-      kind: 'canonical',
+      kind: 'legacy',
     })
   })
 
   it('accepts only a canonical path for the exact requested INN', () => {
     expect(
       isCanonicalCompanyPath('/company/1234567890-safe-name', '1234567890'),
+    ).toBe(true)
+    expect(
+      isCanonicalCompanyPath('/company/ooo-safe-name-1234567890', '1234567890'),
     ).toBe(true)
     expect(
       isCanonicalCompanyPath('/company/0987654321-safe-name', '1234567890'),
@@ -99,6 +115,12 @@ describe('CompanyReport presentation policy', () => {
     expect(
       isCanonicalCompanyPath('https://example.test/company/1234567890-safe', '1234567890'),
     ).toBe(false)
+  })
+
+  it('applies the safe head bootstrap to form-first company paths', () => {
+    runBootstrap('/company/pao-safe-name-1234567890')
+    expect(document.documentElement.lang).toBe('ru')
+    expect(document.head.querySelector('meta[name="robots"]')?.getAttribute('content')).toBe('noindex,follow')
   })
 
   it('formats ISO dates by string slicing and is browser-timezone independent', () => {

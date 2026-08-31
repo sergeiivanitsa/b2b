@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from product_api.company_reports.company_urls import legacy_h2_binding
 from .rollout_models import (
     H1_PRESENTATION_CONTRACT,
     H2_PRESENTATION_CONTRACT,
@@ -764,7 +765,7 @@ async def _inspect_target(
         source_pin=source_pin,
         expected_subject_id=subject.id,
         expected_inn=target.inn,
-        canonical_path=f"/company/{target.inn}-company",
+        canonical_path=(source_pin.canonical_path or legacy_h2_binding(target.inn).canonical_path),
         indexable=parsed.decision.h2_indexable,
         published_lastmod=report.generated_at,
     )

@@ -7,6 +7,11 @@ from uuid import uuid4
 import pytest
 
 from product_api.company_reports import worker
+from product_api.company_reports.company_urls import (
+    CanonicalCompanyIdentity,
+    build_v2_company_binding,
+    legacy_h2_binding,
+)
 from product_api.company_reports.persistence import jobs
 from product_api.company_reports.persistence.errors import (
     CompanyReportJobFencingError,
@@ -991,6 +996,15 @@ async def test_completed_h2_retry_reuses_only_the_exact_v2_or_v3_boundary(
         )
     )
 
+    binding = build_v2_company_binding(
+        CanonicalCompanyIdentity(
+            claimed.normalized_identifier,
+            "ООО",
+            "ООО Ромашка",
+            None,
+        )
+    )
+    assert binding is not None
     completed = await jobs._reuse_exact_company_card_v2_completion(
         session,
         claimed=claimed,
@@ -999,6 +1013,7 @@ async def test_completed_h2_retry_reuses_only_the_exact_v2_or_v3_boundary(
         snapshot=snapshot,
         lifecycle_status="complete",
         db_time=db_time,
+        canonical_url_binding=binding,
     )
 
     assert completed.report_id == report.id
@@ -1012,4 +1027,8 @@ async def test_completed_h2_retry_reuses_only_the_exact_v2_or_v3_boundary(
         arbitration_collection_enabled=arbitration_enabled,
         arbitration_mask_key_id=claimed.arbitration_mask_key_id,
     )
-    require_pin.assert_awaited_once_with(session, report=report)
+    require_pin.assert_awaited_once_with(
+        session,
+        report=report,
+        canonical_path=f"/company/ooo-romashka-{claimed.normalized_identifier}",
+    )

@@ -101,6 +101,38 @@ def test_h1_exact_manifest_default_deny_and_disabled_optional_gates():
     assert "address_marked_inaccurate" in {item.code for item in addressed.limitations}
 
 
+def test_latest_unpublished_uses_form_first_path_without_changing_display_identity():
+    dto = build_public_h1(
+        complete_company_report(
+            counterparty=_counterparty(
+                legal_form="ООО",
+                short_name="ООО «Ромашка»",
+                full_name="Общество с ограниченной ответственностью «Ромашка»",
+            ),
+            report_version="2",
+        ),
+        projection_scope="latest_unpublished",
+    )
+    assert dto.canonical_path == "/company/ooo-romashka-0000000000"
+    assert dto.identity.display_name == "ООО «Ромашка»"
+    assert dto.breadcrumbs[1].path == dto.canonical_path
+
+
+def test_latest_unpublished_uses_legacy_path_on_boundary_form_conflict():
+    dto = build_public_h1(
+        complete_company_report(
+            counterparty=_counterparty(
+                legal_form="ООО",
+                short_name="ПАО Ромашка",
+                full_name="ООО Полное имя не используется",
+            ),
+            report_version="2",
+        ),
+        projection_scope="latest_unpublished",
+    )
+    assert dto.canonical_path == "/company/0000000000-pao-romashka"
+
+
 def test_public_h1_v1_matches_fixed_safe_golden_fixture():
     report = company_report(counterparty=counterparty_facts().model_copy(update={"inn": "0000000000", "full_name": "ООО Синтетический эталон"})).model_copy(update={"report_version": "1"})
     dto = build_public_h1(report, projection_scope="latest_unpublished")

@@ -14,9 +14,9 @@ export const HEAD_OWNER_VALUE = 'company-report-h1-v1'
 export const HEAD_KIND_ATTRIBUTE = 'data-company-report-head-kind'
 export const HEAD_PREVIOUS_LANG_ATTRIBUTE = 'data-company-report-previous-lang'
 
-export type CompanyRouteKind = 'plain' | 'canonical'
+export type CompanyRouteKind = 'plain' | 'legacy' | 'v2'
 export type CompanyKeyParseResult =
-  | { kind: CompanyRouteKind; inn: string }
+  | { kind: CompanyRouteKind; inn: string; formToken?: string; nameSlug?: string }
   | { error: 'invalid_company_key' }
 export type H1Operation = 'read' | 'status' | 'create'
 export type H1Error = {
@@ -125,11 +125,11 @@ export function parseCompanyKey(
   if (/^(\d{10}|\d{12})$/.test(key)) {
     return { kind: 'plain', inn: key }
   }
-  const canonical = /^(\d{10}|\d{12})-[a-z0-9]+(?:-[a-z0-9]+)*$/.exec(
-    key,
-  )
-  return canonical
-    ? { kind: 'canonical', inn: canonical[1] }
+  const legacy = /^(\d{10}|\d{12})-([a-z0-9]+(?:-[a-z0-9]+)*)$/.exec(key)
+  if (legacy) return { kind: 'legacy', inn: legacy[1], nameSlug: legacy[2] }
+  const v2 = /^(ooo|ao|oao|zao|pao|ip)-([a-z0-9]+(?:-[a-z0-9]+)*)-(\d{10}|\d{12})$/.exec(key)
+  return v2
+    ? { kind: 'v2', inn: v2[3], formToken: v2[1], nameSlug: v2[2] }
     : { error: 'invalid_company_key' }
 }
 
@@ -149,7 +149,7 @@ export function isCanonicalCompanyPath(
   if (!value?.startsWith('/company/')) return false
   const parsed = parseCompanyKey(value.slice('/company/'.length))
   return (
-    'kind' in parsed && parsed.kind === 'canonical' && parsed.inn === inn
+    'kind' in parsed && parsed.kind !== 'plain' && parsed.inn === inn
   )
 }
 

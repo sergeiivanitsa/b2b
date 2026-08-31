@@ -362,6 +362,17 @@ describe('company public H2 closed contract boundary', () => {
     expect(classifyArbitrationPolicyV3(parsed.dto)).toBeNull()
   })
 
+  it('accepts a recognized-form v2 canonical path bound to the identity INN', async () => {
+    const value = JSON.parse(sharedDto) as Record<string, unknown>
+    const canonicalPath = '/company/ooo-test-7701234567'
+    value.canonical_path = canonicalPath
+    const breadcrumbs = value.breadcrumbs as Record<string, unknown>[]
+    breadcrumbs[1].path = canonicalPath
+
+    const parsed = await parseCompanyPublicH2(await resignJson(value))
+    expect(parsed.dto.canonical_path).toBe(canonicalPath)
+  })
+
   it('dispatches only the exact bound policy-v3 source tuple', async () => {
     const raw = sharedArbitrationV3Dto
     const parsed = await parseCompanyPublicH2(raw)

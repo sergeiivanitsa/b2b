@@ -34,6 +34,10 @@ from product_api.company_reports.company_card_v2.models import (
     CompanyCardV2SnapshotV2,
     CompanyCardV2SnapshotV3,
 )
+from product_api.company_reports.company_urls import (
+    legacy_h2_binding,
+    parse_company_path,
+)
 
 H2_PUBLICATION_POLICY_V1 = "company_public_h2_publication_v1"
 H2_PUBLICATION_POLICY_V2 = "company_public_h2_publication_v2"
@@ -761,6 +765,14 @@ async def append_presentation_pin(
             or publication_policy_version not in H2_PUBLICATION_POLICY_VERSIONS
         ):
             raise PresentationAssignmentConflict("H2 pin evidence identity is invalid")
+        parsed_path = parse_company_path(canonical_path)
+        if (
+            canonical_path is None
+            or parsed_path is None
+            or parsed_path.kind == "plain"
+            or parsed_path.inn != snapshot.subject_inn
+        ):
+            raise PresentationAssignmentConflict("H2 pin canonical path is invalid")
         pin = CompanyReportPresentationPin(
             subject_id=subject_id, report_id=report.id, presentation_contract=contract,
             generation=generation, snapshot_hash=report.snapshot_hash, indexable=False,
@@ -771,6 +783,7 @@ async def append_presentation_pin(
             chart_facts_hash=chart_facts_hash,
             evidence_registry_version=evidence_registry_version,
             publication_policy_version=publication_policy_version,
+            canonical_path=canonical_path,
         )
     else:
         if (
@@ -799,6 +812,7 @@ async def _resolve_unresolved_h2_pin(
     *,
     report: CompanyReportRecord,
     create_if_missing: bool,
+    canonical_path: str | None,
 ) -> CompanyReportPresentationPin:
     """Resolve the v2 predecessor while holding the stable subject lineage lock.
 
@@ -828,6 +842,16 @@ async def _resolve_unresolved_h2_pin(
         or calculate_company_card_v2_snapshot_hash(snapshot) != report.snapshot_hash
     ):
         raise PresentationAssignmentConflict("H2 v2 pin snapshot is invalid")
+    expected_path = canonical_path
+    if create_if_missing and expected_path is None:
+        expected_path = legacy_h2_binding(snapshot.subject_inn).canonical_path
+    parsed_path = parse_company_path(expected_path) if expected_path is not None else None
+    if expected_path is not None and (
+        parsed_path is None
+        or parsed_path.kind == "plain"
+        or parsed_path.inn != snapshot.subject_inn
+    ):
+        raise PresentationAssignmentConflict("H2 pin canonical path is invalid")
     # Lock a stable per-subject row even before a first pin exists; locking an
     # empty result set cannot serialize concurrent first finalizations.
     subject = await session.get(CompanyReportSubject, report.subject_id, with_for_update=True)
@@ -854,6 +878,7 @@ async def _resolve_unresolved_h2_pin(
             or pin.chart_facts_version != snapshot.chart_facts.version
             or pin.chart_facts_hash != snapshot.chart_facts.hash
             or pin.evidence_registry_version != snapshot.evidence_version
+            or pin.canonical_path != expected_path
         ):
             raise PresentationAssignmentConflict("H2 report lineage has mixed policy or identity")
     unresolved = [pin for pin in exact if pin.narrative_binding_status == "unresolved"]
@@ -890,6 +915,7 @@ async def _resolve_unresolved_h2_pin(
         chart_facts_version=snapshot.chart_facts.version,
         chart_facts_hash=snapshot.chart_facts.hash,
         evidence_registry_version=snapshot.evidence_version,
+        canonical_path=expected_path,
     )
 
 
@@ -897,12 +923,14 @@ async def create_or_reuse_unresolved_h2_pin(
     session: AsyncSession,
     *,
     report: CompanyReportRecord,
+    canonical_path: str | None = None,
 ) -> CompanyReportPresentationPin:
     """Create or reuse v2 lineage inside the first finalization transaction."""
     return await _resolve_unresolved_h2_pin(
         session,
         report=report,
         create_if_missing=True,
+        canonical_path=canonical_path,
     )
 
 
@@ -910,23 +938,26 @@ async def require_existing_unresolved_h2_pin(
     session: AsyncSession,
     *,
     report: CompanyReportRecord,
+    canonical_path: str | None = None,
 ) -> CompanyReportPresentationPin:
     """Validate a terminal retry without ever backfilling a missing lineage."""
     return await _resolve_unresolved_h2_pin(
         session,
         report=report,
         create_if_missing=False,
+        canonical_path=canonical_path,
     )
 
 
 async def stage_h2_pin(session: AsyncSession, *, subject_id: UUID, pin: CompanyReportPresentationPin, expected_generation: int) -> CompanyReportPresentationStagedPointer:
+    parsed_path = parse_company_path(pin.canonical_path) if pin.canonical_path is not None else None
     if (
         pin.subject_id != subject_id
         or pin.presentation_contract != H2_PRESENTATION_CONTRACT
         or expected_generation != pin.generation
         or pin.projection_scope not in {None, H2_STAGED_PROJECTION_SCOPE}
         or pin.indexable is not False
-        or pin.canonical_path is not None
+        or (pin.canonical_path is not None and (parsed_path is None or parsed_path.kind == "plain"))
         or pin.published_lastmod is not None
     ):
         raise PresentationAssignmentConflict("staged pointer identity is invalid")
@@ -1002,6 +1033,15 @@ async def append_resolved_h2_pin(
     policy = unresolved[0].publication_policy_version
     _validate_h2_snapshot_policy(report, snapshot, policy)
     predecessor = unresolved[0]
+    predecessor_path = (
+        parse_company_path(predecessor.canonical_path)
+        if predecessor.canonical_path is not None
+        else None
+    )
+    resolved_path = (
+        predecessor.canonical_path
+        or legacy_h2_binding(snapshot.subject_inn).canonical_path
+    )
     if (
         predecessor.subject_id != report.subject_id
         or predecessor.snapshot_hash != report.snapshot_hash
@@ -1013,6 +1053,14 @@ async def append_resolved_h2_pin(
         or predecessor.chart_facts_version != snapshot.chart_facts.version
         or predecessor.chart_facts_hash != snapshot.chart_facts.hash
         or predecessor.evidence_registry_version != snapshot.evidence_version
+        or (
+            predecessor.canonical_path is not None
+            and (
+                predecessor_path is None
+                or predecessor_path.kind == "plain"
+                or predecessor_path.inn != snapshot.subject_inn
+            )
+        )
     ):
         raise PresentationAssignmentConflict("resolved H2 pin predecessor identity is invalid")
     for existing in pins:
@@ -1022,7 +1070,7 @@ async def append_resolved_h2_pin(
             existing.snapshot_hash == report.snapshot_hash
             and existing.projection_scope in {None, H2_STAGED_PROJECTION_SCOPE}
             and existing.indexable is False
-            and existing.canonical_path is None
+            and existing.canonical_path == resolved_path
             and existing.published_lastmod is None
             and existing.projection_digest == projection_digest
             and existing.narrative_binding_kind == artifact.binding_kind
@@ -1054,7 +1102,7 @@ async def append_resolved_h2_pin(
         evidence_registry_version=snapshot.evidence_version,
         publication_policy_version=policy,
         projection_scope=H2_STAGED_PROJECTION_SCOPE,
-        canonical_path=None,
+        canonical_path=resolved_path,
         indexable=False,
         published_lastmod=None,
         projection_digest=projection_digest,
@@ -1093,11 +1141,16 @@ async def _plan_active_h2_pin_locked(
     the caller has validated the complete CAS and is ready to append it beside
     the assignment/journal mutation.
     """
+    source_path = parse_company_path(source_pin.canonical_path) if source_pin.canonical_path is not None else None
+    active_path = parse_company_path(canonical_path)
     if (
         source_pin.presentation_contract != H2_PRESENTATION_CONTRACT
         or source_pin.projection_scope not in {None, H2_STAGED_PROJECTION_SCOPE}
         or source_pin.indexable is not False
-        or source_pin.canonical_path is not None
+        or (
+            source_pin.canonical_path is not None
+            and (source_path is None or source_path.kind == "plain")
+        )
         or source_pin.published_lastmod is not None
         or source_pin.narrative_binding_status != "resolved"
         or source_pin.narrative_binding_kind not in {"artifact", "fallback"}
@@ -1109,9 +1162,8 @@ async def _plan_active_h2_pin_locked(
         or not _is_digest(projection_digest)
         or projection_digest == source_pin.projection_digest
         or type(canonical_path) is not str
-        or not canonical_path.startswith("/company/")
-        or "?" in canonical_path
-        or "#" in canonical_path
+        or active_path is None
+        or active_path.kind == "plain"
         or len(canonical_path) > 2048
         or type(indexable) is not bool
         or not isinstance(published_lastmod, datetime)
@@ -1121,9 +1173,11 @@ async def _plan_active_h2_pin_locked(
     if (
         source_pin.subject_id != subject.id
         or source_pin.report_id != report.id
-        or canonical_path == f"/company/{subject.normalized_identifier}"
-        or not canonical_path.startswith(
-            f"/company/{subject.normalized_identifier}-"
+        or active_path.inn != subject.normalized_identifier
+        or canonical_path
+        != (
+            source_pin.canonical_path
+            or legacy_h2_binding(subject.normalized_identifier).canonical_path
         )
     ):
         raise PresentationAssignmentConflict("active H2 pin subject is invalid")
@@ -1151,6 +1205,7 @@ async def _plan_active_h2_pin_locked(
             "chart_facts_hash",
             "evidence_registry_version",
             "publication_policy_version",
+            "canonical_path",
         )
     ):
         raise PresentationAssignmentConflict("active H2 source pin conflicts")
@@ -1557,7 +1612,10 @@ async def assign_rollout_pin_cas(
             source_pin=source_h2_pin,
             expected_generation=command.target_pin_generation,
             projection_digest=command.expected_target_projection_digest,
-            canonical_path=f"/company/{command.inn}-company",
+            canonical_path=(
+                source_h2_pin.canonical_path
+                or legacy_h2_binding(command.inn).canonical_path
+            ),
             indexable=command.h2_indexable,
             published_lastmod=source_report.generated_at,
         )
@@ -1646,7 +1704,6 @@ async def assign_rollout_pin_cas(
             or source_h2_pin.projection_scope
             not in {None, H2_STAGED_PROJECTION_SCOPE}
             or source_h2_pin.indexable is not False
-            or source_h2_pin.canonical_path is not None
             or source_h2_pin.published_lastmod is not None
             or source_h2_pin.narrative_binding_status != "resolved"
             or source_h2_pin.report_id != target_pin.report_id
@@ -1661,6 +1718,11 @@ async def assign_rollout_pin_cas(
             != target_pin.narrative_binding_kind
             or source_h2_pin.narrative_binding_key
             != target_pin.narrative_binding_key
+            or target_pin.canonical_path
+            != (
+                source_h2_pin.canonical_path
+                or legacy_h2_binding(command.inn).canonical_path
+            )
             or (current_h1_indexable and target_pin.indexable is False)
         ):
             raise PresentationAssignmentConflict("H2 assignment lineage is invalid")
