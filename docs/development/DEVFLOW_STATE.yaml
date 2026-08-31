@@ -254,7 +254,7 @@ iterations:
     slug: company-card-v2-qa-rollout
     title: "QA и rollout Company Card v2"
     status: planned
-    branch: pending
+    branch: codex/iteration-25-company-card-v2-qa-rollout
     commit: pending
     merged_at: null
-    block_reason: "Ожидает закрытия post-merge disposable PostgreSQL acceptance итерации 24 и утверждения specification/implementation plan"
+    block_reason: "Current planning-audit review is approved, but implementation remains blocked pending separate iteration-24 disposable PostgreSQL acceptance reconciliation; a separately reviewed/merged iteration-20 presentation-create contract continuation; creation of a new clean branch/worktree from the exact post-prerequisite origin/main without rebasing/resetting this draft; refreshed base evidence, bounded delta audit, Stage 0 and repeat independent plan review on that exact base; and explicit owner implementation approval. Production activation is separately unauthorized."

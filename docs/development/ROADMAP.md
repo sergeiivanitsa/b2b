@@ -1579,15 +1579,28 @@ population либо честно обозначенной returned slice без 
 ID: 25
 Slug: company-card-v2-qa-rollout
 
-Статус: planning input; полный путь итераций 19–24 merged. Реализация стартует
-после закрытия post-merge disposable PostgreSQL acceptance итерации 24 и
-утверждения отдельных specification и implementation plan.
+Статус: base-bound specification, proposed owner-decision register и
+implementation plan подготовлены в ветке
+`codex/iteration-25-company-card-v2-qa-rollout`; planning-audit review по
+reconciliation, rollout/CAS и QA/CI выдал `APPROVED` 2026-08-27. Этот verdict
+не разрешает реализацию. Она не начата и требует отдельного закрытия post-merge
+disposable PostgreSQL acceptance итерации 24 и отдельного iteration-20
+continuation для подтверждённого create/lifecycle contract debt.
+После merge текущий base-bound draft останавливается: новая чистая implementation
+branch/worktree создаётся от exact нового `origin/main`, evidence/base и bounded
+delta audit обновляются, Stage 0 и independent plan review повторяются; rebase/
+reset draft-ветки не авторизован. Затем требуется явный owner approval полного
+плана. Production activation не авторизована.
 
 ### Зависимости
 
 - Все merged contracts/runtime/UI итераций 19–24 и закрытые evidence gates;
   post-merge disposable PostgreSQL acceptance итерации 24 должен быть закрыт
   до реализации.
+- Подтверждённый gap frozen iteration-20 presentation-create contract должен
+  быть исправлен отдельным continuation и merged; затем требуется новая чистая
+  implementation branch/worktree от exact `origin/main`, обновлённый evidence/
+  base audit и повторный plan review до кода iteration 25.
 - Feature flags остаются выключенными до отдельного rollout decision.
 
 ### Цель
@@ -1603,8 +1616,8 @@ Slug: company-card-v2-qa-rollout
   touch, 200% zoom, reduced motion, safe-area, long/missing/partial/large-N.
 - SSR/API/SPA semantic parity, canonical/wrong-slug/noindex/robots и
   crawler-safe behavior.
-- Bundle/CLS/performance, lazy-chart failure, AI fallback/budget/kill switch,
-  privacy/telemetry и Claims target verification.
+- Bundle/post-font zero-shift/performance diagnostics, lazy-chart failure, AI
+  fallback/budget/kill switch, privacy/telemetry и Claims target verification.
 - Acceptance fixtures: СКС и минимум три обезличенных edge profiles без
   production raw в git.
 - Feature flag/runbook/observability/rollback rehearsal и staged activation
