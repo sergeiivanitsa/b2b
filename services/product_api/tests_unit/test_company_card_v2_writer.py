@@ -247,7 +247,11 @@ async def test_v2_builder_keeps_admitted_counterparty_as_partial_when_finance_fa
 @pytest.mark.parametrize(
     ("opf", "short_name", "expected"),
     [
-        ("ООО", "Тест", "/company/ooo-test-7700000000"),
+        (
+            "Общества с ограниченной ответственностью",
+            'ООО "Тестовый контрагент"',
+            "/company/ooo-testovyj-kontragent-7700000000",
+        ),
         ("ООО", "ПАО Ромашка", "/company/7700000000-company"),
         ("Неподтверждённая форма", "Тест", "/company/7700000000-company"),
         (None, "Тест", "/company/7700000000-company"),

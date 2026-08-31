@@ -105,7 +105,7 @@ def test_latest_unpublished_uses_form_first_path_without_changing_display_identi
     dto = build_public_h1(
         complete_company_report(
             counterparty=_counterparty(
-                legal_form="ООО",
+                legal_form="Общества с ограниченной ответственностью",
                 short_name="ООО «Ромашка»",
                 full_name="Общество с ограниченной ответственностью «Ромашка»",
             ),
