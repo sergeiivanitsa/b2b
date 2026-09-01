@@ -1,8 +1,8 @@
 """Deterministic company-page URL policy shared by every backend surface.
 
 The legal-form registry is owner-defined.  It is deliberately closed: values
-outside the six approved exact Russian aliases do not produce a form-first
-URL and must remain on a legacy URL.
+outside the approved exact Russian aliases do not produce a form-first URL
+and must remain on a legacy URL.
 """
 
 from __future__ import annotations
@@ -29,10 +29,16 @@ class LegalFormRule:
     full_ru: str
     short_ru: str
     url_token: str
+    provider_aliases: tuple[str, ...] = ()
 
 
 LEGAL_FORM_RULES = (
-    LegalFormRule("Общество с ограниченной ответственностью", "ООО", "ooo"),
+    LegalFormRule(
+        "Общество с ограниченной ответственностью",
+        "ООО",
+        "ooo",
+        ("Общества с ограниченной ответственностью",),
+    ),
     LegalFormRule("Акционерное общество", "АО", "ao"),
     LegalFormRule("Открытое акционерное общество", "ОАО", "oao"),
     LegalFormRule("Закрытое акционерное общество", "ЗАО", "zao"),
@@ -40,10 +46,15 @@ LEGAL_FORM_RULES = (
     LegalFormRule("Индивидуальный предприниматель", "ИП", "ip"),
 )
 
+
+def _legal_form_aliases(rule: LegalFormRule) -> tuple[str, ...]:
+    return (rule.full_ru, rule.short_ru, *rule.provider_aliases)
+
+
 _RULE_BY_ALIAS = {
     unicodedata.normalize("NFKC", alias).casefold(): rule
     for rule in LEGAL_FORM_RULES
-    for alias in (rule.full_ru, rule.short_ru)
+    for alias in _legal_form_aliases(rule)
 }
 _RULE_BY_TOKEN = {rule.url_token: rule for rule in LEGAL_FORM_RULES}
 
@@ -99,7 +110,7 @@ def is_valid_inn(value: object) -> bool:
 
 
 def resolve_legal_form(value: object) -> LegalFormRule | None:
-    """Resolve only one of the twelve approved exact aliases."""
+    """Resolve only an owner-approved exact alias."""
     if type(value) is not str:
         return None
     normalized = " ".join(unicodedata.normalize("NFKC", value).casefold().split())
@@ -117,7 +128,7 @@ def _boundary_alias(name: str) -> tuple[LegalFormRule, str] | None:
         (
             (unicodedata.normalize("NFKC", alias).casefold(), rule)
             for rule in LEGAL_FORM_RULES
-            for alias in (rule.full_ru, rule.short_ru)
+            for alias in _legal_form_aliases(rule)
         ),
         key=lambda item: len(item[0]),
         reverse=True,

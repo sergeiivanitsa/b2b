@@ -14,7 +14,7 @@ def identity(form: str | None, short: str | None, full: str | None = None, inn: 
     return CanonicalCompanyIdentity(inn, form, short, full)
 
 
-def test_owner_defined_registry_has_only_six_exact_rules() -> None:
+def test_owner_defined_registry_has_only_six_legal_form_rules() -> None:
     assert [(rule.short_ru, rule.url_token) for rule in LEGAL_FORM_RULES] == [
         ("ООО", "ooo"), ("АО", "ao"), ("ОАО", "oao"),
         ("ЗАО", "zao"), ("ПАО", "pao"), ("ИП", "ip"),
@@ -30,6 +30,21 @@ def test_fixed_transliteration_and_cleanup_vectors() -> None:
     assert canonical_slug("Ёж Йод Хлеб Щука Объект Подъезд") == "yozh-jod-xleb-shhuka-obekt-podezd"
     assert canonical_slug("Цех — test_NAME / 😀 №42") == "cex-test-name-no42"
     assert canonical_slug("ъь ' ` \" «»") is None
+
+
+def test_datanewton_llc_opf_alias_builds_form_first_url() -> None:
+    observed_opf = "Общества с ограниченной ответственностью"
+
+    assert resolve_legal_form(observed_opf) == LEGAL_FORM_RULES[0]
+    binding = build_v2_company_binding(
+        identity(
+            observed_opf,
+            'ООО "Проверка"',
+        )
+    )
+
+    assert binding is not None
+    assert binding.canonical_path == "/company/ooo-proverka-7707079463"
 
 
 def test_builder_uses_short_then_full_and_strips_one_matching_boundary_alias() -> None:

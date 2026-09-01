@@ -148,7 +148,7 @@ async def test_latest_report_adds_canonical_path_from_matching_safe_identity(
             "counterparty": base_report.counterparty.model_copy(
                 update={
                     "inn": "0000000000",
-                    "legal_form": "ООО",
+                    "legal_form": "Общества с ограниченной ответственностью",
                     "short_name": "ООО Вектор",
                     "full_name": "Полное имя не используется",
                 }
