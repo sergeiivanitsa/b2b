@@ -2,6 +2,14 @@
 .company-public-h2 *, .company-public-h2 *::before, .company-public-h2 *::after { box-sizing: inherit; }
 .company-public-h2 section, .company-public-h2 header { margin: 0 0 28px; padding: 20px; border: 1px solid #e2e2e2; border-radius: 12px; background: #fff; scroll-margin-top: 20px; }
 .company-public-h2 a[href] { display: inline-flex; min-width: 44px; min-height: 44px; align-items: center; color: #1a1a1a; }
+.company-public-h2__breadcrumbs { min-width: 0; margin: 0 0 16px; overflow: hidden; color: #667085; font-size: 12px; line-height: 1.35; white-space: nowrap; }
+.company-public-h2__breadcrumbs ol { display: flex; flex-flow: row nowrap; align-items: center; min-width: 0; margin: 0; padding: 0; overflow: hidden; list-style: none; }
+.company-public-h2__breadcrumbs li { display: flex; align-items: center; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.company-public-h2__breadcrumbs li::marker { content: ''; }
+.company-public-h2__breadcrumbs li + li { flex: 1 1 auto; overflow: hidden; }
+.company-public-h2__breadcrumbs li + li::before { flex: 0 0 auto; margin: 0 6px; color: #98a2b3; content: '·'; }
+.company-public-h2 .company-public-h2__breadcrumbs a[href] { color: inherit; }
+.company-public-h2__breadcrumbs [aria-current="page"] { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .company-public-h2__button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; margin: 4px; padding: 10px 16px; border-radius: 8px; text-decoration: none; font-weight: 700; }
 .company-public-h2__button--accent { background: #EE5A2A; color: #111827 !important; }
 .company-public-h2__button--accent:hover { background: #F36B3F; color: #111827 !important; }

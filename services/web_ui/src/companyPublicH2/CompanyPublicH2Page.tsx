@@ -2,6 +2,7 @@ import { Fragment } from 'react'
 import type { MouseEvent } from 'react'
 import type { CompanyPublicH2, PublicH2BlocksDto, PublicH2CoverageItemDto, PublicH2ViewDto } from './contractSchema'
 import { text } from './presentation'
+import { formatCompactCompanyBreadcrumbLabel } from './breadcrumbPresentation'
 import { FinanceFacts } from './FinanceFacts'
 import { ArbitrationFacts } from './ArbitrationFacts'
 import { classifyArbitrationPolicyV3 } from './arbitrationContractSemantics'
@@ -52,6 +53,11 @@ export function CompanyPublicH2Page({ dto }: { dto: CompanyPublicH2 }) {
   const { additional_activities: activities, tax_modes: taxModes, managers, owners, employees, tax_authority: taxAuthority, charter_capital: capital, address } = requisites
   const [checkAnotherAction, prepareClaimAction] = dto.actions
   const [homeBreadcrumb, currentBreadcrumb] = dto.breadcrumbs
+  const currentBreadcrumbLabel = formatCompactCompanyBreadcrumbLabel({
+    signedLabel: currentBreadcrumb.label,
+    shortName: identity.short_name,
+    legalFullName: identity.legal_full_name,
+  })
   const arbitrationPolicyV3 = classifyArbitrationPolicyV3(dto) !== null
   const optionalIdentity: readonly [string, string][] = [
     ['Краткое наименование', identity.short_name ?? ''], ['ОГРН', identity.ogrn ?? ''],
@@ -60,7 +66,7 @@ export function CompanyPublicH2Page({ dto }: { dto: CompanyPublicH2 }) {
   ]
 
   return <>
-    <nav aria-label="Хлебные крошки"><ol><li><a href={homeBreadcrumb.path}>{homeBreadcrumb.label}</a></li><li aria-current="page">{currentBreadcrumb.label}</li></ol></nav>
+    <nav aria-label="Хлебные крошки" className="company-public-h2__breadcrumbs"><ol><li><a href={homeBreadcrumb.path}>{homeBreadcrumb.label}</a></li><li><span aria-current="page">{currentBreadcrumbLabel}</span></li></ol></nav>
     <header id="hero-status"><p>Статус отчёта: {identity.status?.label || 'Статус не указан в отчёте'}</p>{identity.status?.effective_date && <p>Дата статуса: <time>{identity.status.effective_date}</time></p>}<h1 data-h2-field="identity.display_name">{identity.display_name}</h1><p>Дата составления отчёта: <time dateTime={dto.checked_at}>{dto.checked_date_display}</time></p><p>Идентификатор отчёта: <code data-h2-field="report_id">{dto.report_id}</code></p></header>
     <section id="narrative" aria-labelledby="narrative-title"><h2 id="narrative-title">{narrative.mode === 'artifact' ? 'Описание деятельности' : 'Описание деятельности — подтверждённый шаблон'}</h2><p data-h2-field="narrative.description">{narrative.description}</p><h3>Покрытие описания</h3><ul><CoverageRow item={coverageById(coverage, 'narrative')} /></ul></section>
     <nav id="in-page-navigation" aria-label="Разделы отчёта"><ol><li><a href="#requisites" onClick={event => activateInPageTarget(event, 'requisites', 'Реквизиты')}>Реквизиты</a></li><li><a href="#finance" onClick={event => activateInPageTarget(event, 'finance', 'Финансы')}>Финансы</a></li><li><a href="#arbitration" onClick={event => activateInPageTarget(event, 'arbitration', 'Арбитраж')}>Арбитраж</a></li></ol></nav>

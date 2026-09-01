@@ -8,6 +8,38 @@ import sharedDto from '../../../../shared/fixtures/company_public_h2_contract_v1
 afterEach(cleanup)
 
 describe('CompanyPublicH2Page', () => {
+  it('presents compact breadcrumbs without changing signed navigation or the hero title', async () => {
+    const parsed = await parseCompanyPublicH2(sharedDto)
+    const signedLabel = 'ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ «1С-Рарус Длинный»'
+    const dto = {
+      ...parsed.dto,
+      identity: {
+        ...parsed.dto.identity,
+        display_name: signedLabel,
+        legal_full_name: signedLabel,
+        short_name: '«1С-Рарус»',
+      },
+      breadcrumbs: [
+        parsed.dto.breadcrumbs[0],
+        { ...parsed.dto.breadcrumbs[1], label: signedLabel },
+      ] as const,
+    }
+
+    const { container } = render(<main id="company-public-h2-root" className="company-public-h2"><CompanyPublicH2Page dto={dto} /></main>)
+    const breadcrumbs = screen.getByRole('navigation', { name: 'Хлебные крошки' })
+    const home = screen.getByRole('link', { name: 'Главная' })
+    const current = breadcrumbs.querySelector('[aria-current="page"]')
+
+    expect(breadcrumbs.classList.contains('company-public-h2__breadcrumbs')).toBe(true)
+    expect(breadcrumbs.querySelectorAll(':scope > ol > li')).toHaveLength(2)
+    expect(home.getAttribute('href')).toBe('/')
+    expect(current?.tagName).toBe('SPAN')
+    expect(current?.textContent).toBe('ООО «1С-Рарус»')
+    expect(container.querySelector('h1')?.textContent).toBe(signedLabel)
+    expect(dto.breadcrumbs[1].label).toBe(signedLabel)
+    expect(dto.breadcrumbs[1].path).toBe(parsed.dto.breadcrumbs[1].path)
+  })
+
   it('keeps both neutral actions in approved accent treatment and CTA accessible', async () => {
     const parsed = await parseCompanyPublicH2(sharedDto)
     render(<main id="company-public-h2-root" className="company-public-h2"><CompanyPublicH2Page dto={parsed.dto} /></main>)

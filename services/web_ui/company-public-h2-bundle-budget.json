@@ -1,22 +1,16 @@
 {
   "assets": [
     {
-      "path": "assets/company-public-h2.Ar8YLmg1.js",
-      "raw_bytes": 307912,
-      "gzip_bytes": 92056,
-      "sha256": "56f6aedc69a0a4198f038e174c92d6207c0051864bf751c3f78b60261c477f4a"
-    },
-    {
-      "path": "assets/company-public-h2.CJwgWpoy.css",
-      "raw_bytes": 6263,
-      "gzip_bytes": 1559,
-      "sha256": "21a423245eab0092f3d70ed816f2df40981c576c1cfc5f8f0dd88092b7458a62"
-    },
-    {
-      "path": "assets/company-public-h2.CQD8oGhx.js",
+      "path": "assets/company-public-h2.B12y0Tqt.js",
       "raw_bytes": 7930,
       "gzip_bytes": 3070,
-      "sha256": "dce406046ceb785c1d0a3bc5de97226d78914792b2cadf556efc184917ddb6cf"
+      "sha256": "a88d8c08e75f5eac4f153f78eb72892bc8c919e09ef4f99a0715fdd80cf61abb"
+    },
+    {
+      "path": "assets/company-public-h2.BEPrdZ0d.js",
+      "raw_bytes": 309987,
+      "gzip_bytes": 92771,
+      "sha256": "bb06f3f5797543f8789e9eff03687340523f118bb5f147be8e1e2aa9e22e6e2d"
     },
     {
       "path": "assets/company-public-h2.CWjjw1Pe.js",
@@ -25,10 +19,16 @@
       "sha256": "6538ae1d1a0747db1cf415b1a4fd64e7fc97bc43685be905b7c4be5acd02c120"
     },
     {
-      "path": "assets/company-public-h2.C_W8YVqy.js",
+      "path": "assets/company-public-h2.DkUO3N1S.js",
       "raw_bytes": 5865,
-      "gzip_bytes": 2506,
-      "sha256": "678418edc335ce84500a69c2a72f205a7409a4cea4af78e9913ac170893d1f29"
+      "gzip_bytes": 2505,
+      "sha256": "0fd0efb848c1034e4c6b86dfd7351789b9c23fdb6f68b73aa84af5d44c7788d5"
+    },
+    {
+      "path": "assets/company-public-h2.g-v5YZZY.css",
+      "raw_bytes": 7099,
+      "gzip_bytes": 1757,
+      "sha256": "62507f755ca9378b32d43ca0ab515effc4e7c375ca779da18de0195a45b4d7ca"
     }
   ],
   "base": {
@@ -39,32 +39,32 @@
   },
   "closures": {
     "eager": [
-      "assets/company-public-h2.Ar8YLmg1.js",
-      "assets/company-public-h2.CJwgWpoy.css"
+      "assets/company-public-h2.BEPrdZ0d.js",
+      "assets/company-public-h2.g-v5YZZY.css"
     ],
     "finance": [
       "assets/company-public-h2.CWjjw1Pe.js",
-      "assets/company-public-h2.C_W8YVqy.js"
+      "assets/company-public-h2.DkUO3N1S.js"
     ],
     "arbitration": [
-      "assets/company-public-h2.CQD8oGhx.js",
+      "assets/company-public-h2.B12y0Tqt.js",
       "assets/company-public-h2.CWjjw1Pe.js"
     ],
     "all": [
-      "assets/company-public-h2.Ar8YLmg1.js",
-      "assets/company-public-h2.CJwgWpoy.css",
-      "assets/company-public-h2.CQD8oGhx.js",
+      "assets/company-public-h2.B12y0Tqt.js",
+      "assets/company-public-h2.BEPrdZ0d.js",
       "assets/company-public-h2.CWjjw1Pe.js",
-      "assets/company-public-h2.C_W8YVqy.js"
+      "assets/company-public-h2.DkUO3N1S.js",
+      "assets/company-public-h2.g-v5YZZY.css"
     ]
   },
   "eager_budget": {
-    "approved_gzip_bytes": 93615,
-    "approved_raw_bytes": 314175,
-    "gzip_delta": 229,
-    "raw_delta": 1053,
-    "rationale": "Iteration 25 adds its reviewed accessibility and containment changes; iteration 26 extends only the closed canonical-path validator to accept owner-approved form-first company URLs, without adding production dependencies or changing factual presentation."
+    "approved_gzip_bytes": 94528,
+    "approved_raw_bytes": 317086,
+    "gzip_delta": 1142,
+    "raw_delta": 3964,
+    "rationale": "Task 2 adds the reviewed compact breadcrumb presentation and deterministic legal-form shortening to the H2 entry; routes, signed DTO fields, the hero title, report facts, and production dependencies remain unchanged."
   },
-  "manifest_sha256": "66e0b8d7866d2d74a191feeb4d796206b263cd0f84a861f16cd59187e6d2a4e0",
+  "manifest_sha256": "76b9771f95f96e38672f684a26bcfbf9599329dbb7afb2f51a6110f382161d45",
   "schema_version": "company_public_h2_bundle_budget_v1"
 }

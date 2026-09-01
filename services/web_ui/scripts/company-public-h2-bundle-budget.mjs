@@ -181,7 +181,7 @@ async function verifyOrGenerate({ generate }) {
       closures,
       assets,
       BASE_EAGER_GZIP_BYTES,
-      'Iteration 25 adds its reviewed accessibility and containment changes; iteration 26 extends only the closed canonical-path validator to accept owner-approved form-first company URLs, without adding production dependencies or changing factual presentation.',
+      'Task 2 adds the reviewed compact breadcrumb presentation and deterministic legal-form shortening to the H2 entry; routes, signed DTO fields, the hero title, report facts, and production dependencies remain unchanged.',
     )
     return `${JSON.stringify(output, null, 2)}\n`
   }

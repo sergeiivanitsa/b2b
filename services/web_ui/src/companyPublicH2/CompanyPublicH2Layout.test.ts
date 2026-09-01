@@ -2,6 +2,19 @@ import { describe, expect, it } from 'vitest'
 import css from './CompanyPublicH2Page.css?raw'
 
 describe('Company Public H2 stable responsive layout contract', () => {
+  it('keeps breadcrumbs compact, horizontal, marker-free and safely truncated', () => {
+    expect(css).toContain('.company-public-h2__breadcrumbs {')
+    expect(css).toContain('font-size: 12px')
+    expect(css).toContain('color: #667085')
+    expect(css).toContain('white-space: nowrap')
+    expect(css).toContain('flex-flow: row nowrap')
+    expect(css).toContain('list-style: none')
+    expect(css).toContain("content: '·'")
+    expect(css).toContain('text-overflow: ellipsis')
+    expect(css).toContain('.company-public-h2 .company-public-h2__breadcrumbs a[href] { color: inherit; }')
+    expect(css).toContain('.company-public-h2 a[href] { display: inline-flex; min-width: 44px; min-height: 44px;')
+  })
+
   it('exposes one production-safe bottom inset token which the harness can override', () => {
     expect(css).toContain('--company-public-h2-safe-area-bottom: env(safe-area-inset-bottom, 0px)')
     expect(css.match(/env\(safe-area-inset-bottom/gu)).toHaveLength(1)
