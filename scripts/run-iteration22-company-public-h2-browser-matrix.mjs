@@ -25,6 +25,89 @@ const reportId = '00000000-0000-4000-8000-000000000001'
 const canonicalPath = '/company/7701234567-company'
 const claimsPath = `/claims?report_id=${reportId}`
 const wait = ms => new Promise(done => setTimeout(done, ms))
+const legalForms = [
+  ['ООО', ['Общество с ограниченной ответственностью', 'Общества с ограниченной ответственностью', 'ООО']],
+  ['АО', ['Акционерное общество', 'АО']],
+  ['ОАО', ['Открытое акционерное общество', 'ОАО']],
+  ['ЗАО', ['Закрытое акционерное общество', 'ЗАО']],
+  ['ПАО', ['Публичное акционерное общество', 'ПАО']],
+  ['ИП', ['Индивидуальный предприниматель', 'ИП']],
+]
+const legalFormBoundaries = new Set([' ', '"', '«'])
+
+function normalizeBreadcrumbCandidate(value) {
+  const normalized = []
+  let pendingSpace = false
+  for (const scalar of (value ?? '').normalize('NFC')) {
+    const code = scalar.codePointAt(0)
+    const whitespace = (code >= 0x09 && code <= 0x0d)
+      || (code >= 0x1c && code <= 0x20)
+      || code === 0x85
+      || code === 0xa0
+      || code === 0x1680
+      || (code >= 0x2000 && code <= 0x200a)
+      || code === 0x2028
+      || code === 0x2029
+      || code === 0x202f
+      || code === 0x205f
+      || code === 0x3000
+    if (whitespace) {
+      pendingSpace = normalized.length > 0
+      continue
+    }
+    if (pendingSpace) normalized.push(' ')
+    normalized.push(scalar)
+    pendingSpace = false
+  }
+  return normalized.join('')
+}
+
+function foldBreadcrumbLegalForm(value) {
+  const folded = []
+  for (const scalar of value) {
+    const code = scalar.codePointAt(0)
+    if ((code >= 0x41 && code <= 0x5a) || (code >= 0x410 && code <= 0x42f)) {
+      folded.push(String.fromCodePoint(code + 0x20))
+    } else if (code === 0x401) {
+      folded.push('ё')
+    } else {
+      folded.push(scalar)
+    }
+  }
+  return folded.join('')
+}
+
+function leadingBreadcrumbForm(value) {
+  const folded = foldBreadcrumbLegalForm(value)
+  for (const [short, aliases] of legalForms) {
+    for (const alias of aliases) {
+      const remainder = value.slice(alias.length)
+      if (folded.startsWith(foldBreadcrumbLegalForm(alias)) && (remainder === '' || legalFormBoundaries.has(remainder[0]))) {
+        return {
+          short,
+          remainder: remainder.startsWith(' ') ? remainder.slice(1) : remainder,
+        }
+      }
+    }
+  }
+  return null
+}
+
+function compactBreadcrumbLabel(state) {
+  const label = normalizeBreadcrumbCandidate(state.breadcrumbs[1].label)
+  const shortName = normalizeBreadcrumbCandidate(state.identity.short_name)
+  const legalName = normalizeBreadcrumbCandidate(state.identity.legal_full_name)
+  if (shortName !== '') {
+    const ownForm = leadingBreadcrumbForm(shortName)
+    if (ownForm) return ownForm.remainder === '' ? ownForm.short : `${ownForm.short} ${ownForm.remainder}`
+    const inferred = leadingBreadcrumbForm(label) ?? leadingBreadcrumbForm(legalName)
+    return inferred ? `${inferred.short} ${shortName}` : shortName
+  }
+  const labelForm = leadingBreadcrumbForm(label)
+  if (labelForm) return labelForm.remainder === '' ? labelForm.short : `${labelForm.short} ${labelForm.remainder}`
+  const inferred = leadingBreadcrumbForm(legalName)
+  return inferred ? (label === '' ? inferred.short : `${inferred.short} ${label}`) : label
+}
 
 async function json(url) {
   const response = await fetch(url)
@@ -165,7 +248,7 @@ function profileMatches(profile, signature) {
 function exactDtoBindingsMatch(measured, state) {
   const expectedBreadcrumbs = {
     home: { path: state.breadcrumbs[0].path, label: state.breadcrumbs[0].label },
-    current: state.breadcrumbs[1].label,
+    current: compactBreadcrumbLabel(state),
   }
   const expectedActions = state.actions.map(item => ({ path: item.path, label: item.label }))
   const expectedCta = {

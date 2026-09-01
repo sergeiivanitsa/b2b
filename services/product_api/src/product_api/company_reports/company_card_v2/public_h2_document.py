@@ -6,9 +6,11 @@ semantic surface; it never fetches factual data.
 """
 from __future__ import annotations
 
+import unicodedata
 from html import escape
 from secrets import token_urlsafe
 
+from ..company_urls import LEGAL_FORM_RULES, LegalFormRule
 from .canonical_json import script_safe_json_bytes
 from .public_h2_asset_manifest import PublicH2AssetManifest, asset_integrity_attribute
 from .public_h2_models import (
@@ -17,6 +19,85 @@ from .public_h2_models import (
     PublicH2CoverageItem,
     PublicSafeCaseDetail,
 )
+
+
+def _fold_legal_form(value: str) -> str:
+    folded: list[str] = []
+    for char in value:
+        code = ord(char)
+        if 0x41 <= code <= 0x5A or 0x410 <= code <= 0x42F:
+            folded.append(chr(code + 0x20))
+        elif code == 0x401:
+            folded.append("ё")
+        else:
+            folded.append(char)
+    return "".join(folded)
+
+
+_LEGAL_FORM_PREFIXES = tuple(
+    sorted(
+        (
+            (_fold_legal_form(unicodedata.normalize("NFC", alias)), rule)
+            for rule in LEGAL_FORM_RULES
+            for alias in (rule.full_ru, rule.short_ru, *rule.provider_aliases)
+        ),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    )
+)
+_LEGAL_FORM_BOUNDARIES = frozenset((" ", '"', "«"))
+
+
+def _normalized_breadcrumb_name(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = " ".join(unicodedata.normalize("NFC", value).split())
+    return normalized or None
+
+
+def _leading_legal_form(value: str | None) -> tuple[LegalFormRule, str] | None:
+    normalized = _normalized_breadcrumb_name(value)
+    if normalized is None:
+        return None
+    folded = _fold_legal_form(normalized)
+    for alias, rule in _LEGAL_FORM_PREFIXES:
+        end = len(alias)
+        if not folded.startswith(alias):
+            continue
+        if end < len(normalized) and normalized[end] not in _LEGAL_FORM_BOUNDARIES:
+            continue
+        return rule, normalized[end:].lstrip()
+    return None
+
+
+def compact_company_breadcrumb_name(
+    *,
+    label: str,
+    short_name: str | None,
+    legal_full_name: str | None,
+) -> str:
+    """Return a presentation-only compact name without changing the signed DTO."""
+    current = _normalized_breadcrumb_name(label) or label
+    short = _normalized_breadcrumb_name(short_name)
+    current_form = _leading_legal_form(current)
+    full_form = _leading_legal_form(legal_full_name)
+
+    if short is not None:
+        short_form = _leading_legal_form(short)
+        if short_form is not None:
+            rule, remainder = short_form
+            return rule.short_ru + (f" {remainder}" if remainder else "")
+        inferred = current_form or full_form
+        if inferred is not None:
+            return f"{inferred[0].short_ru} {short}"
+        return short
+
+    if current_form is not None:
+        rule, remainder = current_form
+        return rule.short_ru + (f" {remainder}" if remainder else "")
+    if full_form is not None:
+        return f"{full_form[0].short_ru} {current}"
+    return current
 
 
 def public_h2_security_headers(nonce: str, robots: str) -> dict[str, str]:
@@ -567,6 +648,11 @@ def render_public_h2_body(dto: CompanyPublicH2Response) -> str:
     employees = dto.blocks.requisites.employees
     tax_authority = dto.blocks.requisites.tax_authority
     status = dto.identity.status
+    breadcrumb_name = compact_company_breadcrumb_name(
+        label=dto.breadcrumbs[1].label,
+        short_name=dto.identity.short_name,
+        legal_full_name=dto.identity.legal_full_name,
+    )
     narrative_heading = "Описание деятельности" if dto.narrative.mode == "artifact" else "Описание деятельности — подтверждённый шаблон"
     finance_coverage = "".join(_coverage_row(_coverage(dto, block)) for block in ("finance_f1", "finance_f2", "finance_f3", "finance_f4", "finance_f5"))
     arbitration_coverage = "".join(_coverage_row(_coverage(dto, block)) for block in ("arbitration_a1", "arbitration_a2", "arbitration_a3", "arbitration_a4", "arbitration_a5"))
@@ -576,7 +662,7 @@ def render_public_h2_body(dto: CompanyPublicH2Response) -> str:
         else _block_surface(dto, "arbitration")
     )
     return f'''<main id="company-public-h2-root" class="company-public-h2" data-contract="{h(dto.contract_version)}" data-report-id="{h(dto.report_id)}">
-<nav aria-label="Хлебные крошки"><ol><li><a href="{h(dto.breadcrumbs[0].path)}">{h(dto.breadcrumbs[0].label)}</a></li><li aria-current="page">{h(dto.breadcrumbs[1].label)}</li></ol></nav>
+<nav class="company-public-h2__breadcrumbs" aria-label="Хлебные крошки"><ol><li><a href="{h(dto.breadcrumbs[0].path)}">{h(dto.breadcrumbs[0].label)}</a></li><li><span aria-current="page">{h(breadcrumb_name)}</span></li></ol></nav>
 <header id="hero-status"><p>Статус отчёта: {h(status.label if status else "Статус не указан в отчёте")}</p>{f'<p>Дата статуса: <time>{h(status.effective_date)}</time></p>' if status and status.effective_date else ''}<h1 data-h2-field="identity.display_name">{h(dto.identity.display_name)}</h1><p>Дата составления отчёта: <time datetime="{h(dto.checked_at)}">{h(dto.checked_date_display)}</time></p><p>Идентификатор отчёта: <code data-h2-field="report_id">{h(dto.report_id)}</code></p></header>
 <section id="narrative" aria-labelledby="narrative-title"><h2 id="narrative-title">{narrative_heading}</h2><p data-h2-field="narrative.description">{h(dto.narrative.description)}</p><h3>Покрытие описания</h3><ul>{_coverage_row(_coverage(dto, "narrative"))}</ul></section>
 <nav id="in-page-navigation" aria-label="Разделы отчёта"><ol>{nav}</ol></nav>
@@ -604,4 +690,4 @@ def render_public_h2_error_document(title: str, message: str) -> str:
     return f'<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="robots" content="noindex,follow"><title>{escape(title)}</title></head><body><main><h1>{escape(title)}</h1><p>{escape(message)}</p></main></body></html>'
 
 
-__all__ = ["render_public_h2_body", "render_public_h2_document", "render_public_h2_error_document", "public_h2_security_headers"]
+__all__ = ["compact_company_breadcrumb_name", "render_public_h2_body", "render_public_h2_document", "render_public_h2_error_document", "public_h2_security_headers"]
